@@ -27,8 +27,9 @@ use crate::{
 use chrono::{DateTime, Local, TimeZone};
 use eframe::egui;
 use egui::{
-    lerp, pos2, remap_clamp, Align2, Color32, FontId, Frame, PointerButton, Pos2, Rect, Response,
-    Rgba, RichText, ScrollArea, Sense, Shape, Stroke, TextStyle,
+    lerp, pos2, remap_clamp, Align2, Color32, CursorIcon, FontId, Frame, Id, LayerId,
+    Order, PointerButton, Pos2, Rect, Response, Rgba, RichText, ScrollArea, Sense, Shape, Stroke,
+    TextStyle,
 };
 use std::collections::BTreeMap;
 
@@ -193,6 +194,7 @@ impl View for GanttChart {
                     start_s: min_s,
                     stop_s: max_s,
                     font_id: TextStyle::Body.resolve(ui.style()),
+                    gutter_width: GUTTER_WIDTH,
                 };
 
                 // When we reset the view, we want to zoom to the full range
@@ -220,6 +222,7 @@ impl View for GanttChart {
                     &mut self.collapsed_jobs_level_1,
                     &mut self.collapsed_jobs_level_2,
                     &app.all_clusters,
+                    GUTTER_WIDTH,
                 );
 
                 let mut used_rect = canvas;
@@ -228,12 +231,12 @@ impl View for GanttChart {
                 // Fill out space that we don't use so that the `ScrollArea` doesn't collapse in height:
                 used_rect.max.y = used_rect.max.y.max(used_rect.min.y + available_height);
 
-                let timeline = paint_timeline(&info, used_rect, &self.options, min_s);
+                let timeline = paint_timeline(&info, used_rect, &self.options, min_s, GUTTER_WIDTH);
                 info.painter
                     .set(where_to_put_timeline, Shape::Vec(timeline));
 
                 // Adding a line to show the current time AFTER all other elements
-                let current_time_line = paint_current_time_line(&info, &self.options, used_rect);
+                let current_time_line = paint_current_time_line(&info, &self.options, used_rect, GUTTER_WIDTH);
                 info.painter.add(current_time_line);
 
                 ui.allocate_rect(used_rect, Sense::hover());
@@ -276,17 +279,41 @@ struct Info {
     start_s: i64,           // start time in seconds
     stop_s: i64,            // stop time in seconds
     font_id: FontId,        // font id
+    gutter_width: f32,      // fixed left gutter width for labels
 }
 
 impl Info {
+    fn usable_width(&self) -> f32 {
+        (self.canvas.width() - self.gutter_width).max(1.0)
+    }
+
     /**
      * Returns the x-coordinate (in points from the canvas) to the given timestamp
      */
     fn point_from_s(&self, options: &Options, ns: i64) -> f32 {
+        // Time axis starts after the fixed gutter
         self.canvas.min.x
+            + self.gutter_width
             + options.sideways_pan_in_points
-            + self.canvas.width() * ((ns - self.start_s) as f32) / options.canvas_width_s
+            + self.usable_width() * ((ns - self.start_s) as f32) / options.canvas_width_s
     }
+}
+
+const GUTTER_WIDTH: f32 = 200.0; // fixed left bar width for labels
+
+fn site_from_fqdn(host: &str) -> Option<String> {
+    let mut parts = host.split('.');
+    let _hostname = parts.next();
+    let site = parts.next();
+    site.filter(|s| !s.is_empty()).map(|s| s.to_string())
+}
+
+fn site_for_cluster_name(cluster_name: &str, clusters: &[Cluster]) -> Option<String> {
+    clusters
+        .iter()
+        .find(|c| c.name == cluster_name)
+        .and_then(|c| c.hosts.first())
+        .and_then(|h| site_from_fqdn(&h.network_address).or_else(|| site_from_fqdn(&h.name)))
 }
 
 /****************************************************************************************************************************/
@@ -357,6 +384,7 @@ fn ui_canvas(
     collapsed_jobs_level_1: &mut BTreeMap<String, bool>,
     collapsed_jobs_level_2: &mut BTreeMap<(String, String), bool>,
     all_cluster: &Vec<Cluster>,
+    gutter_width: f32,
 ) -> f32 {
     if options.canvas_width_s <= 0.0 {
         options.canvas_width_s = (max_ns - min_ns) as f32;
@@ -365,6 +393,33 @@ fn ui_canvas(
 
     let mut cursor_y = info.canvas.top();
     cursor_y += info.text_height;
+
+    // Paint a persistent gutter background (behind labels)
+    let theme_colors = get_theme_colors(&info.ctx.style());
+    let is_grid5000_gutter = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
+        && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
+    let gutter_bg = if is_grid5000_gutter {
+        if info.ctx.style().visuals.dark_mode {
+            Color32::from_rgb(125, 115, 55)
+        } else {
+            Color32::from_rgb(245, 227, 113)
+        }
+    } else {
+        theme_colors.background
+    };
+    let gutter_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x, info.canvas.min.y),
+        pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
+    );
+    info.painter
+        .rect_filled(gutter_rect, 0.0, gutter_bg);
+    info.painter.line_segment(
+        [
+            pos2(info.canvas.min.x + gutter_width, info.canvas.min.y),
+            pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
+        ],
+        Stroke::new(1.0, theme_colors.line),
+    );
 
     // Get filtered jobs to display
     let jobs = app.filtered_jobs.clone();
@@ -392,6 +447,7 @@ fn ui_canvas(
                 app.font_size,
                 all_cluster,
                 AggregateByLevel1Enum::Owner,
+                gutter_width,
             );
         }
 
@@ -434,6 +490,7 @@ fn ui_canvas(
                         all_cluster,
                         AggregateByLevel1Enum::Host,
                         AggregateByLevel2Enum::Owner,
+                        gutter_width,
                     );
                 }
 
@@ -468,6 +525,7 @@ fn ui_canvas(
                         app.font_size,
                         all_cluster,
                         AggregateByLevel1Enum::Host,
+                        gutter_width,
                     );
                 }
                 AggregateByLevel2Enum::Host => {
@@ -515,6 +573,7 @@ fn ui_canvas(
                     all_cluster,
                     AggregateByLevel1Enum::Cluster,
                     AggregateByLevel2Enum::Owner,
+                    gutter_width,
                 );
             }
 
@@ -549,6 +608,7 @@ fn ui_canvas(
                     app.font_size,
                     all_cluster,
                     AggregateByLevel1Enum::Cluster,
+                    gutter_width,
                 );
             }
 
@@ -596,6 +656,7 @@ fn ui_canvas(
                     all_cluster,
                     AggregateByLevel1Enum::Cluster,
                     AggregateByLevel2Enum::Host,
+                    gutter_width,
                 );
             }
         },
@@ -609,7 +670,7 @@ fn ui_canvas(
     options.current_hovered_job = None; // Reset for next frame, but keep previous_hovered_job
 
     // Paint the timeline text on top of everything
-    paint_timeline_text_on_top(info, options, fixed_timeline_y);
+    paint_timeline_text_on_top(info, options, fixed_timeline_y, gutter_width);
 
     cursor_y
 }
@@ -645,7 +706,8 @@ fn interact_with_canvas(options: &mut Options, response: &Response, info: &Info)
                 options.canvas_width_s = new_width;
 
                 if let Some(mouse_pos) = response.hover_pos() {
-                    let zoom_center = mouse_pos.x - info.canvas.min.x;
+                    let origin_x = info.canvas.min.x + info.gutter_width;
+                    let zoom_center = mouse_pos.x - origin_x;
                     options.sideways_pan_in_points =
                         (options.sideways_pan_in_points - zoom_center) * zoom_factor + zoom_center;
                 }
@@ -666,7 +728,7 @@ fn interact_with_canvas(options: &mut Options, response: &Response, info: &Info)
         const ZOOM_DURATION: f32 = 0.75;
         let t = (info.ctx.input(|i| i.time - start_time) as f32 / ZOOM_DURATION).min(1.0);
 
-        let canvas_width = response.rect.width();
+        let canvas_width = info.usable_width();
 
         let target_canvas_width_s = (end_s - start_s) as f32;
         let target_pan_in_points = -canvas_width * start_s as f32 / target_canvas_width_s;
@@ -728,6 +790,66 @@ fn get_theme_colors(style: &egui::Style) -> ThemeColors {
             background_timeline: Color32::from_black_alpha(20),
             hatch: Color32::from_rgba_premultiplied(0, 0, 139, 150),
         }
+    }
+}
+
+struct LabelMeta {
+    host: Option<String>,
+}
+
+fn short_host_label(host: &str) -> String {
+    let first = host.split('.').next().unwrap_or(host).trim();
+
+    // If it's like "dahu-1" => "dahu1" (matches requested example)
+    if let Some(idx) = first.rfind('-') {
+        let (left, right_with_dash) = first.split_at(idx);
+        let right = right_with_dash.trim_start_matches('-');
+        if !left.is_empty()
+            && !right.is_empty()
+            && left.chars().all(|c| c.is_ascii_alphanumeric())
+            && right.chars().all(|c| c.is_ascii_digit())
+        {
+            return format!("{}{}", left, right);
+        }
+    }
+
+    first.to_string()
+}
+
+fn build_label_meta_level1(
+    level_1: &str,
+    aggregate_by_level_1: AggregateByLevel1Enum,
+    clusters: &[Cluster],
+) -> Option<LabelMeta> {
+    match aggregate_by_level_1 {
+        AggregateByLevel1Enum::Cluster => {
+            let _ = clusters;
+            None
+        }
+        AggregateByLevel1Enum::Host => {
+            Some(LabelMeta {
+                host: Some(level_1.to_string()),
+            })
+        }
+        AggregateByLevel1Enum::Owner => None,
+    }
+}
+
+fn build_label_meta_level2(
+    level_1: &str,
+    level_2: &str,
+    aggregate_by_level_1: AggregateByLevel1Enum,
+    aggregate_by_level_2: AggregateByLevel2Enum,
+    clusters: &[Cluster],
+) -> Option<LabelMeta> {
+    match aggregate_by_level_2 {
+        AggregateByLevel2Enum::Host => {
+            let _ = (level_1, aggregate_by_level_1, clusters);
+            Some(LabelMeta {
+                host: Some(level_2.to_string()),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -811,12 +933,13 @@ fn paint_aggregated_jobs_level_1(
     font_size: i32,
     all_cluster: &Vec<Cluster>,
     aggregate_by: AggregateByLevel1Enum,
+    gutter_width: f32,
 ) -> f32 {
     let theme_colors = get_theme_colors(&info.ctx.style());
 
-    let spacing_between_level_1 = 5.0 + font_size as f32; // Spacing between level 1 key
-    let spacing_between_jobs = 5.0; // Spacing between jobs
-    let offset_level_1 = 10.0; // Offset for level 1 key
+    let spacing_between_level_1 = font_size as f32 * 0.25; // minimal spacing
+    let spacing_between_jobs = 0.0; // no gap between jobs within owner
+    let offset_level_1 = 6.0; // compact header offset
 
     cursor_y += spacing_between_level_1;
 
@@ -827,7 +950,7 @@ fn paint_aggregated_jobs_level_1(
     let aggregation_height = font_size as f32 + 5.0 + offset_level_1;
 
     // Store header positions and data to draw them last if squashing is enabled
-    let mut header_data = Vec::new();
+    let mut header_data: Vec<(String, Pos2, bool, Option<LabelMeta>)> = Vec::new();
 
     // Display jobs
     for level_1 in sorted_level_1 {
@@ -847,13 +970,24 @@ fn paint_aggregated_jobs_level_1(
 
         // Check if the section is collapsed
         let is_collapsed = collapsed_jobs.entry(level_1.clone()).or_insert(false);
+        *is_collapsed = false; // keep rows expanded; no collapsing like reference
+        let label_meta = build_label_meta_level1(&level_1, aggregate_by, all_cluster);
 
         // Store header info for later if squashing
         if options.squash_resources {
-            header_data.push((level_1.clone(), text_pos, *is_collapsed));
+            header_data.push((level_1.clone(), text_pos, *is_collapsed, label_meta));
         } else {
             // Paint the job info immediately if not squashing
-            paint_job_info(info, &level_1, text_pos, is_collapsed, 1);
+            paint_job_info(
+                info,
+                &level_1,
+                text_pos,
+                is_collapsed,
+                1,
+                gutter_width,
+                options.rect_height,
+                label_meta,
+            );
         }
 
         cursor_y += spacing_between_level_1; // Spacing after the owner
@@ -915,7 +1049,7 @@ fn paint_aggregated_jobs_level_1(
 
     // Now draw all headers on top if squashing is enabled
     if options.squash_resources {
-        for (name, pos, is_collapsed) in header_data {
+        for (name, pos, is_collapsed, label_meta) in header_data {
             // Create a background to make the text more readable
             let galley = info.ctx.fonts(|f| {
                 let collapsed_symbol = if is_collapsed { "⏵" } else { "⏷" };
@@ -928,7 +1062,16 @@ fn paint_aggregated_jobs_level_1(
 
             // Then paint the job info
             let mut is_collapsed_copy = is_collapsed;
-            paint_job_info(info, &name, pos, &mut is_collapsed_copy, 1);
+            paint_job_info(
+                info,
+                &name,
+                pos,
+                &mut is_collapsed_copy,
+                1,
+                gutter_width,
+                options.rect_height,
+                label_meta,
+            );
             // Update the real collapsed state if changed
             if is_collapsed_copy != is_collapsed {
                 *collapsed_jobs.get_mut(&name).unwrap() = is_collapsed_copy;
@@ -954,13 +1097,36 @@ fn paint_aggregated_jobs_level_2(
     all_cluster: &Vec<Cluster>,
     aggregate_by_level_1: AggregateByLevel1Enum,
     aggregate_by_level_2: AggregateByLevel2Enum,
+    gutter_width: f32,
 ) -> f32 {
     let theme_colors = get_theme_colors(&info.ctx.style());
 
-    let spacing_between_level_1 = font_size as f32; // Spacing between level 1 key
-    let spacing_between_level_2 = font_size as f32 + 5.0; // Spacing between level 2 key
-    let spacing_between_jobs = 5.0; // Spacing between jobs
-    let offset_level_1 = 10.0; // Offset for level 1 key
+    // Grid5000-like view: when aggregating Cluster -> Host, only show hosts in the gutter.
+    let hide_level_1_headers = aggregate_by_level_1 == AggregateByLevel1Enum::Cluster
+        && aggregate_by_level_2 == AggregateByLevel2Enum::Host;
+
+    #[derive(Clone)]
+    struct GanttGutterHostRow {
+        host: String,
+        row_rect: Rect,
+    }
+
+    #[derive(Clone)]
+    struct GanttGutterSpan {
+        label: String,
+        rect: Rect,
+    }
+
+    let mut grid5000_host_rows: Vec<GanttGutterHostRow> = Vec::new();
+    let mut grid5000_cluster_spans: Vec<GanttGutterSpan> = Vec::new();
+    let mut grid5000_site_spans: Vec<GanttGutterSpan> = Vec::new();
+
+    let mut current_site: Option<(String, f32, f32)> = None; // (label, top, bottom)
+
+    let spacing_between_level_1 = font_size as f32 * 0.25; // minimal spacing between clusters
+    let spacing_between_level_2 = font_size as f32 * 0.35; // minimal spacing between hosts
+    let spacing_between_jobs = 0.0; // no gap between jobs
+    let offset_level_1 = 6.0; // compact offset for cluster header
 
     cursor_y += spacing_between_level_1;
 
@@ -969,42 +1135,78 @@ fn paint_aggregated_jobs_level_2(
     sorted_level_1.sort_by(|a, b| compare_string_with_number(&a, &b));
 
     // Store header positions and data to draw them last if squashing is enabled
-    let mut header_data_level_1 = Vec::new();
-    let mut header_data_level_2 = Vec::new();
+    let mut header_data_level_1: Vec<(String, Pos2, bool, Option<LabelMeta>)> = Vec::new();
+    let mut header_data_level_2: Vec<(String, String, Pos2, bool, Option<LabelMeta>)> = Vec::new();
 
     for level_1 in sorted_level_1 {
         let level_2_map = jobs.get(&level_1).unwrap();
         let level_1_key = level_1.clone();
 
-        // Draw a line to separate
-        info.painter.line_segment(
-            [
-                pos2(info.canvas.min.x, cursor_y),
-                pos2(info.canvas.max.x, cursor_y),
-            ],
-            Stroke::new(1.5, theme_colors.aggregated_line_level_1), // More marked line
-        );
+        let cluster_site = if hide_level_1_headers {
+            site_for_cluster_name(&level_1, all_cluster).unwrap_or_default()
+        } else {
+            String::new()
+        };
 
-        cursor_y += offset_level_1;
+        let mut cluster_top: Option<f32> = None;
+        let mut cluster_bottom: Option<f32> = None;
 
-        let text_pos = pos2(info.canvas.min.x, cursor_y);
+        if !hide_level_1_headers {
+            // Draw a line to separate
+            info.painter.line_segment(
+                [
+                    pos2(info.canvas.min.x, cursor_y),
+                    pos2(info.canvas.max.x, cursor_y),
+                ],
+                Stroke::new(1.5, theme_colors.aggregated_line_level_1),
+            );
 
-        // Check if the level 1 is collapsed
+            cursor_y += offset_level_1;
+
+            let text_pos = pos2(info.canvas.min.x, cursor_y);
+
+            // Check if the level 1 is collapsed
+            let is_collapsed_level_1 = collapsed_jobs_level_1
+                .entry(level_1.clone())
+                .or_insert(false);
+            *is_collapsed_level_1 = false; // force expanded
+            let label_meta_level_1 =
+                build_label_meta_level1(&level_1, aggregate_by_level_1, all_cluster);
+
+            // Either store header info for later or paint immediately
+            if options.squash_resources {
+                header_data_level_1.push((
+                    level_1.clone(),
+                    text_pos,
+                    *is_collapsed_level_1,
+                    label_meta_level_1,
+                ));
+            } else {
+                // Paint the job info immediately if not squashing
+                paint_job_info(
+                    info,
+                    &level_1,
+                    text_pos,
+                    is_collapsed_level_1,
+                    1,
+                    gutter_width,
+                    options.rect_height,
+                    label_meta_level_1,
+                );
+            }
+
+            cursor_y += spacing_between_level_1;
+        } else {
+            // Minimal spacing between clusters when cluster headers are hidden.
+            cursor_y += spacing_between_level_1;
+        }
+
+        // Only show jobs if section is not collapsed (or always when headers are hidden)
         let is_collapsed_level_1 = collapsed_jobs_level_1
             .entry(level_1.clone())
             .or_insert(false);
+        *is_collapsed_level_1 = false;
 
-        // Either store header info for later or paint immediately
-        if options.squash_resources {
-            header_data_level_1.push((level_1.clone(), text_pos, *is_collapsed_level_1));
-        } else {
-            // Paint the job info immediately if not squashing
-            paint_job_info(info, &level_1, text_pos, is_collapsed_level_1, 1);
-        }
-
-        cursor_y += spacing_between_level_1;
-
-        // Only show jobs if section is not collapsed
         if !*is_collapsed_level_1 {
             // Sort the level 2 keys
             let mut sorted_level_2: Vec<_> = level_2_map.keys().collect();
@@ -1024,12 +1226,23 @@ fn paint_aggregated_jobs_level_2(
 
                     cursor_y += spacing_between_level_2;
 
-                    let text_pos = pos2(info.canvas.min.x + 20.0, cursor_y);
+                    // Align labels to the same center as job rows (fixes scroll/misalignment artifacts)
+                    let row_center_y = cursor_y + spacing_between_level_2;
+
+                    let text_pos = pos2(info.canvas.min.x + 20.0, row_center_y);
 
                     // Check if the level 2 is collapsed
                     let is_collapsed_level_2 = collapsed_jobs_level_2
                         .entry((level_1_key.to_string(), level_2.to_string()))
                         .or_insert(false);
+                    *is_collapsed_level_2 = false; // force expanded
+                    let label_meta_level_2 = build_label_meta_level2(
+                        &level_1,
+                        level_2,
+                        aggregate_by_level_1,
+                        aggregate_by_level_2,
+                        all_cluster,
+                    );
 
                     // Either store header info for later or paint immediately
                     if options.squash_resources {
@@ -1038,16 +1251,38 @@ fn paint_aggregated_jobs_level_2(
                             level_2.to_string(),
                             text_pos,
                             *is_collapsed_level_2,
+                            label_meta_level_2,
                         ));
                     } else {
-                        // Paint the job info immediately if not squashing
-                        paint_job_info(
-                            info,
-                            &level_2.to_string(),
-                            text_pos,
-                            is_collapsed_level_2,
-                            2,
-                        );
+                        if hide_level_1_headers {
+                            // Grid5000-style gutter rows for hosts
+                            let row_height = options.rect_height.max(info.text_height + 10.0);
+                            let row_rect = Rect::from_min_max(
+                                pos2(info.canvas.min.x, row_center_y - row_height * 0.5),
+                                pos2(info.canvas.min.x + gutter_width, row_center_y + row_height * 0.5),
+                            );
+
+                            let host_short = short_host_label(&level_2.to_string());
+                            grid5000_host_rows.push(GanttGutterHostRow {
+                                host: host_short,
+                                row_rect,
+                            });
+
+                            cluster_top = Some(cluster_top.unwrap_or(row_rect.min.y).min(row_rect.min.y));
+                            cluster_bottom = Some(cluster_bottom.unwrap_or(row_rect.max.y).max(row_rect.max.y));
+                        } else {
+                            // Paint the job info immediately if not squashing
+                            paint_job_info(
+                                info,
+                                &level_2.to_string(),
+                                text_pos,
+                                is_collapsed_level_2,
+                                2,
+                                gutter_width,
+                                options.rect_height,
+                                label_meta_level_2,
+                            );
+                        }
                     }
 
                     cursor_y += spacing_between_level_2;
@@ -1076,11 +1311,12 @@ fn paint_aggregated_jobs_level_2(
 
                         // Display jobs
                         for job in job_list.iter() {
-                            // When squashing, use the initial Y position for all jobs in this level
+                            // Align jobs vertically with the host bar
+                            let aligned_y = cursor_y - options.rect_height * 0.5;
                             let job_start_y = if options.squash_resources {
                                 initial_job_y
                             } else {
-                                cursor_y
+                                aligned_y
                             };
 
                             // Adjust aggregation height for the first job of the second level
@@ -1100,14 +1336,13 @@ fn paint_aggregated_jobs_level_2(
 
                             // Only increment cursor if not squashing
                             if !options.squash_resources && !job_list.is_empty() {
-                                cursor_y +=
-                                    info.text_height + spacing_between_jobs + options.spacing;
+                                cursor_y += info.text_height + spacing_between_jobs;
                             }
                         }
 
                         // If we're squashing, just add one line of spacing after all jobs
                         if options.squash_resources {
-                            cursor_y += info.text_height + spacing_between_jobs + options.spacing;
+                            cursor_y += info.text_height + spacing_between_jobs;
                         }
                     }
                     if !options.squash_resources {
@@ -1119,36 +1354,204 @@ fn paint_aggregated_jobs_level_2(
         if !options.squash_resources {
             cursor_y += spacing_between_level_1;
         }
+
+        // Finalize Grid5000-style spans for this cluster
+        if hide_level_1_headers {
+            if let (Some(top), Some(bottom)) = (cluster_top, cluster_bottom) {
+                // Cluster span
+                let site_w = (gutter_width * 0.28).clamp(40.0, 90.0);
+                let cluster_w = (gutter_width * 0.36).clamp(60.0, 120.0);
+
+                grid5000_cluster_spans.push(GanttGutterSpan {
+                    label: level_1.clone(),
+                    rect: Rect::from_min_max(
+                        pos2(info.canvas.min.x + site_w, top),
+                        pos2(info.canvas.min.x + site_w + cluster_w, bottom),
+                    ),
+                });
+
+                // Site span (may cover multiple clusters)
+                if let Some((label, s_top, s_bottom)) = current_site.as_mut() {
+                    if *label == cluster_site {
+                        *s_bottom = (*s_bottom).max(bottom);
+                    } else {
+                        grid5000_site_spans.push(GanttGutterSpan {
+                            label: label.clone(),
+                            rect: Rect::from_min_max(
+                                pos2(info.canvas.min.x, *s_top),
+                                pos2(info.canvas.min.x + site_w, *s_bottom),
+                            ),
+                        });
+                        *label = cluster_site.clone();
+                        *s_top = top;
+                        *s_bottom = bottom;
+                    }
+                } else {
+                    current_site = Some((cluster_site.clone(), top, bottom));
+                }
+            }
+        }
+    }
+
+    // Close last site span
+    if hide_level_1_headers {
+        if let Some((label, top, bottom)) = current_site.take() {
+            let site_w = (gutter_width * 0.28).clamp(40.0, 90.0);
+            grid5000_site_spans.push(GanttGutterSpan {
+                label,
+                rect: Rect::from_min_max(
+                    pos2(info.canvas.min.x, top),
+                    pos2(info.canvas.min.x + site_w, bottom),
+                ),
+            });
+        }
+    }
+
+    // Paint Grid5000-style gutter overlays (site/cluster/host columns) on top.
+    if hide_level_1_headers {
+        let gutter_clip = Rect::from_min_max(
+            info.canvas.min,
+            pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
+        );
+        let gutter_painter = info.painter.with_clip_rect(gutter_clip);
+
+        let site_w = (gutter_width * 0.28).clamp(40.0, 90.0);
+        let cluster_w = (gutter_width * 0.36).clamp(60.0, 120.0);
+        let host_w = (gutter_width - site_w - cluster_w).max(60.0);
+
+        let (c_site, c_cluster, c_host, c_border, c_text) = if info.ctx.style().visuals.dark_mode {
+            (
+                Color32::from_rgb(150, 140, 70),
+                Color32::from_rgb(165, 155, 80),
+                Color32::from_rgb(180, 170, 95),
+                Color32::from_gray(30),
+                Color32::from_gray(10),
+            )
+        } else {
+            (
+                Color32::from_rgb(235, 215, 110),
+                Color32::from_rgb(245, 227, 113),
+                Color32::from_rgb(252, 238, 170),
+                Color32::from_gray(30),
+                Color32::BLACK,
+            )
+        };
+
+        // Column separators
+        gutter_painter.line_segment(
+            [
+                pos2(info.canvas.min.x + site_w, info.canvas.min.y),
+                pos2(info.canvas.min.x + site_w, info.canvas.max.y),
+            ],
+            Stroke::new(1.0, c_border),
+        );
+        gutter_painter.line_segment(
+            [
+                pos2(info.canvas.min.x + site_w + cluster_w, info.canvas.min.y),
+                pos2(info.canvas.min.x + site_w + cluster_w, info.canvas.max.y),
+            ],
+            Stroke::new(1.0, c_border),
+        );
+
+        let font_site = FontId::proportional((info.font_id.size + 1.0).max(12.0));
+        let font_cluster = FontId::proportional((info.font_id.size + 1.0).max(12.0));
+        let font_host = FontId::proportional((info.font_id.size).max(11.0));
+
+        // Site blocks
+        for span in &grid5000_site_spans {
+            gutter_painter.rect_filled(span.rect, 0.0, c_site);
+            gutter_painter.rect(span.rect, 0.0, c_site, Stroke::new(1.0, c_border));
+            let clip = gutter_painter.with_clip_rect(span.rect);
+            clip.text(
+                pos2(span.rect.center().x, span.rect.center().y),
+                Align2::CENTER_CENTER,
+                &span.label,
+                font_site.clone(),
+                c_text,
+            );
+        }
+
+        // Cluster blocks
+        for span in &grid5000_cluster_spans {
+            gutter_painter.rect_filled(span.rect, 0.0, c_cluster);
+            gutter_painter.rect(span.rect, 0.0, c_cluster, Stroke::new(1.0, c_border));
+            let clip = gutter_painter.with_clip_rect(span.rect);
+            clip.text(
+                pos2(span.rect.center().x, span.rect.center().y),
+                Align2::CENTER_CENTER,
+                &span.label,
+                font_cluster.clone(),
+                c_text,
+            );
+        }
+
+        // Host rows
+        for row in &grid5000_host_rows {
+            let host_rect = Rect::from_min_max(
+                pos2(info.canvas.min.x + site_w + cluster_w, row.row_rect.min.y),
+                pos2(info.canvas.min.x + site_w + cluster_w + host_w, row.row_rect.max.y),
+            );
+            gutter_painter.rect_filled(host_rect, 0.0, c_host);
+            gutter_painter.rect(host_rect, 0.0, c_host, Stroke::new(1.0, c_border));
+            let clip = gutter_painter.with_clip_rect(host_rect);
+            clip.text(
+                pos2(host_rect.min.x + 6.0, host_rect.center().y),
+                Align2::LEFT_CENTER,
+                &row.host,
+                font_host.clone(),
+                c_text,
+            );
+        }
     }
 
     // Now draw all headers on top if squashing is enabled
     if options.squash_resources {
-        // First, draw level 1 headers
-        for (name, pos, is_collapsed) in header_data_level_1 {
-            // Create a background to make the text more readable
-            let galley = info.ctx.fonts(|f| {
-                let collapsed_symbol = if is_collapsed { "⏵" } else { "⏷" };
-                let label = format!("{} {}", collapsed_symbol, name);
-                f.layout_no_wrap(label, info.font_id.clone(), theme_colors.text_dim)
-            });
-            let rect = Rect::from_min_size(pos, galley.size());
-            info.painter
-                .rect_filled(rect.expand(4.0), 4.0, theme_colors.background_timeline);
+        // First, draw level 1 headers (unless hidden)
+        if !hide_level_1_headers {
+            for (name, pos, is_collapsed, label_meta) in header_data_level_1 {
+                // Create a background to make the text more readable
+                let galley = info.ctx.fonts(|f| {
+                    let collapsed_symbol = if is_collapsed { "⏵" } else { "⏷" };
+                    let label = format!("{} {}", collapsed_symbol, name);
+                    f.layout_no_wrap(label, info.font_id.clone(), theme_colors.text_dim)
+                });
+                let rect = Rect::from_min_size(pos, galley.size());
+                info.painter
+                    .rect_filled(rect.expand(4.0), 4.0, theme_colors.background_timeline);
 
-            // Then paint the job info
-            let mut is_collapsed_copy = is_collapsed;
-            paint_job_info(info, &name, pos, &mut is_collapsed_copy, 1);
-            // Update the real collapsed state if changed
-            if is_collapsed_copy != is_collapsed {
-                *collapsed_jobs_level_1.get_mut(&name).unwrap() = is_collapsed_copy;
+                // Then paint the job info
+                let mut is_collapsed_copy = is_collapsed;
+                paint_job_info(
+                    info,
+                    &name,
+                    pos,
+                    &mut is_collapsed_copy,
+                    1,
+                    gutter_width,
+                    options.rect_height,
+                    label_meta,
+                );
+                // Update the real collapsed state if changed
+                if is_collapsed_copy != is_collapsed {
+                    *collapsed_jobs_level_1.get_mut(&name).unwrap() = is_collapsed_copy;
+                }
             }
         }
 
         // Then draw level 2 headers on top of everything
-        for (level_1_key, level_2_key, pos, is_collapsed) in header_data_level_2 {
+        for (level_1_key, level_2_key, pos, is_collapsed, label_meta) in header_data_level_2 {
             // Then paint the job info
             let mut is_collapsed_copy = is_collapsed;
-            paint_job_info(info, &level_2_key, pos, &mut is_collapsed_copy, 2);
+            paint_job_info(
+                info,
+                &level_2_key,
+                pos,
+                &mut is_collapsed_copy,
+                2,
+                gutter_width,
+                options.rect_height,
+                label_meta,
+            );
             // Update the real collapsed state if changed
             if is_collapsed_copy != is_collapsed {
                 *collapsed_jobs_level_2
@@ -1160,6 +1563,7 @@ fn paint_aggregated_jobs_level_2(
 
     cursor_y
 }
+
 
 #[derive(PartialEq)]
 enum PaintResult {
@@ -1182,6 +1586,11 @@ fn paint_job(
     aggregation_height: f32,
 ) -> PaintResult {
     let theme_colors = get_theme_colors(&info.ctx.style());
+    let chart_clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
+        pos2(info.canvas.max.x, info.canvas.max.y),
+    );
+    let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
     let start_x = info.point_from_s(options, job.scheduled_start); // Start time
     // If the job is not finished, we use the scheduled start time + walltime otherwise we use the stop time
     let stop_time = if job.stop_time > 0 {
@@ -1227,15 +1636,21 @@ fn paint_job(
         egui::vec2(width.max(options.min_width), height),
     );
 
+    // Clip jobs strictly to the chart area (never into the left gutter).
+    let visible_rect = rect.intersect(chart_clip_rect);
+    if visible_rect.is_negative() {
+        return PaintResult::Culled;
+    }
+
     let is_job_trully_hovered = if let Some(mouse_pos) = info.response.hover_pos() {
-        rect.contains(mouse_pos)
+        visible_rect.contains(mouse_pos)
     } else {
         false
     };
 
     // Update how we determine if a job is hovered
     let is_job_hovered = (if let Some(mouse_pos) = info.response.hover_pos() {
-        rect.contains(mouse_pos)
+        visible_rect.contains(mouse_pos)
     } else {
         false
     }) || options
@@ -1296,7 +1711,7 @@ fn paint_job(
     };
 
     // Paint the job rectangle
-    info.painter.rect_filled(rect, rounding, fill_color);
+    chart_painter.rect_filled(visible_rect, rounding, fill_color);
 
     // Paint ressource hatch
     if state == ResourceState::Dead || state == ResourceState::Absent {
@@ -1333,6 +1748,8 @@ fn paint_job(
             _ => Rect::from_min_max(pos2(0.0, 0.0), pos2(0.0, 0.0)), // draw nothing
         };
 
+        let hover_rect = hover_rect.intersect(chart_clip_rect);
+
         // We check if the mouse is hovering the hachure
         let is_hachure_hovered = if let Some(mouse_pos) = info.response.hover_pos() {
             hover_rect.contains(mouse_pos)
@@ -1361,7 +1778,7 @@ fn paint_job(
             x += hachure_spacing;
         }
 
-        info.painter.extend(shapes);
+        chart_painter.extend(shapes);
 
         // Display tooltip if hovered
         if is_hachure_hovered {
@@ -1369,20 +1786,7 @@ fn paint_job(
         }
     }
 
-    if width > 20.0 {
-        let text = format!("{} ({})", job.owner, job.id);
-        info.painter.text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            text,
-            info.font_id.clone(),
-            if is_job_hovered {
-                theme_colors.text
-            } else {
-                theme_colors.text_dim
-            },
-        );
-    }
+    // Do not overlay text on job bars; keep names in the gutter and tooltips only
 
     if is_job_hovered {
         PaintResult::Hovered
@@ -1394,17 +1798,110 @@ fn paint_job(
 /**
  * Paints a job info appearing on the left side of the canvas
  */
-fn paint_job_info(info: &Info, info_label: &str, pos: Pos2, collapsed: &mut bool, level: u8) {
+fn paint_job_info(
+    info: &Info,
+    info_label: &str,
+    pos: Pos2,
+    collapsed: &mut bool,
+    level: u8,
+    gutter_width: f32,
+    bar_height_hint: f32,
+    label_meta: Option<LabelMeta>,
+) {
     let theme_colors = get_theme_colors(&info.ctx.style());
-    let collapsed_symbol = if *collapsed { "⏵" } else { "⏷" }; // Symbol to show if the section is collapsed or not
-    let label = format!("{} {}", collapsed_symbol, info_label); // Add the symbol and the name of the section
+    // Use the same painter as the canvas to avoid scroll/layer artifacts.
+    let gutter_painter = info.painter.clone();
+
+    // Disable collapsing; always expanded
+    *collapsed = false;
+
+    if let Some(meta) = label_meta {
+        // Only display host rows in the gutter (hide site/cluster headers).
+        let host_full = match meta.host.as_deref() {
+            Some(h) if !h.trim().is_empty() => h,
+            _ => return,
+        };
+
+        let indent = if level == 1 { 0.0 } else { 8.0 };
+        let bar_height = bar_height_hint.max(info.text_height + 10.0);
+        let top = pos.y - bar_height * 0.5;
+        let left = info.canvas.min.x + 2.0 + indent;
+        let total_width = (gutter_width - 4.0 - indent).max(60.0);
+        let rect = Rect::from_min_max(pos2(left, top), pos2(left + total_width, top + bar_height));
+
+        let is_hovered = info
+            .response
+            .hover_pos()
+            .map_or(false, |mouse_pos| rect.contains(mouse_pos));
+
+        // Clip to gutter so long labels never overlap the chart area.
+        let clip_rect = Rect::from_min_max(
+            pos2(info.canvas.min.x, rect.min.y),
+            pos2(info.canvas.min.x + gutter_width, rect.max.y),
+        );
+        let gutter_painter = gutter_painter.with_clip_rect(clip_rect);
+
+        let (label_bg, label_border, label_text_color) = if info.ctx.style().visuals.dark_mode {
+            (
+                Color32::from_gray(40),
+                Stroke::new(1.0, Color32::from_gray(110)),
+                Color32::from_gray(245),
+            )
+        } else {
+            (
+                Color32::from_rgb(240, 238, 210),
+                Stroke::new(1.0, Color32::from_gray(80)),
+                Color32::from_gray(20),
+            )
+        };
+
+        // Paint the full gutter block (subtle colors for readability)
+        gutter_painter.rect_filled(rect, 0.0, label_bg);
+        gutter_painter.rect(rect, 0.0, label_bg, label_border);
+
+        let label_text = short_host_label(host_full);
+
+        let label_x = left + 6.0;
+        let label_font = FontId::proportional((info.font_id.size - 1.0).max(11.0));
+        let label_pos = pos2(label_x, rect.center().y);
+        gutter_painter.text(
+            label_pos,
+            Align2::LEFT_CENTER,
+            label_text,
+            label_font,
+            if is_hovered {
+                theme_colors.text
+            } else {
+                label_text_color
+            },
+        );
+
+        // Tooltip only; keep it minimal (host only)
+        if is_hovered {
+            info.ctx.set_cursor_icon(CursorIcon::PointingHand);
+            let layer_id = LayerId::new(Order::Tooltip, Id::new("gantt-label-layer"));
+            egui::containers::popup::show_tooltip(
+                &info.ctx,
+                layer_id,
+                Id::new(format!("gantt-label-host-{}-{}", info_label, level)),
+                |ui: &mut egui::Ui| {
+                    ui.label(format!("host: {}", host_full));
+                },
+            );
+        }
+
+        return;
+    }
+
+    let label = info_label.to_string();
 
     let galley = info
         .ctx
         .fonts(|f| f.layout_no_wrap(label, info.font_id.clone(), theme_colors.text_dim));
 
-    let offset_x = if level == 1 { 0.0 } else { 50.0 };
-    let rect = Rect::from_min_size(pos2(pos.x + offset_x, pos.y), galley.size());
+    let base_x = info.canvas.min.x + 6.0; // inside gutter
+    let offset_x = if level == 1 { 0.0 } else { 24.0 };
+    let rect = Rect::from_min_size(pos2(base_x + offset_x, pos.y), galley.size());
 
     // Check if the section is hovered
     let is_hovered = if let Some(mouse_pos) = info.response.hover_pos() {
@@ -1420,16 +1917,18 @@ fn paint_job_info(info: &Info, info_label: &str, pos: Pos2, collapsed: &mut bool
         theme_colors.text_dim
     };
 
+    // Clip to gutter so long labels don't spill into the chart.
+    let clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x, rect.min.y - 2.0),
+        pos2(info.canvas.min.x + gutter_width, rect.max.y + 2.0),
+    );
+    let gutter_painter = gutter_painter.with_clip_rect(clip_rect);
+
     // Paint the background and the text
-    info.painter.rect_filled(rect.expand(2.0), 0.0, theme_colors.background);
+    gutter_painter.rect_filled(rect.expand(2.0), 0.0, theme_colors.background);
+    gutter_painter.galley(rect.min, galley, text_color);
 
-    // Paint the text
-    info.painter.galley(rect.min, galley, text_color);
-
-    // If the section is hovered and clicked, we change the collapsed state (open/close)
-    if is_hovered && info.response.clicked() {
-        *collapsed = !(*collapsed);
-    }
+    // No collapse toggle
 }
 
 /****************************************************************************************************************************/
@@ -1463,7 +1962,7 @@ fn paint_timeline_text(
         if line_x > canvas.max.x {
             break;
         }
-
+        
         // If the line is inside the canvas, we paint it
         if canvas.min.x <= line_x {
             let big_line = grid_s % (grid_spacing_minutes * 20) == 0;
@@ -1512,8 +2011,13 @@ fn paint_timeline_text(
     shapes
 }
 
-fn paint_timeline_text_on_top(info: &Info, options: &Options, fixed_timeline_y: f32) {
-    let max_lines = info.canvas.width() / 4.0;
+fn paint_timeline_text_on_top(
+    info: &Info,
+    options: &Options,
+    fixed_timeline_y: f32,
+    gutter_width: f32,
+) {
+    let max_lines = info.usable_width() / 4.0;
     let mut grid_spacing_minutes = 180;
     while options.canvas_width_s / (grid_spacing_minutes as f32) > max_lines {
         grid_spacing_minutes *= 10;
@@ -1533,8 +2037,8 @@ fn paint_timeline_text_on_top(info: &Info, options: &Options, fixed_timeline_y: 
 
     // Paint background rect first
     let bg_rect = Rect::from_min_size(
-        pos2(info.canvas.min.x, fixed_timeline_y),
-        egui::vec2(info.canvas.width(), info.text_height + 5.0),
+        pos2(info.canvas.min.x + gutter_width, fixed_timeline_y),
+        egui::vec2(info.usable_width(), info.text_height + 5.0),
     );
     info.painter
         .rect_filled(bg_rect, 0.0, theme_colors.background_timeline);
@@ -1560,7 +2064,13 @@ fn paint_timeline_text_on_top(info: &Info, options: &Options, fixed_timeline_y: 
 /**
  * Paints the timeline
  */
-fn paint_timeline(info: &Info, canvas: Rect, options: &Options, _start_s: i64) -> Vec<egui::Shape> {
+fn paint_timeline(
+    info: &Info,
+    canvas: Rect,
+    options: &Options,
+    _start_s: i64,
+    _gutter_width: f32,
+) -> Vec<egui::Shape> {
     let mut shapes = vec![];
     let theme_colors = get_theme_colors(&info.ctx.style());
 
@@ -1571,7 +2081,7 @@ fn paint_timeline(info: &Info, canvas: Rect, options: &Options, _start_s: i64) -
         0.8
     };
 
-    let max_lines = canvas.width() / 4.0; // Maximum number of lines that can be displayed
+    let max_lines = info.usable_width() / 4.0; // Maximum number of lines that can be displayed
     let mut grid_spacing_minutes = 180; // 180 seconds = 3 minutes repesenting the grid spacing
 
     while options.canvas_width_s / (grid_spacing_minutes as f32) > max_lines {
@@ -1633,7 +2143,12 @@ fn paint_timeline(info: &Info, canvas: Rect, options: &Options, _start_s: i64) -
 /**
  * Paints the current red time line on the canvas
  */
-fn paint_current_time_line(info: &Info, options: &Options, canvas: Rect) -> egui::Shape {
+fn paint_current_time_line(
+    info: &Info,
+    options: &Options,
+    canvas: Rect,
+    _gutter_width: f32,
+) -> egui::Shape {
     let current_time = chrono::Utc::now().timestamp(); // Current time in seconds
     let line_x = info.point_from_s(options, current_time); // Current time in pixels
 
