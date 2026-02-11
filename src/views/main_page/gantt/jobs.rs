@@ -90,9 +90,12 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
 ) -> f32 {
     let theme_colors = get_theme_colors(&info.ctx.style());
 
-    let spacing_between_level_1 = font_size as f32 * 0.25;
+    let compact = options.compact_rows;
+    let row_height = options.rect_height.max(info.text_height);
+
+    let spacing_between_level_1 = if compact { 0.0 } else { font_size as f32 * 0.25 };
     let spacing_between_jobs = 0.0;
-    let offset_level_1 = 6.0;
+    let offset_level_1 = if compact { 0.0 } else { 6.0 };
 
     cursor_y += spacing_between_level_1;
 
@@ -169,12 +172,12 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
                 );
 
                 if !options.squash_resources {
-                    cursor_y += info.text_height + spacing_between_jobs + options.spacing;
+                    cursor_y += row_height + spacing_between_jobs + options.spacing;
                 }
             }
 
             if options.squash_resources && !job_list.is_empty() {
-                cursor_y += info.text_height + spacing_between_jobs + options.spacing;
+                cursor_y += row_height + spacing_between_jobs + options.spacing;
             }
             if !options.squash_resources {
                 cursor_y += spacing_between_level_1;
@@ -232,6 +235,9 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 ) -> f32 {
     let theme_colors = get_theme_colors(&info.ctx.style());
 
+    let compact = options.compact_rows;
+    let row_height = options.rect_height.max(info.text_height);
+
     let hide_level_1_headers = aggregate_by_level_1 == AggregateByLevel1Enum::Cluster
         && aggregate_by_level_2 == AggregateByLevel2Enum::Host;
 
@@ -253,10 +259,10 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
     let mut current_site: Option<(String, f32, f32)> = None;
 
-    let spacing_between_level_1 = font_size as f32 * 0.25;
-    let spacing_between_level_2 = font_size as f32 * 0.35;
+    let spacing_between_level_1 = if compact { 0.0 } else { font_size as f32 * 0.25 };
+    let spacing_between_level_2 = if compact { 0.0 } else { font_size as f32 * 0.35 };
     let spacing_between_jobs = 0.0;
-    let offset_level_1 = 6.0;
+    let offset_level_1 = if compact { 0.0 } else { 6.0 };
 
     cursor_y += spacing_between_level_1;
 
@@ -345,7 +351,11 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
                     cursor_y += spacing_between_level_2;
 
-                    let row_center_y = cursor_y + spacing_between_level_2;
+                    let row_center_y = if compact {
+                        cursor_y + row_height * 0.5
+                    } else {
+                        cursor_y + spacing_between_level_2
+                    };
 
                     let text_pos = pos2(info.canvas.min.x + 20.0, row_center_y);
 
@@ -370,7 +380,11 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                             label_meta_level_2,
                         ));
                     } else if hide_level_1_headers {
-                        let row_height = options.rect_height.max(info.text_height + 10.0);
+                        let row_height = if compact {
+                            options.rect_height.max(info.text_height)
+                        } else {
+                            options.rect_height.max(info.text_height + 10.0)
+                        };
                         let row_rect = Rect::from_min_max(
                             pos2(info.canvas.min.x, row_center_y - row_height * 0.5),
                             pos2(
@@ -421,7 +435,11 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                         let initial_job_y = cursor_y;
 
                         for job in job_list.iter() {
-                            let aligned_y = cursor_y - options.rect_height * 0.5;
+                            let aligned_y = if compact {
+                                cursor_y
+                            } else {
+                                cursor_y - options.rect_height * 0.5
+                            };
                             let job_start_y = if options.squash_resources {
                                 initial_job_y
                             } else {
@@ -442,12 +460,12 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                             );
 
                             if !options.squash_resources && !job_list.is_empty() {
-                                cursor_y += info.text_height + spacing_between_jobs;
+                                cursor_y += row_height + spacing_between_jobs;
                             }
                         }
 
                         if options.squash_resources {
-                            cursor_y += info.text_height + spacing_between_jobs;
+                            cursor_y += row_height + spacing_between_jobs;
                         }
                     }
                     if !options.squash_resources {
@@ -691,8 +709,9 @@ fn paint_job(
         return PaintResult::Culled;
     }
 
-    let spacing_between_jobs = 5.0;
-    let total_line_height = info.text_height + spacing_between_jobs + options.spacing;
+    let base_line_height = options.rect_height.max(info.text_height);
+    let spacing_between_jobs = if options.compact_rows { 0.0 } else { 5.0 };
+    let total_line_height = base_line_height + spacing_between_jobs + options.spacing;
 
     let height = if options.squash_resources {
         total_line_height + aggregation_height

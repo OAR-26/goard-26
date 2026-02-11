@@ -46,6 +46,7 @@ pub struct Options {
     pub previous_hovered_job: Option<Job>,
     pub current_hovered_resource_state: Option<ResourceState>,
     pub squash_resources: bool,
+    pub compact_rows: bool,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub zoom_to_relative_s_range: Option<(f64, (f64, f64))>,
 }
@@ -58,7 +59,7 @@ impl Default for Options {
             cull_width: 0.0,
             min_width: 1.0,
             rect_height: 16.0,
-            spacing: 5.0,
+            spacing: 0.0,
             rounding: 4.0,
             aggregate_by: Default::default(),
             job_color: Default::default(),
@@ -68,6 +69,7 @@ impl Default for Options {
             squash_resources: false,
             see_all_res: false,
             current_hovered_resource_state: None,
+            compact_rows: true,
         }
     }
 }

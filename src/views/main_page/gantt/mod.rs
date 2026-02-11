@@ -116,6 +116,12 @@ impl View for GanttChart {
                 );
                 ui.separator();
 
+                ui.checkbox(
+                    &mut self.options.compact_rows,
+                    "Compact (Grid5000)",
+                );
+                ui.separator();
+
                 self.options.job_color.ui(ui);
             });
 
