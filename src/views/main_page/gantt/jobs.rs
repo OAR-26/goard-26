@@ -243,7 +243,10 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
     #[derive(Clone)]
     struct GanttGutterHostRow {
-        host: String,
+        host_short: String,
+        host_full: String,
+        cluster: String,
+        site: String,
         row_rect: Rect,
     }
 
@@ -395,7 +398,10 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
                         let host_short = short_host_label(&level_2.to_string());
                         grid5000_host_rows.push(GanttGutterHostRow {
-                            host: host_short,
+                            host_short,
+                            host_full: level_2.to_string(),
+                            cluster: level_1.clone(),
+                            site: cluster_site.clone(),
                             row_rect,
                         });
 
@@ -608,16 +614,42 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     row.row_rect.max.y,
                 ),
             );
+            let is_hovered = info
+                .response
+                .hover_pos()
+                .map_or(false, |mouse_pos| host_rect.contains(mouse_pos));
             gutter_painter.rect_filled(host_rect, 0.0, c_host);
             gutter_painter.rect(host_rect, 0.0, c_host, Stroke::new(1.0, c_border));
             let clip = gutter_painter.with_clip_rect(host_rect);
             clip.text(
                 pos2(host_rect.min.x + 6.0, host_rect.center().y),
                 Align2::LEFT_CENTER,
-                &row.host,
+                &row.host_short,
                 font_host.clone(),
                 c_text,
             );
+
+            if is_hovered {
+                info.ctx.set_cursor_icon(CursorIcon::PointingHand);
+                let layer_id = egui::LayerId::new(
+                    egui::Order::Tooltip,
+                    egui::Id::new("gantt-grid5000-host-tooltip-layer"),
+                );
+                egui::containers::popup::show_tooltip_at_pointer(
+                    &info.ctx,
+                    layer_id,
+                    egui::Id::new(format!("gantt-grid5000-host-tooltip:{}", row.host_full)),
+                    |ui| {
+                        ui.label(format!("host: {}", row.host_full));
+                        if !row.cluster.trim().is_empty() {
+                            ui.label(format!("cluster: {}", row.cluster));
+                        }
+                        if !row.site.trim().is_empty() {
+                            ui.label(format!("site: {}", row.site));
+                        }
+                    },
+                );
+            }
         }
     }
 
