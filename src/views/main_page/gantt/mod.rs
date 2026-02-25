@@ -21,10 +21,108 @@ use crate::{
 };
 use chrono::{Local, TimeZone};
 use eframe::egui;
-use egui::{Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
-use std::collections::BTreeMap;
+use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
+use std::collections::{BTreeMap, HashSet};
 
 use self::types::{Info, Options, GUTTER_WIDTH};
+use self::{labels::site_for_cluster_name, labels::short_host_label};
+
+fn compute_gutter_width(
+    ctx: &egui::Context,
+    base_font: &FontId,
+    options: &Options,
+    app: &ApplicationContext,
+    all_clusters: &Vec<crate::models::data_structure::cluster::Cluster>,
+) -> f32 {
+    let pad = 12.0;
+    let min_w = GUTTER_WIDTH;
+
+    // Grid5000-like gutter: Cluster (level 1) + Host (level 2)
+    let is_grid5000 = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
+        && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
+    if is_grid5000 {
+        let font_site = FontId::proportional((base_font.size + 1.0).max(12.0));
+        let font_cluster = FontId::proportional((base_font.size + 1.0).max(12.0));
+        let font_host = FontId::proportional((base_font.size).max(11.0));
+
+        let mut max_site = "site".to_string();
+        let mut max_cluster = "cluster".to_string();
+        let mut max_host = "host".to_string();
+
+        // Basé uniquement sur ce qui est affiché (jobs filtrés): n'inclut pas les hosts vides
+        for job in app.filtered_jobs.iter() {
+            for cluster_name in job.clusters.iter() {
+                if cluster_name.len() > max_cluster.len() {
+                    max_cluster = cluster_name.clone();
+                }
+                let site = site_for_cluster_name(cluster_name, all_clusters).unwrap_or_default();
+                if site.len() > max_site.len() {
+                    max_site = site;
+                }
+            }
+            for host in job.hosts.iter() {
+                let host_short = short_host_label(host);
+                if host_short.len() > max_host.len() {
+                    max_host = host_short;
+                }
+            }
+        }
+
+        let site_w = ctx
+            .fonts(|f| f.layout_no_wrap(max_site, font_site, Color32::BLACK).size().x)
+            + pad;
+        let cluster_w = ctx
+            .fonts(|f| f.layout_no_wrap(max_cluster, font_cluster, Color32::BLACK).size().x)
+            + pad;
+        let host_w = ctx
+            .fonts(|f| f.layout_no_wrap(max_host, font_host, Color32::BLACK).size().x)
+            + pad;
+
+        return (site_w + cluster_w + host_w).clamp(min_w, 650.0);
+    }
+
+    // Generic gutter: pick max label width among currently aggregated keys.
+    let mut max_label = "label".to_string();
+    for job in app.filtered_jobs.iter() {
+        match options.aggregate_by.level_1 {
+            AggregateByLevel1Enum::Owner => {
+                if job.owner.len() > max_label.len() {
+                    max_label = job.owner.clone();
+                }
+            }
+            AggregateByLevel1Enum::Host => {
+                for host in job.hosts.iter() {
+                    if host.len() > max_label.len() {
+                        max_label = host.clone();
+                    }
+                }
+                if options.aggregate_by.level_2 == AggregateByLevel2Enum::Owner
+                    && job.owner.len() > max_label.len()
+                {
+                    max_label = job.owner.clone();
+                }
+            }
+            AggregateByLevel1Enum::Cluster => {
+                for cluster in job.clusters.iter() {
+                    if cluster.len() > max_label.len() {
+                        max_label = cluster.clone();
+                    }
+                }
+                if options.aggregate_by.level_2 == AggregateByLevel2Enum::Owner
+                    && job.owner.len() > max_label.len()
+                {
+                    max_label = job.owner.clone();
+                }
+            }
+        }
+    }
+
+    let text_w = ctx
+        .fonts(|f| f.layout_no_wrap(max_label, base_font.clone(), Color32::BLACK).size().x)
+        + 60.0; // marge pour indentation + padding
+
+    text_w.clamp(min_w, 520.0)
+}
 
 pub struct GanttChart {
     options: Options,
@@ -33,6 +131,8 @@ pub struct GanttChart {
     collapsed_jobs_level_2: BTreeMap<(String, String), bool>,
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
+
+    last_aggregate_by: (AggregateByLevel1Enum, AggregateByLevel2Enum),
 }
 
 impl Default for GanttChart {
@@ -44,6 +144,8 @@ impl Default for GanttChart {
             collapsed_jobs_level_2: BTreeMap::new(),
             initial_start_s: None,
             initial_end_s: None,
+
+            last_aggregate_by: (AggregateByLevel1Enum::Cluster, AggregateByLevel2Enum::Host),
         }
     }
 }
@@ -51,6 +153,43 @@ impl Default for GanttChart {
 impl View for GanttChart {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         ui.heading(RichText::new(t!("app.gantt.title")).strong());
+
+        // Indicateur de complétude: ce qui est affiché (jobs filtrés) vs ce qui est chargé (ressources)
+        let total_clusters = app.all_clusters.len();
+        let total_hosts: usize = app.all_clusters.iter().map(|c| c.hosts.len()).sum();
+        let mut displayed_clusters: HashSet<String> = HashSet::new();
+        let mut displayed_hosts: HashSet<String> = HashSet::new();
+        for job in app.filtered_jobs.iter() {
+            for c in job.clusters.iter() {
+                if !c.trim().is_empty() {
+                    displayed_clusters.insert(c.clone());
+                }
+            }
+            for h in job.hosts.iter() {
+                if !h.trim().is_empty() {
+                    displayed_hosts.insert(h.clone());
+                }
+            }
+        }
+
+        let refreshing = *app.is_refreshing.lock().unwrap_or_else(|p| p.into_inner());
+        let status = if refreshing {
+            "refreshing"
+        } else if app.is_loading {
+            "loading"
+        } else {
+            "ready"
+        };
+
+        ui.label(format!(
+            "Data: jobs={} | clusters affichés {}/{} | hosts affichés {}/{} | {}",
+            app.filtered_jobs.len(),
+            displayed_clusters.len(),
+            total_clusters,
+            displayed_hosts.len(),
+            total_hosts,
+            status
+        ));
 
         let reset_view = false;
 
@@ -63,7 +202,18 @@ impl View for GanttChart {
             ui.menu_button(t!("app.gantt.settings.title"), |ui| {
                 ui.set_max_height(500.0);
 
+                let before = (self.options.aggregate_by.level_1, self.options.aggregate_by.level_2);
                 self.options.aggregate_by.ui(ui);
+                let after = (self.options.aggregate_by.level_1, self.options.aggregate_by.level_2);
+                if after != before || after != self.last_aggregate_by {
+                    self.last_aggregate_by = after;
+                    self.collapsed_jobs_level_1.clear();
+                    self.collapsed_jobs_level_2.clear();
+                    self.job_details_windows.clear();
+                    self.options.current_hovered_job = None;
+                    self.options.previous_hovered_job = None;
+                    self.options.current_hovered_resource_state = None;
+                }
                 ui.separator();
 
                 if (self.options.aggregate_by.level_1 != AggregateByLevel1Enum::Owner
@@ -156,16 +306,20 @@ impl View for GanttChart {
                 let min_s = self.initial_start_s.unwrap();
                 let max_s = self.initial_end_s.unwrap();
 
+                let base_font = TextStyle::Body.resolve(ui.style());
+                let gutter_width =
+                    compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
+
                 let info = Info {
                     ctx: ui.ctx().clone(),
                     canvas,
                     response,
                     painter: ui.painter_at(canvas),
-                    text_height: app.font_size as f32,
+                    text_height: ui.text_style_height(&TextStyle::Body),
                     start_s: min_s,
                     stop_s: max_s,
-                    font_id: TextStyle::Body.resolve(ui.style()),
-                    gutter_width: GUTTER_WIDTH,
+                    font_id: base_font,
+                    gutter_width,
                 };
 
                 if reset_view {
@@ -189,7 +343,7 @@ impl View for GanttChart {
                     &mut self.collapsed_jobs_level_1,
                     &mut self.collapsed_jobs_level_2,
                     &app.all_clusters,
-                    GUTTER_WIDTH,
+                    gutter_width,
                 );
 
                 let mut used_rect = canvas;
@@ -198,12 +352,12 @@ impl View for GanttChart {
                 used_rect.max.y = used_rect.max.y.max(used_rect.min.y + available_height);
 
                 let timeline_shapes =
-                    timeline::paint_timeline(&info, used_rect, &self.options, min_s, GUTTER_WIDTH);
+                    timeline::paint_timeline(&info, used_rect, &self.options, min_s, gutter_width);
                 info.painter
                     .set(where_to_put_timeline, Shape::Vec(timeline_shapes));
 
                 let current_time_line =
-                    timeline::paint_current_time_line(&info, &self.options, used_rect, GUTTER_WIDTH);
+                    timeline::paint_current_time_line(&info, &self.options, used_rect, gutter_width);
                 info.painter.add(current_time_line);
 
                 ui.allocate_rect(used_rect, Sense::hover());

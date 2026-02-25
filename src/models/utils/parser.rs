@@ -149,6 +149,13 @@ pub fn parse_state_from_json(json_str: &str) -> Result<JobState, serde_json::Err
 }
 
 fn from_json_value(json: &Value) -> Job {
+    let queue = json
+        .get("queue_name")
+        .and_then(|v| v.as_str())
+        .or_else(|| json.get("queue").and_then(|v| v.as_str()))
+        .unwrap_or("default")
+        .to_string();
+
     Job {
         id: json["id"]
             .as_str()
@@ -164,7 +171,7 @@ fn from_json_value(json: &Value) -> Job {
         command: json["command"].as_str().unwrap_or("").to_string(),
         walltime: json["walltime"].as_i64().unwrap_or(0) as i64,
         message: json["message"].as_str().map(|s| s.to_string()),
-        queue: json["queue"].as_str().unwrap_or("default").to_string(),
+        queue,
         assigned_resources: json["resource_id"]
             .as_array()
             .unwrap_or(&Vec::new())

@@ -44,6 +44,9 @@ pub struct ApplicationContext {
 
     pub font_size: i32,
     pub see_all_jobs: bool,
+
+    // UI requests (set by views, consumed by Menu/Options)
+    pub theme_toggle_requested: bool,
 }
 
 impl ApplicationContext {
@@ -470,6 +473,8 @@ impl Default for ApplicationContext {
 
             font_size: 16,
             see_all_jobs: false,
+
+            theme_toggle_requested: false,
         };
         context.update_periodically();
         context

@@ -10,7 +10,7 @@ use crate::models::utils::utils::{
 };
 use crate::views::components::gantt_aggregate_by::{AggregateByLevel1Enum, AggregateByLevel2Enum};
 use crate::views::components::job_details::JobDetailsWindow;
-use egui::{pos2, Color32, Rect, Stroke};
+use egui::{pos2, Rect, Stroke};
 use std::collections::BTreeMap;
 
 pub(super) fn ui_canvas(
@@ -34,17 +34,9 @@ pub(super) fn ui_canvas(
     cursor_y += info.text_height;
 
     let theme_colors = get_theme_colors(&info.ctx.style());
-    let is_grid5000_gutter = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
-        && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
-    let gutter_bg = if is_grid5000_gutter {
-        if info.ctx.style().visuals.dark_mode {
-            Color32::from_rgb(125, 115, 55)
-        } else {
-            Color32::from_rgb(245, 227, 113)
-        }
-    } else {
-        theme_colors.background
-    };
+    // Fond du gutter identique partout : en mode Grid5000, les colonnes (site/cluster/host)
+    // sont dessinées dans jobs.rs et ne doivent pas teinter toute la zone (évite les zones jaunes vides).
+    let gutter_bg = theme_colors.background;
 
     let gutter_rect = Rect::from_min_max(
         pos2(info.canvas.min.x, info.canvas.min.y),
@@ -164,7 +156,9 @@ pub(super) fn ui_canvas(
 
                 for job in jobs.iter() {
                     for cluster in job.clusters.iter() {
-                        if filtered_clusters.len() != 0 && contains_cluster(&filtered_clusters, cluster) {
+                        if filtered_clusters.len() != 0
+                            && !contains_cluster(&filtered_clusters, cluster)
+                        {
                             continue;
                         }
                         jobs_by_cluster_by_owner
@@ -198,7 +192,9 @@ pub(super) fn ui_canvas(
 
                 for job in jobs.iter() {
                     for cluster in job.clusters.iter() {
-                        if filtered_clusters.len() != 0 && contains_cluster(&filtered_clusters, cluster) {
+                        if filtered_clusters.len() != 0
+                            && !contains_cluster(&filtered_clusters, cluster)
+                        {
                             continue;
                         }
                         jobs_by_cluster
@@ -228,18 +224,23 @@ pub(super) fn ui_canvas(
                 let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
 
                 for job in jobs.iter() {
-                    for cluster in job.clusters.iter() {
+                    for cluster_name in job.clusters.iter() {
+                        if filtered_clusters.len() != 0
+                            && !contains_cluster(&filtered_clusters, cluster_name)
+                        {
+                            continue;
+                        }
+
+                        let curr_cluster = match get_cluster_from_name(&app.all_clusters, cluster_name)
+                        {
+                            Some(c) => c,
+                            None => continue,
+                        };
+
                         for host in job.hosts.iter() {
-                            if filtered_clusters.len() != 0 && !contains_host(&filtered_clusters, host) {
-                                continue;
-                            }
-
-                            let curr_cluster =
-                                get_cluster_from_name(&app.all_clusters, cluster).unwrap();
-
                             if cluster_contain_host(&curr_cluster, host) {
                                 jobs_by_cluster_by_host
-                                    .entry(cluster.clone())
+                                    .entry(cluster_name.clone())
                                     .or_insert_with(BTreeMap::new)
                                     .entry(host.clone())
                                     .or_insert_with(Vec::new)

@@ -8,18 +8,8 @@ pub(super) struct LabelMeta {
 pub(super) fn short_host_label(host: &str) -> String {
     let first = host.split('.').next().unwrap_or(host).trim();
 
-    if let Some(idx) = first.rfind('-') {
-        let (left, right_with_dash) = first.split_at(idx);
-        let right = right_with_dash.trim_start_matches('-');
-        if !left.is_empty()
-            && !right.is_empty()
-            && left.chars().all(|c| c.is_ascii_alphanumeric())
-            && right.chars().all(|c| c.is_ascii_digit())
-        {
-            return format!("{}{}", left, right);
-        }
-    }
-
+    // Grid5000 affiche typiquement les hosts sous la forme "cluster-<n>".
+    // On conserve donc le tiret et on retire uniquement le FQDN.
     first.to_string()
 }
 

@@ -62,6 +62,14 @@ impl Options {
         self.apply_font_size(ctx, app_font_size);
     }
 
+    pub fn toggle_theme(&mut self, ctx: &egui::Context) {
+        self.application_options.selected_theme = match self.application_options.selected_theme {
+            ThemeOption::Dark => ThemeOption::Light,
+            ThemeOption::Light => ThemeOption::Dark,
+        };
+        self.apply_theme(ctx);
+    }
+
     fn apply_theme(&self, ctx: &egui::Context) {
         let new_visuals = match self.application_options.selected_theme {
             ThemeOption::Dark => egui::Visuals::dark(),
@@ -117,7 +125,6 @@ impl Options {
                     .spacing([10.0, 8.0])
                     .striped(true)
                     .show(ui, |ui| {
-                        self.render_theme_selector(ui);
                         self.render_language_selector(ui);
                         self.render_font_size_selector(ui, app_font_size);
                     });
@@ -185,27 +192,4 @@ impl Options {
         ui.end_row();
     }
 
-    fn render_theme_selector(&mut self, ui: &mut egui::Ui) {
-        ui.label(t!("app.options.theme.title"));
-        egui::ComboBox::from_label(t!("app.options.theme.choose"))
-            .selected_text(format!("{:?}", self.application_options.selected_theme))
-            .show_ui(ui, |ui| {
-                for (theme, label) in [
-                    (ThemeOption::Dark, t!("app.options.theme.dark")),
-                    (ThemeOption::Light, t!("app.options.theme.light")),
-                ] {
-                    if ui
-                        .selectable_value(
-                            &mut self.application_options.selected_theme,
-                            theme,
-                            label,
-                        )
-                        .clicked()
-                    {
-                        self.apply_theme(ui.ctx());
-                    }
-                }
-            });
-        ui.end_row();
-    }
 }

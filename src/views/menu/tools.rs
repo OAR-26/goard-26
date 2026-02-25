@@ -91,6 +91,22 @@ impl View for Tools {
                     app.instant_update();
                 }
 
+                // Theme toggle (one click: light <-> dark)
+                let is_dark = ui.ctx().style().visuals.dark_mode;
+                let theme_label = if is_dark { "☀" } else { "🌙" };
+                let theme_hint = if is_dark {
+                    "Switch to Light"
+                } else {
+                    "Switch to Dark"
+                };
+                if ui
+                    .add(egui::Button::new(theme_label))
+                    .on_hover_text(theme_hint)
+                    .clicked()
+                {
+                    app.theme_toggle_requested = true;
+                }
+
                 // Menu Refresh Rate
                 ui.menu_button(
                     "🕓 ".to_string() + &t!("app.menu.refresh_rate.button"),
