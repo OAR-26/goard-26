@@ -7,6 +7,7 @@ use super::types::{Info, Options};
 use crate::models::data_structure::cluster::Cluster;
 use crate::models::data_structure::job::Job;
 use crate::models::data_structure::resource::ResourceState;
+use crate::models::data_structure::application_context::ApplicationContext;
 use crate::models::utils::date_converter::format_timestamp;
 use crate::models::utils::utils::{
     compare_string_with_number, get_cluster_state_from_name, get_host_state_from_name,
@@ -19,7 +20,145 @@ use egui::{
 };
 use std::collections::BTreeMap;
 
-pub(super) fn paint_tooltip(info: &Info, options: &mut Options) {
+fn json_value_to_inline(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::Null => None,
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(arr) => {
+            let mut parts: Vec<String> = Vec::new();
+            for x in arr {
+                if let Some(s) = json_value_to_inline(x) {
+                    let t = s.trim();
+                    if !t.is_empty() {
+                        parts.push(t.to_string());
+                    }
+                }
+            }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(", "))
+            }
+        }
+        serde_json::Value::Object(_) => Some(v.to_string()),
+    }
+}
+
+fn format_cpuset_grid5000(values: &mut Vec<i32>) -> Option<String> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    values.dedup();
+
+    if values.len() == 1 {
+        return Some(values[0].to_string());
+    }
+
+    // If contiguous (step 1), compress for readability.
+    let mut contiguous = true;
+    for w in values.windows(2) {
+        if w[1] != w[0] + 1 {
+            contiguous = false;
+            break;
+        }
+    }
+    if contiguous {
+        return Some(format!("{}-{}", values[0], values[values.len() - 1]));
+    }
+
+    // Non-contiguous: show explicit list like Grid5000.
+    Some(values.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "))
+}
+
+fn extract_ints_from_str(s: &str) -> Vec<i32> {
+    // Extract all positive integer tokens from an arbitrary string.
+    // Examples:
+    // - "0, 1, 2" -> [0,1,2]
+    // - "0-31" -> [0,31] (we can't infer the full range from this alone)
+    let mut out: Vec<i32> = Vec::new();
+    let mut cur: i64 = 0;
+    let mut in_num = false;
+    for ch in s.chars() {
+        if ch.is_ascii_digit() {
+            in_num = true;
+            cur = cur * 10 + (ch as i64 - '0' as i64);
+        } else if in_num {
+            if cur <= i32::MAX as i64 {
+                out.push(cur as i32);
+            }
+            cur = 0;
+            in_num = false;
+        }
+    }
+    if in_num && cur <= i32::MAX as i64 {
+        out.push(cur as i32);
+    }
+    out
+}
+
+fn cpuset_like_grid5000(s: &crate::models::data_structure::strata::Strata) -> Option<String> {
+    // Goal: display like Grid5000: a compact list of CPU indexes.
+    // - If cpuset is an explicit list: compact it into ranges.
+    // - If cpuset is a scalar/string in OAR resources: derive indexes from core_count (preferred) or thread_count.
+    // - Format is bracketed ranges: [0-31] or [0-3, 5, 7-9]
+
+    if let Some(v) = s.cpuset.as_ref() {
+        match v {
+            serde_json::Value::Array(arr) => {
+                let mut ints: Vec<i32> = Vec::new();
+                for x in arr {
+                    match x {
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                if (0..=i32::MAX as i64).contains(&i) {
+                                    ints.push(i as i32);
+                                }
+                            }
+                        }
+                        serde_json::Value::String(s) => {
+                            for i in extract_ints_from_str(s) {
+                                ints.push(i);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(s) = format_cpuset_grid5000(&mut ints) {
+                    return Some(s);
+                }
+            }
+            serde_json::Value::String(raw) => {
+                // If we get a comma-separated string list, compact it.
+                let mut ints = extract_ints_from_str(raw);
+                if ints.len() > 1 {
+                    if let Some(s) = format_cpuset_grid5000(&mut ints) {
+                        return Some(s);
+                    }
+                }
+            }
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    if (0..=i32::MAX as i64).contains(&i) {
+                        return Some(format!("[{}]", i));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let count = s.core_count.or(s.thread_count).unwrap_or(0);
+    if count <= 0 {
+        return None;
+    }
+    // Fallback when we don't have an explicit list: assume 0..count-1.
+    Some(format!("0-{}", count - 1))
+}
+
+pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &ApplicationContext) {
     let mut tooltip_text = String::new();
 
     if let Some(job) = &options.current_hovered_job {
@@ -42,23 +181,73 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options) {
         if !tooltip_text.is_empty() {
             tooltip_text.push_str("\n");
         }
+
+        let kind_label = if (options.aggregate_by.level_2 == AggregateByLevel2Enum::None
+            && options.aggregate_by.level_1 == AggregateByLevel1Enum::Host)
+            || options.aggregate_by.level_2 == AggregateByLevel2Enum::Host
+        {
+            "Host"
+        } else if options.aggregate_by.level_2 == AggregateByLevel2Enum::None
+            && options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
+        {
+            "Cluster"
+        } else {
+            "Resource"
+        };
+
+        if let Some(label) = options.current_hovered_resource_label.as_deref() {
+            let trimmed = label.trim();
+            if !trimmed.is_empty() {
+                tooltip_text.push_str(&format!("{}: {}\n", kind_label.to_lowercase(), trimmed));
+
+                // Grid5000-like: show the resource/host metadata when available.
+                let mut keys_to_try: Vec<String> = Vec::new();
+                keys_to_try.push(trimmed.to_string());
+                keys_to_try.push(trimmed.split('.').next().unwrap_or(trimmed).to_string());
+                for key in keys_to_try {
+                    if let Some(s) = app.strata_by_host.get(&key) {
+                        if let Some(cluster) = s.cluster.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                            tooltip_text.push_str(&format!("cluster: {}\n", cluster));
+                        }
+                        if let Some(net) = s
+                            .network_address
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty())
+                        {
+                            tooltip_text.push_str(&format!("network_address: {}\n", net));
+                        }
+                        if let Some(comment) = s.comment.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                            tooltip_text.push_str(&format!("comment: {}\n", comment));
+                        }
+                        if let Some(cpuset) = cpuset_like_grid5000(s) {
+                            let cpuset = cpuset.trim();
+                            if !cpuset.is_empty() {
+                                tooltip_text.push_str(&format!("cpuset: {}\n", cpuset));
+                            }
+                        }
+                        if let Some(model) = s.nodemodel.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                            tooltip_text.push_str(&format!("nodemodel: {}\n", model));
+                        }
+                        if let Some(cpu) = s.cputype.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                            tooltip_text.push_str(&format!("cputype: {}\n", cpu));
+                        }
+                        if let Some(rid) = s.resource_id {
+                            tooltip_text.push_str(&format!("resource_id: {}\n", rid));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
         tooltip_text.push_str(&format!(
             "{} State: {:?}",
-            if (options.aggregate_by.level_2 == AggregateByLevel2Enum::None
-                && options.aggregate_by.level_1 == AggregateByLevel1Enum::Host)
-                || options.aggregate_by.level_2 == AggregateByLevel2Enum::Host
-            {
-                "Host"
-            } else if options.aggregate_by.level_2 == AggregateByLevel2Enum::None
-                && options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
-            {
-                "Cluster"
-            } else {
-                "Resource"
-            },
+            kind_label,
             resource_state
         ));
         options.current_hovered_resource_state = None;
+        options.current_hovered_resource_label = None;
     }
 
     if !tooltip_text.is_empty() {
@@ -87,6 +276,7 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
     all_cluster: &Vec<Cluster>,
     aggregate_by: AggregateByLevel1Enum,
     gutter_width: f32,
+    app: &ApplicationContext,
 ) -> f32 {
     let theme_colors = get_theme_colors(&info.ctx.style());
 
@@ -119,7 +309,8 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
 
         cursor_y += offset_level_1;
 
-        let text_pos = pos2(info.canvas.min.x, cursor_y);
+        // paint_job_info expects a center Y
+        let text_pos = pos2(info.canvas.min.x + 6.0, cursor_y + info.text_height * 0.5);
 
         let is_collapsed = collapsed_jobs.entry(level_1.clone()).or_insert(false);
         *is_collapsed = false;
@@ -138,6 +329,7 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
                 options.rect_height,
                 compact,
                 label_meta,
+                app,
             );
         }
 
@@ -149,6 +341,11 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
             get_host_state_from_name(all_cluster, &level_1)
         } else {
             get_cluster_state_from_name(all_cluster, &level_1)
+        };
+
+        let resource_label_for_state_tooltip = match aggregate_by {
+            AggregateByLevel1Enum::Host | AggregateByLevel1Enum::Cluster => Some(level_1.as_str()),
+            AggregateByLevel1Enum::Owner => None,
         };
 
         if !*is_collapsed {
@@ -170,6 +367,7 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
                     all_cluster,
                     state,
                     aggregation_height,
+                    resource_label_for_state_tooltip,
                 );
             }
 
@@ -207,6 +405,7 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
                 options.rect_height,
                 compact,
                 label_meta,
+                app,
             );
             if is_collapsed_copy != is_collapsed {
                 *collapsed_jobs.get_mut(&name).unwrap() = is_collapsed_copy;
@@ -230,11 +429,21 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
     aggregate_by_level_1: AggregateByLevel1Enum,
     aggregate_by_level_2: AggregateByLevel2Enum,
     gutter_width: f32,
+    app: &ApplicationContext,
 ) -> f32 {
     let theme_colors = get_theme_colors(&info.ctx.style());
 
     let compact = options.compact_rows;
-    let row_height = options.rect_height.max(info.text_height);
+    // In Host -> Owner with compact mode, owner badges need a bit more vertical room to avoid overlap.
+    let extra_row_pad = if compact
+        && aggregate_by_level_1 == AggregateByLevel1Enum::Host
+        && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
+    {
+        8.0
+    } else {
+        0.0
+    };
+    let row_height = options.rect_height.max(info.text_height + extra_row_pad);
 
     let hide_level_1_headers = aggregate_by_level_1 == AggregateByLevel1Enum::Cluster
         && aggregate_by_level_2 == AggregateByLevel2Enum::Host;
@@ -275,6 +484,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
     let mut header_data_level_2: Vec<(String, String, Pos2, bool, Option<LabelMeta>)> = Vec::new();
 
     for level_1 in sorted_level_1 {
+        let level_1_section_top = cursor_y;
         let level_2_map = jobs.get(&level_1).unwrap();
         let level_1_key = level_1.clone();
 
@@ -298,7 +508,18 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
             cursor_y += offset_level_1;
 
-            let text_pos = pos2(info.canvas.min.x, cursor_y);
+            // In compact mode, we MUST reserve vertical space for the level_1 header row.
+            // Otherwise the header label is drawn at the same Y as the first level_2 row,
+            // producing visible overlaps.
+            let header_height = if compact {
+                options.rect_height.max(info.text_height + 2.0)
+            } else {
+                info.text_height
+            };
+            let header_center_y = cursor_y + header_height * 0.5;
+
+            // paint_job_info expects a center Y
+            let text_pos = pos2(info.canvas.min.x + 6.0, header_center_y);
 
             let is_collapsed_level_1 = collapsed_jobs_level_1
                 .entry(level_1.clone())
@@ -325,7 +546,12 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     options.rect_height,
                     compact,
                     label_meta_level_1,
+                    app,
                 );
+            }
+
+            if compact {
+                cursor_y += header_height;
             }
 
             cursor_y += spacing_between_level_1;
@@ -360,7 +586,12 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                         cursor_y + spacing_between_level_2
                     };
 
-                    let text_pos = pos2(info.canvas.min.x + 20.0, row_center_y);
+                    let indent_x = if aggregate_by_level_1 == AggregateByLevel1Enum::Host {
+                        32.0
+                    } else {
+                        20.0
+                    };
+                    let text_pos = pos2(info.canvas.min.x + indent_x, row_center_y);
 
                     let is_collapsed_level_2 = collapsed_jobs_level_2
                         .entry((level_1_key.to_string(), level_2.to_string()))
@@ -416,6 +647,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                             options.rect_height,
                             compact,
                             label_meta_level_2,
+                            app,
                         );
                     }
 
@@ -461,11 +693,32 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                                 all_cluster,
                                 state,
                                 adjusted_aggregation_height,
+                                if aggregate_by_level_2 == AggregateByLevel2Enum::Host {
+                                    Some(level_2.as_str())
+                                } else if aggregate_by_level_2 == AggregateByLevel2Enum::None {
+                                    if aggregate_by_level_1 == AggregateByLevel1Enum::Host
+                                        || aggregate_by_level_1 == AggregateByLevel1Enum::Cluster
+                                    {
+                                        Some(level_1.as_str())
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                },
                             );
                         }
 
                         if !job_list.is_empty() {
-                            cursor_y += row_height + spacing_between_jobs + options.spacing;
+                            let row_spacing = if compact
+                                && aggregate_by_level_1 == AggregateByLevel1Enum::Host
+                                && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
+                            {
+                                2.0
+                            } else {
+                                options.spacing
+                            };
+                            cursor_y += row_height + spacing_between_jobs + row_spacing;
                         }
                     }
                     if !options.squash_resources {
@@ -476,6 +729,47 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
         }
         if !options.squash_resources {
             cursor_y += spacing_between_level_1;
+        }
+
+        // Hover feedback for Host aggregation: show a clear left marker for the whole host section
+        // even when hovering the job bars area (not only the label widget).
+        if aggregate_by_level_1 == AggregateByLevel1Enum::Host
+            && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
+        {
+            let section_bottom = cursor_y;
+            if let Some(mouse) = info.response.hover_pos() {
+                if mouse.y >= level_1_section_top
+                    && mouse.y <= section_bottom
+                    && mouse.x >= info.canvas.min.x
+                    && mouse.x <= info.canvas.max.x
+                {
+                    let visuals = info.ctx.style().visuals.clone();
+                    let fill = visuals.selection.bg_fill;
+                    let stroke = visuals.selection.stroke.color;
+                    let alpha_fill = Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 70);
+
+                    let gutter_clip = Rect::from_min_max(
+                        info.canvas.min,
+                        pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
+                    );
+                    let gutter_painter = info.painter.with_clip_rect(gutter_clip);
+
+                    let marker_rect = Rect::from_min_max(
+                        pos2(info.canvas.min.x, level_1_section_top),
+                        pos2(info.canvas.min.x + 4.0, section_bottom),
+                    );
+                    gutter_painter.rect_filled(marker_rect, 0.0, alpha_fill);
+
+                    // Guide line at current pointer Y
+                    info.painter.line_segment(
+                        [
+                            pos2(info.canvas.min.x + gutter_width, mouse.y),
+                            pos2(info.canvas.max.x, mouse.y),
+                        ],
+                        Stroke::new(1.0, stroke),
+                    );
+                }
+            }
         }
 
         if hide_level_1_headers {
@@ -702,6 +996,92 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                             if !row.site.trim().is_empty() {
                                 ui.label(format!("site: {}", row.site));
                             }
+
+                            let key_full = row.host_full.trim();
+                            let key_short = short_host_label(key_full);
+                            if let Some(s) = app
+                                .strata_by_host
+                                .get(key_full)
+                                .or_else(|| app.strata_by_host.get(&key_short))
+                            {
+                                if let Some(b) = s
+                                    .besteffort
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty())
+                                {
+                                    ui.label(format!("besteffort: {}", b));
+                                }
+                                if let Some(comment) = s
+                                    .comment
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty())
+                                {
+                                    ui.label(format!("comment: {}", comment));
+                                }
+                                if let Some(cpuset) = cpuset_like_grid5000(s) {
+                                    let cpuset = cpuset.trim();
+                                    if !cpuset.is_empty() {
+                                        ui.label(format!("cpuset: {}", cpuset));
+                                    }
+                                }
+                                if let Some(dep) = s
+                                    .deploy
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty())
+                                {
+                                    ui.label(format!("deploy: {}", dep));
+                                }
+                                if let Some(dr) = s
+                                    .drain
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty())
+                                {
+                                    ui.label(format!("drain: {}", dr));
+                                }
+                                if let Some(g) = s.gpudevice.as_ref().and_then(json_value_to_inline)
+                                {
+                                    let g = g.trim();
+                                    if !g.is_empty() {
+                                        ui.label(format!("gpudevice: {}", g));
+                                    }
+                                }
+                                if let Some(net) = s
+                                    .network_address
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty())
+                                {
+                                    ui.label(format!("network_address: {}", net));
+                                }
+                                if let Some(t) = s
+                                    .r#type
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty())
+                                {
+                                    ui.label(format!("type: {}", t));
+                                }
+                                if let Some(cpu) = s
+                                    .cputype
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty())
+                                {
+                                    ui.label(format!("cputype: {}", cpu));
+                                }
+                                if let Some(model) = s
+                                    .nodemodel
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty())
+                                {
+                                    ui.label(format!("nodemodel: {}", model));
+                                }
+                            }
                         },
                     );
                 }
@@ -734,6 +1114,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     options.rect_height,
                     compact,
                     label_meta,
+                    app,
                 );
                 if is_collapsed_copy != is_collapsed {
                     *collapsed_jobs_level_1.get_mut(&name).unwrap() = is_collapsed_copy;
@@ -753,6 +1134,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                 options.rect_height,
                 compact,
                 label_meta,
+                app,
             );
             if is_collapsed_copy != is_collapsed {
                 *collapsed_jobs_level_2
@@ -781,6 +1163,7 @@ fn paint_job(
     all_cluster: &Vec<Cluster>,
     state: ResourceState,
     aggregation_height: f32,
+    resource_label_for_state_tooltip: Option<&str>,
 ) -> PaintResult {
     let theme_colors = get_theme_colors(&info.ctx.style());
     let chart_clip_rect = Rect::from_min_max(
@@ -944,6 +1327,11 @@ fn paint_job(
 
         if is_hachure_hovered {
             options.current_hovered_resource_state = Some(state.clone());
+            if let Some(label) = resource_label_for_state_tooltip {
+                if !label.trim().is_empty() {
+                    options.current_hovered_resource_label = Some(label.to_string());
+                }
+            }
         }
     }
 
@@ -964,6 +1352,7 @@ fn paint_job_info(
     bar_height_hint: f32,
     compact: bool,
     label_meta: Option<LabelMeta>,
+    app: &ApplicationContext,
 ) {
     let theme_colors = get_theme_colors(&info.ctx.style());
     let gutter_painter = info.painter.clone();
@@ -1064,6 +1453,95 @@ fn paint_job_info(
                 Id::new(format!("gantt-label-host-{}-{}", info_label, level)),
                 |ui: &mut egui::Ui| {
                     ui.label(format!("host: {}", host_full));
+
+                    let key_full = host_full.trim();
+                    let key_short = short_host_label(key_full);
+                    let strata = app
+                        .strata_by_host
+                        .get(key_full)
+                        .or_else(|| app.strata_by_host.get(&key_short));
+
+                    // Keep the 3 first lines like Grid5000: host / cluster / site
+                    let derived_cluster = key_short.split('-').next().unwrap_or("").trim();
+                    let cluster_line = strata
+                        .and_then(|s| s.cluster.as_deref())
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .or_else(|| if !derived_cluster.is_empty() { Some(derived_cluster) } else { None });
+                    if let Some(cluster) = cluster_line {
+                        ui.label(format!("cluster: {}", cluster));
+                    }
+
+                    let site_from_host = host_full.split('.').nth(1).unwrap_or("").trim();
+                    let site_from_net = strata
+                        .and_then(|s| s.network_address.as_deref())
+                        .and_then(|net| net.split('.').nth(1))
+                        .unwrap_or("")
+                        .trim();
+                    let site = if !site_from_host.is_empty() {
+                        site_from_host
+                    } else {
+                        site_from_net
+                    };
+                    if !site.is_empty() {
+                        ui.label(format!("site: {}", site));
+                    }
+
+                    if let Some(s) = strata {
+                        if let Some(b) =
+                            s.besteffort.as_deref().map(str::trim).filter(|v| !v.is_empty())
+                        {
+                            ui.label(format!("besteffort: {}", b));
+                        }
+                        if let Some(net) = s
+                            .network_address
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty())
+                        {
+                            ui.label(format!("network_address: {}", net));
+                        }
+                        if let Some(comment) =
+                            s.comment.as_deref().map(str::trim).filter(|v| !v.is_empty())
+                        {
+                            ui.label(format!("comment: {}", comment));
+                        }
+                        if let Some(cpuset) = cpuset_like_grid5000(s) {
+                            let cpuset = cpuset.trim();
+                            if !cpuset.is_empty() {
+                                ui.label(format!("cpuset: {}", cpuset));
+                            }
+                        }
+                        if let Some(dep) =
+                            s.deploy.as_deref().map(str::trim).filter(|v| !v.is_empty())
+                        {
+                            ui.label(format!("deploy: {}", dep));
+                        }
+                        if let Some(dr) = s.drain.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                            ui.label(format!("drain: {}", dr));
+                        }
+                        if let Some(g) = s.gpudevice.as_ref().and_then(json_value_to_inline) {
+                            let g = g.trim();
+                            if !g.is_empty() {
+                                ui.label(format!("gpudevice: {}", g));
+                            }
+                        }
+                        if let Some(t) =
+                            s.r#type.as_deref().map(str::trim).filter(|v| !v.is_empty())
+                        {
+                            ui.label(format!("type: {}", t));
+                        }
+                        if let Some(cpu) =
+                            s.cputype.as_deref().map(str::trim).filter(|v| !v.is_empty())
+                        {
+                            ui.label(format!("cputype: {}", cpu));
+                        }
+                        if let Some(model) =
+                            s.nodemodel.as_deref().map(str::trim).filter(|v| !v.is_empty())
+                        {
+                            ui.label(format!("nodemodel: {}", model));
+                        }
+                    }
                 },
             );
         }
@@ -1077,11 +1555,11 @@ fn paint_job_info(
         .ctx
         .fonts(|f| f.layout_no_wrap(label, info.font_id.clone(), theme_colors.text_dim));
 
-    let base_x = info.canvas.min.x + 6.0;
-    let offset_x = if level == 1 { 0.0 } else { 24.0 };
+    // Use caller-provided X for proper indentation; keep a small minimum padding.
+    let x = pos.x.max(info.canvas.min.x + 6.0);
 
     // Treat pos.y as CENTER to keep consistent alignment with host labels
-    let top_left = pos2(base_x + offset_x, pos.y - galley.size().y * 0.5);
+    let top_left = pos2(x, pos.y - galley.size().y * 0.5);
     let rect = Rect::from_min_size(top_left, galley.size());
 
     let is_hovered = info
@@ -1101,6 +1579,16 @@ fn paint_job_info(
     );
     let gutter_painter = gutter_painter.with_clip_rect(clip_rect);
 
-    gutter_painter.rect_filled(rect.expand(2.0), 0.0, theme_colors.background);
+    // Badge background improves readability (notably in Host -> Owner aggregation)
+    let (bg, rounding) = if level == 2 {
+        (theme_colors.background_timeline, 2.0)
+    } else {
+        (theme_colors.background, 0.0)
+    };
+    let badge = rect.expand(1.0);
+    gutter_painter.rect_filled(badge, rounding, bg);
+    if level == 2 {
+        gutter_painter.rect(badge, rounding, bg, Stroke::new(1.0, theme_colors.line));
+    }
     gutter_painter.galley(rect.min, galley, text_color);
 }

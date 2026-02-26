@@ -74,6 +74,7 @@ pub(super) fn ui_canvas(
                 all_cluster,
                 AggregateByLevel1Enum::Owner,
                 gutter_width,
+                app,
             );
         }
 
@@ -110,6 +111,7 @@ pub(super) fn ui_canvas(
                     AggregateByLevel1Enum::Host,
                     AggregateByLevel2Enum::Owner,
                     gutter_width,
+                    app,
                 );
             }
 
@@ -140,6 +142,7 @@ pub(super) fn ui_canvas(
                     all_cluster,
                     AggregateByLevel1Enum::Host,
                     gutter_width,
+                    app,
                 );
             }
 
@@ -183,6 +186,7 @@ pub(super) fn ui_canvas(
                     AggregateByLevel1Enum::Cluster,
                     AggregateByLevel2Enum::Owner,
                     gutter_width,
+                    app,
                 );
             }
 
@@ -215,6 +219,7 @@ pub(super) fn ui_canvas(
                     all_cluster,
                     AggregateByLevel1Enum::Cluster,
                     gutter_width,
+                    app,
                 );
             }
 
@@ -263,13 +268,14 @@ pub(super) fn ui_canvas(
                     AggregateByLevel1Enum::Cluster,
                     AggregateByLevel2Enum::Host,
                     gutter_width,
+                    app,
                 );
             }
         },
     }
 
     // Preserve the original call sequence
-    paint_tooltip(info, options);
+    paint_tooltip(info, options, app);
     options.previous_hovered_job = options.current_hovered_job.clone();
     options.current_hovered_job = None;
     paint_timeline_text_on_top(info, options, fixed_timeline_y, gutter_width);

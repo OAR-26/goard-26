@@ -45,6 +45,7 @@ pub struct Options {
     pub current_hovered_job: Option<Job>,
     pub previous_hovered_job: Option<Job>,
     pub current_hovered_resource_state: Option<ResourceState>,
+    pub current_hovered_resource_label: Option<String>,
     pub squash_resources: bool,
     pub compact_rows: bool,
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -69,6 +70,7 @@ impl Default for Options {
             squash_resources: false,
             see_all_res: false,
             current_hovered_resource_state: None,
+            current_hovered_resource_label: None,
             compact_rows: true,
         }
     }

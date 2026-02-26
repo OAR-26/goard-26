@@ -213,6 +213,7 @@ impl View for GanttChart {
                     self.options.current_hovered_job = None;
                     self.options.previous_hovered_job = None;
                     self.options.current_hovered_resource_state = None;
+                    self.options.current_hovered_resource_label = None;
                 }
                 ui.separator();
 

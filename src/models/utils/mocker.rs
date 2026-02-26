@@ -223,7 +223,7 @@ fn mock_strata(id: u32) -> Strata {
         cpufreq: Some(format!("cpufreq{}", random_index(10))),
         comment: Some(comments_list[random_index(comments_list.len())].to_string()),
         core: Some(random_index(64) as i32),
-        cpuset: Some(format!("cpuset{}", random_index(10))),
+        cpuset: Some(serde_json::Value::String(format!("cpuset{}", random_index(10)))),
         suspended_jobs: Some(format!("suspended_jobs{}", random_index(10))),
         state: Some(states_list[random_index(states_list.len())].to_string()),
         ip: Some(format!(
