@@ -10,6 +10,8 @@ use crate::models::utils::utils::{get_clusters_for_job, get_hosts_for_job};
 use crate::views::components::dashboard_components::job_table_sorting::JobSortable;
 use crate::views::view::ViewType;
 use chrono::{DateTime, Local};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -42,8 +44,14 @@ pub struct ApplicationContext {
     pub resources_receiver: Receiver<Vec<Strata>>,
     pub resources_sender: Sender<Vec<Strata>>,
 
+    // Latest resource metadata indexed by host (used for rich hover tooltips).
+    pub strata_by_host: HashMap<String, Strata>,
+
     pub font_size: i32,
     pub see_all_jobs: bool,
+
+    // UI requests (set by views, consumed by Menu/Options)
+    pub theme_toggle_requested: bool,
 }
 
 impl ApplicationContext {
@@ -61,6 +69,184 @@ impl ApplicationContext {
      */
     pub fn check_ressource_update(&mut self) {
         if let Ok(new_resources) = self.resources_receiver.try_recv() {
+            fn extract_ints_from_value(v: &Value) -> Vec<i32> {
+                fn extract_ints_from_str(s: &str) -> Vec<i32> {
+                    let mut out: Vec<i32> = Vec::new();
+                    let mut cur: i64 = 0;
+                    let mut in_num = false;
+                    for ch in s.chars() {
+                        if ch.is_ascii_digit() {
+                            in_num = true;
+                            cur = cur * 10 + (ch as i64 - '0' as i64);
+                        } else if in_num {
+                            if (0..=i32::MAX as i64).contains(&cur) {
+                                out.push(cur as i32);
+                            }
+                            cur = 0;
+                            in_num = false;
+                        }
+                    }
+                    if in_num && (0..=i32::MAX as i64).contains(&cur) {
+                        out.push(cur as i32);
+                    }
+                    out
+                }
+
+                match v {
+                    Value::Null => Vec::new(),
+                    Value::Bool(_) => Vec::new(),
+                    Value::Number(n) => n
+                        .as_i64()
+                        .filter(|i| (0..=i32::MAX as i64).contains(i))
+                        .map(|i| vec![i as i32])
+                        .unwrap_or_default(),
+                    Value::String(s) => extract_ints_from_str(s),
+                    Value::Array(arr) => {
+                        let mut all: Vec<i32> = Vec::new();
+                        for x in arr {
+                            all.extend(extract_ints_from_value(x));
+                        }
+                        all
+                    }
+                    Value::Object(_) => Vec::new(),
+                }
+            }
+
+            // Build cpuset index list per host by aggregating resource-level cpuset values.
+            // OAR resources often provide a scalar cpuset per resource; Grid5000 displays the
+            // aggregated list at host level.
+            let mut cpuset_by_host: HashMap<String, Vec<i32>> = HashMap::new();
+            for r in new_resources.iter() {
+                let host = r.host.as_deref().unwrap_or("").trim();
+                if host.is_empty() {
+                    continue;
+                }
+                if let Some(v) = r.cpuset.as_ref() {
+                    let ints = extract_ints_from_value(v);
+                    if !ints.is_empty() {
+                        cpuset_by_host
+                            .entry(host.to_string())
+                            .or_default()
+                            .extend(ints);
+                    }
+                }
+            }
+
+            // Cache the latest metadata for tooltips. Use multiple keys per host to be robust
+            // (short host, FQDN, network_address).
+            self.strata_by_host.clear();
+            for r in new_resources.iter() {
+                let host = r.host.as_deref().unwrap_or("").trim();
+                let net = r.network_address.as_deref().unwrap_or("").trim();
+
+                if !host.is_empty() {
+                    self.strata_by_host
+                        .entry(host.to_string())
+                        .or_insert_with(|| r.clone());
+                    let short = host.split('.').next().unwrap_or(host).trim();
+                    if !short.is_empty() {
+                        self.strata_by_host
+                            .entry(short.to_string())
+                            .or_insert_with(|| r.clone());
+                    }
+                }
+
+                if !net.is_empty() {
+                    self.strata_by_host
+                        .entry(net.to_string())
+                        .or_insert_with(|| r.clone());
+                    let short = net.split('.').next().unwrap_or(net).trim();
+                    if !short.is_empty() {
+                        self.strata_by_host
+                            .entry(short.to_string())
+                            .or_insert_with(|| r.clone());
+                    }
+                }
+
+                // Prefer a record that has more human-friendly fields filled.
+                // This updates an already-inserted entry if the new record is "better".
+                fn non_empty_value(v: &Value) -> bool {
+                    match v {
+                        Value::Null => false,
+                        Value::Bool(_) => true,
+                        Value::Number(_) => true,
+                        Value::String(s) => !s.trim().is_empty(),
+                        Value::Array(arr) => arr.iter().any(non_empty_value),
+                        Value::Object(obj) => !obj.is_empty(),
+                    }
+                }
+                for k in [host, net] {
+                    if k.is_empty() {
+                        continue;
+                    }
+                    if let Some(existing) = self.strata_by_host.get(k).cloned() {
+                        let existing_score = existing
+                            .comment
+                            .as_ref()
+                            .map(|s| !s.trim().is_empty())
+                            .unwrap_or(false) as i32
+                            + existing
+                                .cpuset
+                                .as_ref()
+                                .map(non_empty_value)
+                                .unwrap_or(false) as i32
+                            + existing
+                                .cputype
+                                .as_ref()
+                                .map(|s| !s.trim().is_empty())
+                                .unwrap_or(false) as i32
+                            + existing
+                                .nodemodel
+                                .as_ref()
+                                .map(|s| !s.trim().is_empty())
+                                .unwrap_or(false) as i32;
+                        let new_score = r
+                            .comment
+                            .as_ref()
+                            .map(|s| !s.trim().is_empty())
+                            .unwrap_or(false) as i32
+                            + r
+                                .cpuset
+                                .as_ref()
+                                .map(non_empty_value)
+                                .unwrap_or(false) as i32
+                            + r
+                                .cputype
+                                .as_ref()
+                                .map(|s| !s.trim().is_empty())
+                                .unwrap_or(false) as i32
+                            + r
+                                .nodemodel
+                                .as_ref()
+                                .map(|s| !s.trim().is_empty())
+                                .unwrap_or(false) as i32;
+                        if new_score > existing_score {
+                            self.strata_by_host.insert(k.to_string(), r.clone());
+                        }
+                    }
+                }
+            }
+
+            // Overwrite cached cpuset with the aggregated host-level cpuset list (when available).
+            for s in self.strata_by_host.values_mut() {
+                let host_key = s.host.as_deref().unwrap_or("").trim();
+                if host_key.is_empty() {
+                    continue;
+                }
+                if let Some(ints) = cpuset_by_host.get(host_key) {
+                    let mut ints = ints.clone();
+                    ints.sort_unstable();
+                    ints.dedup();
+                    if !ints.is_empty() {
+                        let arr: Vec<Value> = ints
+                            .into_iter()
+                            .map(|i| Value::Number(serde_json::Number::from(i)))
+                            .collect();
+                        s.cpuset = Some(Value::Array(arr));
+                    }
+                }
+            }
+
             // for every resources get the cluster name with resource.cluster and if there is no cluster with this name in all_clusters add it to all_clusters
             for resource in new_resources.iter() {
                 let cluster_name = resource.cluster.as_ref().unwrap_or(&"".to_string()).clone();
@@ -459,6 +645,8 @@ impl Default for ApplicationContext {
             resources_sender: resources_sender,
             user_connected: None,
 
+            strata_by_host: HashMap::new(),
+
             filtered_jobs: Vec::new(),
             filters: JobFilters::default(),
             start_date: Arc::new(Mutex::new(now - chrono::Duration::hours(1))),
@@ -470,6 +658,8 @@ impl Default for ApplicationContext {
 
             font_size: 16,
             see_all_jobs: false,
+
+            theme_toggle_requested: false,
         };
         context.update_periodically();
         context

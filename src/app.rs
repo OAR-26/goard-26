@@ -45,39 +45,38 @@ impl eframe::App for App {
             self.menu.render(ui, &mut self.application_context);
         });
 
+        TopBottomPanel::top("tool_bar").show(ctx, |ui| {
+            self.tools.render(ui, &mut self.application_context);
+        });
+
         // Check for updates
         self.application_context.check_data_update();
 
-        CentralPanel::default().show(ctx, |_ui| {
-            TopBottomPanel::top("tool_bar").show(ctx, |ui| {
-                self.tools.render(ui, &mut self.application_context);
-            });
-
-            CentralPanel::default().show(ctx, |ui| match self.application_context.view_type {
-                crate::views::view::ViewType::Dashboard => {
-                    self.dashboard_view
-                        .render(ui, &mut self.application_context);
-                }
-                crate::views::view::ViewType::Gantt => {
-                    self.gantt_view.render(ui, &mut self.application_context);
-                }
-                crate::views::view::ViewType::Authentification => {
-                    self.authentification_view
-                        .render(ui, &mut self.application_context);
-                }
-            });
-        });
-
-        TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                // Display the current refresh rate
+        // IMPORTANT: show the bottom panel BEFORE the central panel so it reserves space
+        // instead of drawing on top of the Gantt rows.
+        TopBottomPanel::bottom("status_bar")
+            .resizable(false)
+            .exact_height(18.0)
+            .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if *self.application_context.is_refreshing.lock().unwrap() {
-                        ui.add(egui::Spinner::new());
-                        ui.label(t!("app.refreshing"));
+                        ui.add(egui::Spinner::new().size(12.0));
+                        ui.label(egui::RichText::new(t!("app.refreshing")).small());
                     }
                 });
             });
+
+        CentralPanel::default().show(ctx, |ui| match self.application_context.view_type {
+            crate::views::view::ViewType::Dashboard => {
+                self.dashboard_view.render(ui, &mut self.application_context);
+            }
+            crate::views::view::ViewType::Gantt => {
+                self.gantt_view.render(ui, &mut self.application_context);
+            }
+            crate::views::view::ViewType::Authentification => {
+                self.authentification_view
+                    .render(ui, &mut self.application_context);
+            }
         });
         ctx.request_repaint();
     }

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Strata {
@@ -41,7 +42,7 @@ pub struct Strata {
     #[serde(default)]
     pub core: Option<i32>,
     #[serde(default)]
-    pub cpuset: Option<String>,
+    pub cpuset: Option<Value>,
     #[serde(default)]
     pub suspended_jobs: Option<String>,
     #[serde(default)]
@@ -54,6 +55,18 @@ pub struct Strata {
     pub resource_id: Option<u32>,
     #[serde(default)]
     pub host: Option<String>,
+
+    // Grid5000-like node metadata (used in host hover tooltip)
+    #[serde(default)]
+    pub besteffort: Option<String>,
+    #[serde(default)]
+    pub deploy: Option<String>,
+    #[serde(default)]
+    pub drain: Option<String>,
+    #[serde(default)]
+    pub gpudevice: Option<Value>,
+    #[serde(default, rename = "type")]
+    pub r#type: Option<String>,
     #[serde(default)]
     pub nodemodel: Option<String>,
     #[serde(default)]

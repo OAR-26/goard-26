@@ -29,6 +29,10 @@ impl Default for Menu {
 
 impl View for Menu {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        if app.theme_toggle_requested {
+            self.options_pane.toggle_theme(ui.ctx());
+            app.theme_toggle_requested = false;
+        }
         self.options_pane
             .apply_options(ui.ctx(), &mut app.font_size);
 
