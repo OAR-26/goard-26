@@ -47,30 +47,37 @@ fn json_value_to_inline(v: &serde_json::Value) -> Option<String> {
 }
 
 fn format_cpuset_grid5000(values: &mut Vec<i32>) -> Option<String> {
+    use range_set_blaze::RangeSetBlaze;
+    
     if values.is_empty() {
         return None;
     }
+    
     values.sort_unstable();
     values.dedup();
-
-    if values.len() == 1 {
-        return Some(values[0].to_string());
+    
+    // Create a RangeSetBlaze from the individual values
+    let mut range_set = RangeSetBlaze::<i32>::new();
+    for &val in values.iter() {
+        range_set.insert(val);
     }
-
-    // If contiguous (step 1), compress for readability.
-    let mut contiguous = true;
-    for w in values.windows(2) {
-        if w[1] != w[0] + 1 {
-            contiguous = false;
-            break;
+    
+    // Format the ranges into Grid5000-like notation
+    let mut result_parts: Vec<String> = Vec::new();
+    
+    for range in range_set.ranges() {
+        if range.start() == range.end() {
+            result_parts.push(range.start().to_string());
+        } else {
+            result_parts.push(format!("{}-{}", range.start(), range.end()));
         }
     }
-    if contiguous {
-        return Some(format!("{}-{}", values[0], values[values.len() - 1]));
+    
+    if result_parts.is_empty() {
+        return None;
     }
-
-    // Non-contiguous: show explicit list like Grid5000.
-    Some(values.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "))
+    
+    Some(result_parts.join(", "))
 }
 
 fn extract_ints_from_str(s: &str) -> Vec<i32> {
