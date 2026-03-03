@@ -744,10 +744,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     && mouse.x >= info.canvas.min.x
                     && mouse.x <= info.canvas.max.x
                 {
-                    let visuals = info.ctx.style().visuals.clone();
-                    let fill = visuals.selection.bg_fill;
-                    let stroke = visuals.selection.stroke.color;
-                    let alpha_fill = Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 70);
+                    let alpha_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 110);
 
                     let gutter_clip = Rect::from_min_max(
                         info.canvas.min,
@@ -761,14 +758,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     );
                     gutter_painter.rect_filled(marker_rect, 0.0, alpha_fill);
 
-                    // Guide line at current pointer Y
-                    info.painter.line_segment(
-                        [
-                            pos2(info.canvas.min.x + gutter_width, mouse.y),
-                            pos2(info.canvas.max.x, mouse.y),
-                        ],
-                        Stroke::new(1.0, stroke),
-                    );
+                    // Intentionally no horizontal guide line (it looked like a line through jobs).
                 }
             }
         }
@@ -855,8 +845,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
             host_w += gutter_width - sum_w;
         }
 
-        let visuals = info.ctx.style().visuals.clone();
-        let selection = visuals.selection.stroke.color;
         let (c_site, c_cluster, c_host, c_border, c_text) = (
             Color32::from_rgb(235, 215, 110),
             Color32::from_rgb(245, 227, 113),
@@ -937,28 +925,21 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
                 gutter_painter.rect_filled(host_rect, 0.0, c_host);
 
-                // Hover indicator: stronger border + left marker + horizontal guide line
+                // Hover indicator: stronger border + left marker (no horizontal guide line)
                 let border_stroke = if is_hovered {
-                    Stroke::new(2.0, selection)
+                    Stroke::new(3.0, Color32::from_gray(80))
                 } else {
                     Stroke::new(1.0, c_border)
                 };
                 gutter_painter.rect(host_rect, 0.0, c_host, border_stroke);
 
                 if is_hovered {
+                    let hover_grey_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 140);
                     let marker_rect = Rect::from_min_max(
                         pos2(info.canvas.min.x, host_rect.min.y),
                         pos2(info.canvas.min.x + 4.0, host_rect.max.y),
                     );
-                    gutter_painter.rect_filled(marker_rect, 0.0, visuals.selection.bg_fill);
-
-                    info.painter.line_segment(
-                        [
-                            pos2(info.canvas.min.x + gutter_width, host_rect.center().y),
-                            pos2(info.canvas.max.x, host_rect.center().y),
-                        ],
-                        Stroke::new(1.0, selection),
-                    );
+                    gutter_painter.rect_filled(marker_rect, 0.0, hover_grey_fill);
                 }
 
                 let clip = gutter_painter.with_clip_rect(host_rect);
@@ -1260,6 +1241,13 @@ fn paint_job(
 
     chart_painter.rect_filled(visible_rect, rounding, fill_color);
 
+    if is_job_hovered {
+        let hover_fill = Color32::from_rgba_unmultiplied(140, 140, 140, 60);
+        let hover_stroke = Stroke::new(3.0, Color32::from_gray(80));
+        chart_painter.rect_filled(visible_rect, rounding, hover_fill);
+        chart_painter.rect_stroke(visible_rect.expand(1.0), rounding, hover_stroke);
+    }
+
     if state == ResourceState::Dead || state == ResourceState::Absent {
         let hachure_color = match state {
             ResourceState::Dead => Color32::from_rgba_premultiplied(255, 0, 0, 150),
@@ -1350,7 +1338,7 @@ fn paint_job_info(
 
     let visuals = info.ctx.style().visuals.clone();
     let selection_stroke = visuals.selection.stroke.color;
-    let selection_fill = visuals.selection.bg_fill;
+    let _selection_fill = visuals.selection.bg_fill;
 
     *collapsed = false;
 
@@ -1420,19 +1408,12 @@ fn paint_job_info(
 
         // Clear hover indication for host labels (works also in Aggregate by Host)
         if is_hovered {
+            let hover_grey_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 140);
             let marker_rect = Rect::from_min_max(
                 pos2(info.canvas.min.x, rect.min.y),
                 pos2(info.canvas.min.x + 4.0, rect.max.y),
             );
-            gutter_painter.rect_filled(marker_rect, 0.0, selection_fill);
-
-            info.painter.line_segment(
-                [
-                    pos2(info.canvas.min.x + gutter_width, rect.center().y),
-                    pos2(info.canvas.max.x, rect.center().y),
-                ],
-                Stroke::new(1.0, selection_stroke),
-            );
+            gutter_painter.rect_filled(marker_rect, 0.0, hover_grey_fill);
         }
 
         if is_hovered {
