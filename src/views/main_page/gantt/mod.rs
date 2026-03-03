@@ -267,11 +267,8 @@ impl View for GanttChart {
                 );
                 ui.separator();
 
-                ui.checkbox(
-                    &mut self.options.compact_rows,
-                    "Compact (Grid5000)",
-                );
-                ui.separator();
+                // Compact(Grid5000) is always enabled; hide the toggle.
+                self.options.compact_rows = true;
 
                 self.options.job_color.ui(ui);
             });

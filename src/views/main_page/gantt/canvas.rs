@@ -34,9 +34,8 @@ pub(super) fn ui_canvas(
     cursor_y += info.text_height;
 
     let theme_colors = get_theme_colors(&info.ctx.style());
-    // Fond du gutter identique partout : en mode Grid5000, les colonnes (site/cluster/host)
-    // sont dessinées dans jobs.rs et ne doivent pas teinter toute la zone (évite les zones jaunes vides).
-    let gutter_bg = theme_colors.background;
+    // Keep the left bar always yellow (independent of filters/theme).
+    let gutter_bg = egui::Color32::from_rgb(252, 238, 170);
 
     let gutter_rect = Rect::from_min_max(
         pos2(info.canvas.min.x, info.canvas.min.y),

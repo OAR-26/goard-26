@@ -59,7 +59,7 @@ impl Default for Options {
             sideways_pan_in_points: 0.0,
             cull_width: 0.0,
             min_width: 1.0,
-            rect_height: 16.0,
+            rect_height: 14.0,
             spacing: 0.0,
             rounding: 4.0,
             aggregate_by: Default::default(),

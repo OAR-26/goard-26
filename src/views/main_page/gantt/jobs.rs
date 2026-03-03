@@ -434,12 +434,13 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
     let theme_colors = get_theme_colors(&info.ctx.style());
 
     let compact = options.compact_rows;
-    // In Host -> Owner with compact mode, owner badges need a bit more vertical room to avoid overlap.
+    // In Host -> Owner with compact mode, keep it compact while still giving
+    // a small padding for readability.
     let extra_row_pad = if compact
         && aggregate_by_level_1 == AggregateByLevel1Enum::Host
         && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
     {
-        8.0
+        1.0
     } else {
         0.0
     };
@@ -714,7 +715,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                                 && aggregate_by_level_1 == AggregateByLevel1Enum::Host
                                 && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
                             {
-                                2.0
+                                0.0
                             } else {
                                 options.spacing
                             };
@@ -856,23 +857,13 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
         let visuals = info.ctx.style().visuals.clone();
         let selection = visuals.selection.stroke.color;
-        let (c_site, c_cluster, c_host, c_border, c_text) = if visuals.dark_mode {
-            (
-                Color32::from_rgb(150, 140, 70),
-                Color32::from_rgb(165, 155, 80),
-                Color32::from_rgb(180, 170, 95),
-                Color32::from_gray(30),
-                Color32::from_gray(10),
-            )
-        } else {
-            (
-                Color32::from_rgb(235, 215, 110),
-                Color32::from_rgb(245, 227, 113),
-                Color32::from_rgb(252, 238, 170),
-                Color32::from_gray(30),
-                Color32::BLACK,
-            )
-        };
+        let (c_site, c_cluster, c_host, c_border, c_text) = (
+            Color32::from_rgb(235, 215, 110),
+            Color32::from_rgb(245, 227, 113),
+            Color32::from_rgb(252, 238, 170),
+            Color32::from_gray(30),
+            Color32::BLACK,
+        );
 
         gutter_painter.line_segment(
             [
@@ -1235,14 +1226,14 @@ fn paint_job(
         options.current_hovered_job = Some(job.clone());
     }
 
-    if is_job_hovered && info.response.secondary_clicked() {
+    if is_job_trully_hovered && info.response.secondary_clicked() {
         let window = JobDetailsWindow::new(job.clone(), get_tree_structure_for_job(job, all_cluster));
         if !details_window.iter().any(|w| w.job.id == job.id) {
             details_window.push(window);
         }
     }
 
-    if is_job_hovered && info.response.clicked() {
+    if is_job_trully_hovered && info.response.clicked() && !info.response.double_clicked() {
         let job_duration_s = job.walltime as f64;
         let job_start_s = job.scheduled_start as f64;
         let job_end_s = if job.stop_time > 0 {
