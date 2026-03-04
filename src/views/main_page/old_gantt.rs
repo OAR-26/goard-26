@@ -1104,17 +1104,7 @@ fn paint_aggregated_jobs_level_2(
         row_rect: Rect,
     }
 
-    #[derive(Clone)]
-    struct GanttGutterSpan {
-        label: String,
-        rect: Rect,
-    }
-
     let mut grid5000_host_rows: Vec<GanttGutterHostRow> = Vec::new();
-    let mut grid5000_cluster_spans: Vec<GanttGutterSpan> = Vec::new();
-    let mut grid5000_site_spans: Vec<GanttGutterSpan> = Vec::new();
-
-    let mut current_site: Option<(String, f32, f32)> = None; // (label, top, bottom)
 
     let spacing_between_level_1 = font_size as f32 * 0.25; // minimal spacing between clusters
     let spacing_between_level_2 = font_size as f32 * 0.35; // minimal spacing between hosts
