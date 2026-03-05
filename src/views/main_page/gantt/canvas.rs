@@ -25,6 +25,9 @@ pub(super) fn ui_canvas(
     all_cluster: &Vec<Cluster>,
     gutter_width: f32,
 ) -> f32 {
+    // Per-frame hover state.
+    options.hovered_grid5000_host = None;
+
     if options.canvas_width_s <= 0.0 {
         options.canvas_width_s = (max_ns - min_ns) as f32;
         options.zoom_to_relative_s_range = None;
@@ -34,22 +37,38 @@ pub(super) fn ui_canvas(
     cursor_y += info.text_height;
 
     let theme_colors = get_theme_colors(&info.ctx.style());
-    // Fond du gutter identique partout : en mode Grid5000, les colonnes (site/cluster/host)
-    // sont dessinées dans jobs.rs et ne doivent pas teinter toute la zone (évite les zones jaunes vides).
-    let gutter_bg = theme_colors.background;
+
+    // Grid5000: stripes are painted in jobs.rs.
+    let is_grid5000 = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
+        && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
+    let gutter_yellow = egui::Color32::from_rgb(252, 238, 170);
+    let gutter_bg = if is_grid5000 {
+        if info.ctx.style().visuals.dark_mode {
+            egui::Color32::from_gray(20)
+        } else {
+            egui::Color32::WHITE
+        }
+    } else {
+        // Other views keep the yellow gutter.
+        gutter_yellow
+    };
 
     let gutter_rect = Rect::from_min_max(
         pos2(info.canvas.min.x, info.canvas.min.y),
         pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
     );
     info.painter.rect_filled(gutter_rect, 0.0, gutter_bg);
-    info.painter.line_segment(
-        [
-            pos2(info.canvas.min.x + gutter_width, info.canvas.min.y),
-            pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
-        ],
-        Stroke::new(1.0, theme_colors.line),
-    );
+
+    // Grid5000: no gutter separator.
+    if !is_grid5000 {
+        info.painter.line_segment(
+            [
+                pos2(info.canvas.min.x + gutter_width, info.canvas.min.y),
+                pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
+            ],
+            Stroke::new(1.0, theme_colors.line),
+        );
+    }
 
     let jobs = &app.filtered_jobs;
 
