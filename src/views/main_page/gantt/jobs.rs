@@ -3,7 +3,9 @@ use super::labels::{
     LabelMeta,
 };
 use super::theme::get_theme_colors;
-use super::types::{Info, Options};
+use super::types::{
+    gutter_g5k_total_w, Info, Options, GUTTER_G5K_CLUSTER_W, GUTTER_G5K_HOST_W, GUTTER_G5K_SITE_W,
+};
 use crate::models::data_structure::cluster::Cluster;
 use crate::models::data_structure::job::Job;
 use crate::models::data_structure::resource::ResourceState;
@@ -74,10 +76,7 @@ fn format_cpuset_grid5000(values: &mut Vec<i32>) -> Option<String> {
 }
 
 fn extract_ints_from_str(s: &str) -> Vec<i32> {
-    // Extract all positive integer tokens from an arbitrary string.
-    // Examples:
-    // - "0, 1, 2" -> [0,1,2]
-    // - "0-31" -> [0,31] (we can't infer the full range from this alone)
+    // Extract positive integers from an arbitrary string.
     let mut out: Vec<i32> = Vec::new();
     let mut cur: i64 = 0;
     let mut in_num = false;
@@ -100,10 +99,7 @@ fn extract_ints_from_str(s: &str) -> Vec<i32> {
 }
 
 fn cpuset_like_grid5000(s: &crate::models::data_structure::strata::Strata) -> Option<String> {
-    // Goal: display like Grid5000: a compact list of CPU indexes.
-    // - If cpuset is an explicit list: compact it into ranges.
-    // - If cpuset is a scalar/string in OAR resources: derive indexes from core_count (preferred) or thread_count.
-    // - Format is bracketed ranges: [0-31] or [0-3, 5, 7-9]
+    // Grid5000-like cpuset: compact CPU indexes/ranges when possible.
 
     if let Some(v) = s.cpuset.as_ref() {
         match v {
@@ -294,14 +290,14 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
 
     let aggregation_height = font_size as f32 + 5.0 + offset_level_1;
 
-    let mut header_data: Vec<(String, Pos2, bool, Option<LabelMeta>)> = Vec::new();
+    let chart_x0 = info.canvas.min.x + gutter_width;
 
     for level_1 in sorted_level_1 {
         let job_list = jobs.get(&level_1).unwrap();
 
         info.painter.line_segment(
             [
-                pos2(info.canvas.min.x, cursor_y),
+                pos2(chart_x0, cursor_y),
                 pos2(info.canvas.max.x, cursor_y),
             ],
             Stroke::new(1.5, theme_colors.aggregated_line_level_1),
@@ -316,22 +312,18 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
         *is_collapsed = false;
         let label_meta = build_label_meta_level1(&level_1, aggregate_by, all_cluster);
 
-        if options.squash_resources {
-            header_data.push((level_1.clone(), text_pos, *is_collapsed, label_meta));
-        } else {
-            paint_job_info(
-                info,
-                &level_1,
-                text_pos,
-                is_collapsed,
-                1,
-                gutter_width,
-                options.rect_height,
-                compact,
-                label_meta,
-                app,
-            );
-        }
+        paint_job_info(
+            info,
+            &level_1,
+            text_pos,
+            is_collapsed,
+            1,
+            gutter_width,
+            options.rect_height,
+            compact,
+            label_meta,
+            app,
+        );
 
         cursor_y += spacing_between_level_1;
 
@@ -349,13 +341,8 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
         };
 
         if !*is_collapsed {
-            // Une seule ligne par groupe (level_1) : tous les jobs sont peints sur la même ligne
-            let initial_job_y = cursor_y;
-            let job_row_y = if options.squash_resources {
-                initial_job_y
-            } else {
-                cursor_y
-            };
+            // One row per level_1 key.
+            let job_row_y = cursor_y;
 
             for job in job_list {
                 paint_job(
@@ -374,43 +361,9 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
             if !job_list.is_empty() {
                 cursor_y += row_height + spacing_between_jobs + options.spacing;
             }
-            if !options.squash_resources {
-                cursor_y += spacing_between_level_1;
-            }
-        }
-        if !options.squash_resources {
             cursor_y += spacing_between_level_1;
         }
-    }
-
-    if options.squash_resources {
-        for (name, pos, is_collapsed, label_meta) in header_data {
-            let galley = info.ctx.fonts(|f| {
-                let collapsed_symbol = if is_collapsed { "⏵" } else { "⏷" };
-                let label = format!("{} {}", collapsed_symbol, name);
-                f.layout_no_wrap(label, info.font_id.clone(), theme_colors.text_dim)
-            });
-            let rect = Rect::from_min_size(pos, galley.size());
-            info.painter
-                .rect_filled(rect.expand(4.0), 4.0, theme_colors.background_timeline);
-
-            let mut is_collapsed_copy = is_collapsed;
-            paint_job_info(
-                info,
-                &name,
-                pos,
-                &mut is_collapsed_copy,
-                1,
-                gutter_width,
-                options.rect_height,
-                compact,
-                label_meta,
-                app,
-            );
-            if is_collapsed_copy != is_collapsed {
-                *collapsed_jobs.get_mut(&name).unwrap() = is_collapsed_copy;
-            }
-        }
+        cursor_y += spacing_between_level_1;
     }
 
     cursor_y
@@ -434,12 +387,13 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
     let theme_colors = get_theme_colors(&info.ctx.style());
 
     let compact = options.compact_rows;
-    // In Host -> Owner with compact mode, owner badges need a bit more vertical room to avoid overlap.
+    // In Host -> Owner with compact mode, keep it compact while still giving
+    // a small padding for readability.
     let extra_row_pad = if compact
         && aggregate_by_level_1 == AggregateByLevel1Enum::Host
         && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
     {
-        8.0
+        1.0
     } else {
         0.0
     };
@@ -459,15 +413,16 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
     #[derive(Clone)]
     struct GanttGutterSpan {
-        label: String,
         top: f32,
         bottom: f32,
     }
 
     let mut grid5000_host_rows: Vec<GanttGutterHostRow> = Vec::new();
+
+    // For the Grid5000-like view we also keep spans for site/cluster in order
+    // to paint thin stripes (no text columns).
     let mut grid5000_cluster_spans: Vec<GanttGutterSpan> = Vec::new();
     let mut grid5000_site_spans: Vec<GanttGutterSpan> = Vec::new();
-
     let mut current_site: Option<(String, f32, f32)> = None;
 
     let spacing_between_level_1 = if compact { 0.0 } else { font_size as f32 * 0.25 };
@@ -480,8 +435,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
     let mut sorted_level_1: Vec<String> = jobs.keys().cloned().collect();
     sorted_level_1.sort_by(|a, b| compare_string_with_number(a, b));
 
-    let mut header_data_level_1: Vec<(String, Pos2, bool, Option<LabelMeta>)> = Vec::new();
-    let mut header_data_level_2: Vec<(String, String, Pos2, bool, Option<LabelMeta>)> = Vec::new();
+    let chart_x0 = info.canvas.min.x + gutter_width;
 
     for level_1 in sorted_level_1 {
         let level_1_section_top = cursor_y;
@@ -500,7 +454,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
         if !hide_level_1_headers {
             info.painter.line_segment(
                 [
-                    pos2(info.canvas.min.x, cursor_y),
+                    pos2(chart_x0, cursor_y),
                     pos2(info.canvas.max.x, cursor_y),
                 ],
                 Stroke::new(1.5, theme_colors.aggregated_line_level_1),
@@ -508,9 +462,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
             cursor_y += offset_level_1;
 
-            // In compact mode, we MUST reserve vertical space for the level_1 header row.
-            // Otherwise the header label is drawn at the same Y as the first level_2 row,
-            // producing visible overlaps.
+            // Compact: reserve space for the level_1 header (avoid overlap).
             let header_height = if compact {
                 options.rect_height.max(info.text_height + 2.0)
             } else {
@@ -528,27 +480,18 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
             let label_meta_level_1 =
                 build_label_meta_level1(&level_1, aggregate_by_level_1, all_cluster);
 
-            if options.squash_resources {
-                header_data_level_1.push((
-                    level_1.clone(),
-                    text_pos,
-                    *is_collapsed_level_1,
-                    label_meta_level_1,
-                ));
-            } else {
-                paint_job_info(
-                    info,
-                    &level_1,
-                    text_pos,
-                    is_collapsed_level_1,
-                    1,
-                    gutter_width,
-                    options.rect_height,
-                    compact,
-                    label_meta_level_1,
-                    app,
-                );
-            }
+            paint_job_info(
+                info,
+                &level_1,
+                text_pos,
+                is_collapsed_level_1,
+                1,
+                gutter_width,
+                options.rect_height,
+                compact,
+                label_meta_level_1,
+                app,
+            );
 
             if compact {
                 cursor_y += header_height;
@@ -572,7 +515,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                 if let Some(job_list) = level_2_map.get(level_2) {
                     info.painter.line_segment(
                         [
-                            pos2(info.canvas.min.x, cursor_y),
+                            pos2(chart_x0, cursor_y),
                             pos2(info.canvas.max.x, cursor_y),
                         ],
                         Stroke::new(0.5, theme_colors.aggregated_line_level_2),
@@ -605,15 +548,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                         all_cluster,
                     );
 
-                    if options.squash_resources {
-                        header_data_level_2.push((
-                            level_1_key.clone(),
-                            level_2.to_string(),
-                            text_pos,
-                            *is_collapsed_level_2,
-                            label_meta_level_2,
-                        ));
-                    } else if hide_level_1_headers {
+                    if hide_level_1_headers {
                         let extra_pad = if compact { 2.0 } else { 10.0 };
                         let row_height = options.rect_height.max(info.text_height + extra_pad);
                         let row_rect = Rect::from_min_max(
@@ -668,18 +603,13 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     };
 
                     if !*is_collapsed_level_2 {
-                        // Une seule ligne par host/owner/etc (level_2) : tous les jobs sont peints sur la même ligne
-                        let initial_job_y = cursor_y;
+                        // One row per level_2 key.
                         let aligned_y = if compact {
                             cursor_y
                         } else {
                             cursor_y - options.rect_height * 0.5
                         };
-                        let job_row_y = if options.squash_resources {
-                            initial_job_y
-                        } else {
-                            aligned_y
-                        };
+                        let job_row_y = aligned_y;
 
                         let adjusted_aggregation_height = spacing_between_level_2 * 2.0;
 
@@ -714,22 +644,18 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                                 && aggregate_by_level_1 == AggregateByLevel1Enum::Host
                                 && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
                             {
-                                2.0
+                                0.0
                             } else {
                                 options.spacing
                             };
                             cursor_y += row_height + spacing_between_jobs + row_spacing;
                         }
                     }
-                    if !options.squash_resources {
-                        cursor_y += spacing_between_level_2;
-                    }
+                    cursor_y += spacing_between_level_2;
                 }
             }
         }
-        if !options.squash_resources {
-            cursor_y += spacing_between_level_1;
-        }
+        cursor_y += spacing_between_level_1;
 
         // Hover feedback for Host aggregation: show a clear left marker for the whole host section
         // even when hovering the job bars area (not only the label widget).
@@ -743,10 +669,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     && mouse.x >= info.canvas.min.x
                     && mouse.x <= info.canvas.max.x
                 {
-                    let visuals = info.ctx.style().visuals.clone();
-                    let fill = visuals.selection.bg_fill;
-                    let stroke = visuals.selection.stroke.color;
-                    let alpha_fill = Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 70);
+                    let alpha_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 110);
 
                     let gutter_clip = Rect::from_min_max(
                         info.canvas.min,
@@ -760,22 +683,15 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     );
                     gutter_painter.rect_filled(marker_rect, 0.0, alpha_fill);
 
-                    // Guide line at current pointer Y
-                    info.painter.line_segment(
-                        [
-                            pos2(info.canvas.min.x + gutter_width, mouse.y),
-                            pos2(info.canvas.max.x, mouse.y),
-                        ],
-                        Stroke::new(1.0, stroke),
-                    );
+                    // No horizontal guide line (it reads as a line through jobs).
                 }
             }
         }
 
+        // Grid5000 (Cluster -> Host): remember vertical spans for site/cluster stripes.
         if hide_level_1_headers {
             if let (Some(top), Some(bottom)) = (cluster_top, cluster_bottom) {
                 grid5000_cluster_spans.push(GanttGutterSpan {
-                    label: level_1.clone(),
                     top,
                     bottom,
                 });
@@ -785,7 +701,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                         *s_bottom = (*s_bottom).max(bottom);
                     } else {
                         grid5000_site_spans.push(GanttGutterSpan {
-                            label: label.clone(),
                             top: *s_top,
                             bottom: *s_bottom,
                         });
@@ -798,12 +713,12 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                 }
             }
         }
+
     }
 
     if hide_level_1_headers {
-        if let Some((label, top, bottom)) = current_site.take() {
+        if let Some((_label, top, bottom)) = current_site.take() {
             grid5000_site_spans.push(GanttGutterSpan {
-                label,
                 top,
                 bottom,
             });
@@ -817,162 +732,99 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
         );
         let gutter_painter = info.painter.with_clip_rect(gutter_clip);
 
-        // Compute gutter widths for site, cluster, host columns based on max label width
-        // Calcul dynamique de la largeur du gutter selon la taille max des labels
-        let mut max_site = "site".to_string();
-        let mut max_cluster = "cluster".to_string();
-        let mut max_host = "host".to_string();
-        for row in &grid5000_host_rows {
-            if row.site.len() > max_site.len() { max_site = row.site.clone(); }
-            if row.cluster.len() > max_cluster.len() { max_cluster = row.cluster.clone(); }
-            if row.host_full.len() > max_host.len() { max_host = row.host_full.clone(); }
-        }
-        let font_site = FontId::proportional((info.font_id.size + 1.0).max(12.0));
-        let font_cluster = FontId::proportional((info.font_id.size + 1.0).max(12.0));
+        // Grid5000-like gutter: host labels + 3 stripes (site/cluster/host).
         let font_host = FontId::proportional((info.font_id.size).max(11.0));
-        let pad = 8.0;
-        let site_w =
-            info.ctx
-                .fonts(|f| f.layout_no_wrap(max_site.clone(), font_site.clone(), Color32::BLACK).size().x)
-                + pad;
-        let cluster_w =
-            info.ctx
-                .fonts(|f| {
-                    f.layout_no_wrap(max_cluster.clone(), font_cluster.clone(), Color32::BLACK)
-                        .size()
-                        .x
-                })
-                + pad;
-        let mut host_w =
-            info.ctx
-                .fonts(|f| f.layout_no_wrap(max_host.clone(), font_host.clone(), Color32::BLACK).size().x)
-                + pad;
 
-        // If compute_gutter_width clamped to a minimum, fill remaining space with the host column
-        let sum_w = site_w + cluster_w + host_w;
-        if sum_w < gutter_width {
-            host_w += gutter_width - sum_w;
-        }
+        let stripes_w = gutter_g5k_total_w();
+        let label_w = (gutter_width - stripes_w).max(1.0);
+        let stripes_x0 = info.canvas.min.x + label_w;
+        let c_text = theme_colors.text;
 
-        let visuals = info.ctx.style().visuals.clone();
-        let selection = visuals.selection.stroke.color;
-        let (c_site, c_cluster, c_host, c_border, c_text) = if visuals.dark_mode {
-            (
-                Color32::from_rgb(150, 140, 70),
-                Color32::from_rgb(165, 155, 80),
-                Color32::from_rgb(180, 170, 95),
-                Color32::from_gray(30),
-                Color32::from_gray(10),
-            )
-        } else {
-            (
-                Color32::from_rgb(235, 215, 110),
-                Color32::from_rgb(245, 227, 113),
-                Color32::from_rgb(252, 238, 170),
-                Color32::from_gray(30),
-                Color32::BLACK,
-            )
-        };
+        let c_site = Color32::from_rgb(252, 238, 170);
+        let c_cluster = Color32::from_rgb(245, 227, 113);
+        let c_host = Color32::from_rgb(235, 215, 110);
 
-        gutter_painter.line_segment(
-            [
-                pos2(info.canvas.min.x + site_w, info.canvas.min.y),
-                pos2(info.canvas.min.x + site_w, info.canvas.max.y),
-            ],
-            Stroke::new(1.0, c_border),
-        );
-        gutter_painter.line_segment(
-            [
-                pos2(info.canvas.min.x + site_w + cluster_w, info.canvas.min.y),
-                pos2(info.canvas.min.x + site_w + cluster_w, info.canvas.max.y),
-            ],
-            Stroke::new(1.0, c_border),
-        );
+        // Fills first, then strokes (keep borders visible).
+        let border = Stroke::new(1.0, Color32::BLACK);
+        let inset = 0.5; // keep strokes fully inside the clip rect
 
-        // font_site/font_cluster/font_host already defined above
+        let site_x0 = stripes_x0;
+        let site_x1 = stripes_x0 + GUTTER_G5K_SITE_W;
+        let cluster_x0 = site_x1;
+        let cluster_x1 = cluster_x0 + GUTTER_G5K_CLUSTER_W;
+        let host_x0 = cluster_x1;
+        let host_x1 = host_x0 + GUTTER_G5K_HOST_W;
+
+        let stripes_top = grid5000_host_rows
+            .first()
+            .map(|r| r.row_rect.min.y)
+            .unwrap_or(info.canvas.min.y);
+        let stripes_bottom = grid5000_host_rows
+            .last()
+            .map(|r| r.row_rect.max.y)
+            .unwrap_or(info.canvas.max.y);
 
         for span in &grid5000_site_spans {
-            // N'affiche que si le label n'est pas vide et qu'il y a des jobs
-            if !span.label.trim().is_empty() && (span.bottom - span.top) > 0.0 {
-                let rect = Rect::from_min_max(
-                    pos2(info.canvas.min.x, span.top),
-                    pos2(info.canvas.min.x + site_w, span.bottom),
-                );
-                gutter_painter.rect_filled(rect, 0.0, c_site);
-                gutter_painter.rect(rect, 0.0, c_site, Stroke::new(1.0, c_border));
-                let clip = gutter_painter.with_clip_rect(rect);
-                clip.text(
-                    pos2(rect.min.x + 6.0, rect.center().y),
-                    Align2::LEFT_CENTER,
-                    &span.label,
-                    font_site.clone(),
-                    c_text,
-                );
-            }
-        }
-
-        for span in &grid5000_cluster_spans {
-            if span.label.trim().is_empty() || (span.bottom - span.top) <= 0.0 {
+            if (span.bottom - span.top) <= 0.0 {
                 continue;
             }
             let rect = Rect::from_min_max(
-                pos2(info.canvas.min.x + site_w, span.top),
-                pos2(info.canvas.min.x + site_w + cluster_w, span.bottom),
+                pos2(site_x0, span.top),
+                pos2(site_x1, span.bottom),
+            );
+            gutter_painter.rect_filled(rect, 0.0, c_site);
+        }
+
+        for span in &grid5000_cluster_spans {
+            if (span.bottom - span.top) <= 0.0 {
+                continue;
+            }
+            let rect = Rect::from_min_max(
+                pos2(cluster_x0, span.top),
+                pos2(cluster_x1, span.bottom),
             );
             gutter_painter.rect_filled(rect, 0.0, c_cluster);
-            gutter_painter.rect(rect, 0.0, c_cluster, Stroke::new(1.0, c_border));
-            let clip = gutter_painter.with_clip_rect(rect);
-            clip.text(
-                pos2(rect.min.x + 4.0, rect.center().y),
-                Align2::LEFT_CENTER,
-                &span.label,
-                font_cluster.clone(),
-                c_text,
-            );
         }
 
         for row in &grid5000_host_rows {
-            // N'affiche que si host a un label non vide et une hauteur > 0
-            if !row.host_short.trim().is_empty() && row.row_rect.height() > 0.0 {
-                let host_rect = Rect::from_min_max(
-                    pos2(info.canvas.min.x + site_w + cluster_w, row.row_rect.min.y),
-                    pos2(
-                        info.canvas.min.x + site_w + cluster_w + host_w,
-                        row.row_rect.max.y,
-                    ),
+            if row.host_short.trim().is_empty() || row.row_rect.height() <= 0.0 {
+                continue;
+            }
+                let host_rect = row.row_rect;
+                let is_hovered = info
+                    .response
+                    .hover_pos()
+                    .map_or(false, |mouse_pos| host_rect.contains(mouse_pos));
+                let is_job_host_hovered = options
+                    .hovered_grid5000_host
+                    .as_deref()
+                    .map_or(false, |h| h == row.host_full.trim());
+                let show_hover_marker = is_hovered || is_job_host_hovered;
+
+                // Host stripe per row
+                let stripe_rect = Rect::from_min_max(
+                    pos2(host_x0, host_rect.min.y),
+                    pos2(host_x1, host_rect.max.y),
                 );
-                // Définition locale de is_hovered
-                let is_hovered = info.response.hover_pos().map_or(false, |mouse_pos| host_rect.contains(mouse_pos));
+                gutter_painter.rect_filled(stripe_rect, 0.0, c_host);
 
-                gutter_painter.rect_filled(host_rect, 0.0, c_host);
-
-                // Hover indicator: stronger border + left marker + horizontal guide line
-                let border_stroke = if is_hovered {
-                    Stroke::new(2.0, selection)
-                } else {
-                    Stroke::new(1.0, c_border)
-                };
-                gutter_painter.rect(host_rect, 0.0, c_host, border_stroke);
-
-                if is_hovered {
+                // Hover indicator: left marker only (no lines in the gutter zone)
+                if show_hover_marker {
+                    let hover_grey_fill = Color32::from_rgba_unmultiplied(70, 70, 70, 210);
                     let marker_rect = Rect::from_min_max(
                         pos2(info.canvas.min.x, host_rect.min.y),
-                        pos2(info.canvas.min.x + 4.0, host_rect.max.y),
+                        pos2(info.canvas.min.x + 6.0, host_rect.max.y),
                     );
-                    gutter_painter.rect_filled(marker_rect, 0.0, visuals.selection.bg_fill);
-
-                    info.painter.line_segment(
-                        [
-                            pos2(info.canvas.min.x + gutter_width, host_rect.center().y),
-                            pos2(info.canvas.max.x, host_rect.center().y),
-                        ],
-                        Stroke::new(1.0, selection),
-                    );
+                    gutter_painter.rect_filled(marker_rect, 0.0, hover_grey_fill);
                 }
 
-                let clip = gutter_painter.with_clip_rect(host_rect);
+                let label_rect = Rect::from_min_max(
+                    host_rect.min,
+                    pos2(info.canvas.min.x + label_w, host_rect.max.y),
+                );
+                let clip = gutter_painter.with_clip_rect(label_rect);
                 clip.text(
-                    pos2(host_rect.min.x + 6.0, host_rect.center().y),
+                    pos2(host_rect.min.x + 4.0, host_rect.center().y),
                     Align2::LEFT_CENTER,
                     &row.host_short,
                     font_host.clone(),
@@ -1085,61 +937,61 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                         },
                     );
                 }
-            }
-
-            // Suppression du bloc redondant : is_hovered n'est accessible que dans le bloc précédent
         }
-    }
 
-    if options.squash_resources {
-        if !hide_level_1_headers {
-            for (name, pos, is_collapsed, label_meta) in header_data_level_1 {
-                let galley = info.ctx.fonts(|f| {
-                    let collapsed_symbol = if is_collapsed { "⏵" } else { "⏷" };
-                    let label = format!("{} {}", collapsed_symbol, name);
-                    f.layout_no_wrap(label, info.font_id.clone(), theme_colors.text_dim)
-                });
-                let rect = Rect::from_min_size(pos, galley.size());
-                info.painter
-                    .rect_filled(rect.expand(4.0), 4.0, theme_colors.background_timeline);
+        // Borders/divisions (on top).
+        let stripes_rect = Rect::from_min_max(
+            pos2(site_x0 + inset, stripes_top + inset),
+            pos2(host_x1 - inset, stripes_bottom - inset),
+        );
+        gutter_painter.rect_stroke(stripes_rect, 0.0, border);
 
-                let mut is_collapsed_copy = is_collapsed;
-                paint_job_info(
-                    info,
-                    &name,
-                    pos,
-                    &mut is_collapsed_copy,
-                    1,
-                    gutter_width,
-                    options.rect_height,
-                    compact,
-                    label_meta,
-                    app,
+        // Right border is often visually weaker (clip/AA): reinforce it.
+        let right_border = Stroke::new(2.0, Color32::BLACK);
+        let right_x = host_x1 - 1.0; // keep the whole 2px stroke inside the clip
+        gutter_painter.line_segment(
+            [
+                pos2(right_x, stripes_top + inset),
+                pos2(right_x, stripes_bottom - inset),
+            ],
+            right_border,
+        );
+
+        // Vertical separators between columns
+        gutter_painter.line_segment(
+            [
+                pos2(site_x1, stripes_top + inset),
+                pos2(site_x1, stripes_bottom - inset),
+            ],
+            border,
+        );
+        gutter_painter.line_segment(
+            [
+                pos2(cluster_x1, stripes_top + inset),
+                pos2(cluster_x1, stripes_bottom - inset),
+            ],
+            border,
+        );
+
+        // Cluster column: divided by cluster spans (no labels).
+        for span in &grid5000_cluster_spans {
+            let y = span.bottom;
+            if y > stripes_top + inset && y < stripes_bottom - inset {
+                gutter_painter.line_segment(
+                    [pos2(cluster_x0 + inset, y), pos2(cluster_x1 - inset, y)],
+                    border,
                 );
-                if is_collapsed_copy != is_collapsed {
-                    *collapsed_jobs_level_1.get_mut(&name).unwrap() = is_collapsed_copy;
-                }
             }
         }
 
-        for (level_1_key, level_2_key, pos, is_collapsed, label_meta) in header_data_level_2 {
-            let mut is_collapsed_copy = is_collapsed;
-            paint_job_info(
-                info,
-                &level_2_key,
-                pos,
-                &mut is_collapsed_copy,
-                2,
-                gutter_width,
-                options.rect_height,
-                compact,
-                label_meta,
-                app,
-            );
-            if is_collapsed_copy != is_collapsed {
-                *collapsed_jobs_level_2
-                    .get_mut(&(level_1_key, level_2_key))
-                    .unwrap() = is_collapsed_copy;
+        // Host column: divided for each host row.
+        for row in &grid5000_host_rows {
+            let y = row.row_rect.max.y;
+            if y > stripes_top + inset && y < stripes_bottom - inset {
+                gutter_painter.line_segment(
+                    [pos2(host_x0 + inset, y), pos2(host_x1 - inset, y)],
+                    border,
+                );
             }
         }
     }
@@ -1162,7 +1014,7 @@ fn paint_job(
     details_window: &mut Vec<JobDetailsWindow>,
     all_cluster: &Vec<Cluster>,
     state: ResourceState,
-    aggregation_height: f32,
+    _aggregation_height: f32,
     resource_label_for_state_tooltip: Option<&str>,
 ) -> PaintResult {
     let theme_colors = get_theme_colors(&info.ctx.style());
@@ -1184,29 +1036,10 @@ fn paint_job(
         return PaintResult::Culled;
     }
 
-    let base_line_height = options.rect_height.max(info.text_height);
-    let spacing_between_jobs = if options.compact_rows { 0.0 } else { 5.0 };
-    let total_line_height = base_line_height + spacing_between_jobs + options.spacing;
+    let height = options.rect_height;
+    let rounding = options.rounding;
 
-    let height = if options.squash_resources {
-        total_line_height + aggregation_height
-    } else {
-        options.rect_height
-    };
-
-    let rounding = if options.squash_resources { 0.0 } else { options.rounding };
-
-    let rect = Rect::from_min_size(
-        pos2(
-            start_x,
-            if options.squash_resources {
-                top_y - aggregation_height
-            } else {
-                top_y
-            },
-        ),
-        egui::vec2(width.max(options.min_width), height),
-    );
+    let rect = Rect::from_min_size(pos2(start_x, top_y), egui::vec2(width.max(options.min_width), height));
 
     let visible_rect = rect.intersect(chart_clip_rect);
     if visible_rect.is_negative() {
@@ -1217,6 +1050,18 @@ fn paint_job(
         .response
         .hover_pos()
         .map_or(false, |mouse_pos| visible_rect.contains(mouse_pos));
+
+    // Grid5000: when hovering a job bar, highlight the corresponding host row in the gutter.
+    let is_grid5000 = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
+        && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
+    if is_grid5000 && is_job_trully_hovered {
+        if let Some(label) = resource_label_for_state_tooltip {
+            let trimmed = label.trim();
+            if !trimmed.is_empty() {
+                options.hovered_grid5000_host = Some(trimmed.to_string());
+            }
+        }
+    }
 
     let is_job_hovered = info
         .response
@@ -1235,14 +1080,14 @@ fn paint_job(
         options.current_hovered_job = Some(job.clone());
     }
 
-    if is_job_hovered && info.response.secondary_clicked() {
+    if is_job_trully_hovered && info.response.secondary_clicked() {
         let window = JobDetailsWindow::new(job.clone(), get_tree_structure_for_job(job, all_cluster));
         if !details_window.iter().any(|w| w.job.id == job.id) {
             details_window.push(window);
         }
     }
 
-    if is_job_hovered && info.response.clicked() {
+    if is_job_trully_hovered && info.response.clicked() && !info.response.double_clicked() {
         let job_duration_s = job.walltime as f64;
         let job_start_s = job.scheduled_start as f64;
         let job_end_s = if job.stop_time > 0 {
@@ -1269,6 +1114,13 @@ fn paint_job(
 
     chart_painter.rect_filled(visible_rect, rounding, fill_color);
 
+    if is_job_hovered {
+        let hover_fill = Color32::from_rgba_unmultiplied(140, 140, 140, 60);
+        let hover_stroke = Stroke::new(3.0, Color32::from_gray(80));
+        chart_painter.rect_filled(visible_rect, rounding, hover_fill);
+        chart_painter.rect_stroke(visible_rect.expand(1.0), rounding, hover_stroke);
+    }
+
     if state == ResourceState::Dead || state == ResourceState::Absent {
         let hachure_color = match state {
             ResourceState::Dead => Color32::from_rgba_premultiplied(255, 0, 0, 150),
@@ -1281,11 +1133,7 @@ fn paint_job(
         let mut x = info.canvas.min.x;
         let current_time_x = info.point_from_s(options, chrono::Utc::now().timestamp());
 
-        let hatch_y = if options.squash_resources {
-            top_y - aggregation_height
-        } else {
-            top_y
-        };
+        let hatch_y = top_y;
 
         let hover_rect = match state {
             ResourceState::Dead => Rect::from_min_max(
@@ -1359,7 +1207,7 @@ fn paint_job_info(
 
     let visuals = info.ctx.style().visuals.clone();
     let selection_stroke = visuals.selection.stroke.color;
-    let selection_fill = visuals.selection.bg_fill;
+    let _selection_fill = visuals.selection.bg_fill;
 
     *collapsed = false;
 
@@ -1429,19 +1277,12 @@ fn paint_job_info(
 
         // Clear hover indication for host labels (works also in Aggregate by Host)
         if is_hovered {
+            let hover_grey_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 140);
             let marker_rect = Rect::from_min_max(
                 pos2(info.canvas.min.x, rect.min.y),
                 pos2(info.canvas.min.x + 4.0, rect.max.y),
             );
-            gutter_painter.rect_filled(marker_rect, 0.0, selection_fill);
-
-            info.painter.line_segment(
-                [
-                    pos2(info.canvas.min.x + gutter_width, rect.center().y),
-                    pos2(info.canvas.max.x, rect.center().y),
-                ],
-                Stroke::new(1.0, selection_stroke),
-            );
+            gutter_painter.rect_filled(marker_rect, 0.0, hover_grey_fill);
         }
 
         if is_hovered {

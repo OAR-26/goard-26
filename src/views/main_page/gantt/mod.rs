@@ -26,42 +26,27 @@ use eframe::egui;
 use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
 use std::collections::{BTreeMap, HashSet};
 
-use self::types::{Info, Options, GUTTER_WIDTH};
-use self::{labels::site_for_cluster_name, labels::short_host_label};
+use self::types::{gutter_g5k_total_w, Info, Options, GUTTER_WIDTH};
+use self::labels::short_host_label;
 
 fn compute_gutter_width(
     ctx: &egui::Context,
     base_font: &FontId,
     options: &Options,
     app: &ApplicationContext,
-    all_clusters: &Vec<crate::models::data_structure::cluster::Cluster>,
+    _all_clusters: &Vec<crate::models::data_structure::cluster::Cluster>,
 ) -> f32 {
-    let pad = 12.0;
     let min_w = GUTTER_WIDTH;
 
-    // Grid5000-like gutter: Cluster (level 1) + Host (level 2)
+    // Grid5000-like view: Cluster -> Host.
     let is_grid5000 = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
         && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
     if is_grid5000 {
-        let font_site = FontId::proportional((base_font.size + 1.0).max(12.0));
-        let font_cluster = FontId::proportional((base_font.size + 1.0).max(12.0));
         let font_host = FontId::proportional((base_font.size).max(11.0));
-
-        let mut max_site = "site".to_string();
-        let mut max_cluster = "cluster".to_string();
         let mut max_host = "host".to_string();
 
-        // Basé uniquement sur ce qui est affiché (jobs filtrés): n'inclut pas les hosts vides
+        // Only consider displayed hosts.
         for job in app.filtered_jobs.iter() {
-            for cluster_name in job.clusters.iter() {
-                if cluster_name.len() > max_cluster.len() {
-                    max_cluster = cluster_name.clone();
-                }
-                let site = site_for_cluster_name(cluster_name, all_clusters).unwrap_or_default();
-                if site.len() > max_site.len() {
-                    max_site = site;
-                }
-            }
             for host in job.hosts.iter() {
                 let host_short = short_host_label(host);
                 if host_short.len() > max_host.len() {
@@ -70,20 +55,18 @@ fn compute_gutter_width(
             }
         }
 
-        let site_w = ctx
-            .fonts(|f| f.layout_no_wrap(max_site, font_site, Color32::BLACK).size().x)
-            + pad;
-        let cluster_w = ctx
-            .fonts(|f| f.layout_no_wrap(max_cluster, font_cluster, Color32::BLACK).size().x)
-            + pad;
-        let host_w = ctx
-            .fonts(|f| f.layout_no_wrap(max_host, font_host, Color32::BLACK).size().x)
-            + pad;
+        let label_left_pad = 4.0;
+        let label_right_pad = 4.0;
+        let host_text_w = ctx
+            .fonts(|f| f.layout_no_wrap(max_host, font_host, Color32::BLACK).size().x);
+        let host_w = host_text_w + label_left_pad + label_right_pad;
 
-        return (site_w + cluster_w + host_w).clamp(min_w, 650.0);
+        let stripes_w = gutter_g5k_total_w();
+
+        return (host_w + stripes_w).min(650.0);
     }
 
-    // Generic gutter: pick max label width among currently aggregated keys.
+    // Generic gutter: based on the widest visible label.
     let mut max_label = "label".to_string();
     for job in app.filtered_jobs.iter() {
         match options.aggregate_by.level_1 {
@@ -121,7 +104,7 @@ fn compute_gutter_width(
 
     let text_w = ctx
         .fonts(|f| f.layout_no_wrap(max_label, base_font.clone(), Color32::BLACK).size().x)
-        + 60.0; // marge pour indentation + padding
+        + 60.0; // indentation + padding
 
     text_w.clamp(min_w, 520.0)
 }
@@ -156,7 +139,7 @@ impl View for GanttChart {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         ui.heading(RichText::new(t!("app.gantt.title")).strong());
 
-        // Indicateur de complétude: ce qui est affiché (jobs filtrés) vs ce qui est chargé (ressources)
+        // Completeness: displayed (filtered jobs) vs loaded (resources).
         let total_clusters = app.all_clusters.len();
         let total_hosts: usize = app.all_clusters.iter().map(|c| c.hosts.len()).sum();
         let mut displayed_clusters: HashSet<String> = HashSet::new();
@@ -263,17 +246,8 @@ impl View for GanttChart {
                     self.options.see_all_res = false;
                 }
 
-                ui.checkbox(
-                    &mut self.options.squash_resources,
-                    t!("app.gantt.settings.squash_resources"),
-                );
-                ui.separator();
-
-                ui.checkbox(
-                    &mut self.options.compact_rows,
-                    "Compact (Grid5000)",
-                );
-                ui.separator();
+                // Grid5000: compact rows forced.
+                self.options.compact_rows = true;
 
                 self.options.job_color.ui(ui);
             });
