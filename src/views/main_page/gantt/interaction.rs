@@ -2,18 +2,42 @@ use super::types::{Info, Options};
 use egui::{lerp, PointerButton, Response};
 
 pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, info: &Info) {
-    if response.drag_delta().x != 0.0 {
+    if response.dragged_by(PointerButton::Primary) && response.drag_delta().x != 0.0 {
         options.sideways_pan_in_points += response.drag_delta().x;
         options.zoom_to_relative_s_range = None;
     }
 
     if response.hovered() {
+        // Vertical zoom (rows height): Alt/Option + scroll
+        // Kept separate from Ctrl/Cmd zoom (time axis) to avoid shortcut conflicts.
+        let (mods, scroll_y) = info.ctx.input(|i| (i.modifiers, i.smooth_scroll_delta.y));
+        if mods.alt && !(mods.ctrl || mods.command) && scroll_y != 0.0 {
+            const MIN_ROW_HEIGHT: f32 = 8.0;
+            const MAX_ROW_HEIGHT: f32 = 80.0;
+
+            let zoom_factor_y = (-scroll_y * 0.0025).exp();
+            options.rect_height = (options.rect_height * zoom_factor_y).clamp(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
+
+            // Best effort: prevent the same wheel event from also scrolling the ScrollArea.
+            info.ctx.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
+            info.ctx.request_repaint();
+        }
+
         if info.ctx.input(|i| i.smooth_scroll_delta.x != 0.0) {
             options.sideways_pan_in_points += info.ctx.input(|i| i.smooth_scroll_delta.x);
             options.zoom_to_relative_s_range = None;
         }
 
         let mut zoom_factor = info.ctx.input(|i| i.zoom_delta_2d().x);
+
+        // Fallback: ensure Ctrl/Cmd + scroll zooms even if `zoom_delta_2d()` doesn't pick it up
+        // on some platforms/backends.
+        if zoom_factor == 1.0 {
+            let (mods, scroll_y) = info.ctx.input(|i| (i.modifiers, i.smooth_scroll_delta.y));
+            if (mods.ctrl || mods.command) && scroll_y != 0.0 {
+                zoom_factor *= (-scroll_y * 0.0025).exp();
+            }
+        }
 
         if response.dragged_by(PointerButton::Secondary) {
             zoom_factor *= (response.drag_delta().y * 0.01).exp();

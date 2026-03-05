@@ -398,15 +398,8 @@ fn ui_canvas(
     let theme_colors = get_theme_colors(&info.ctx.style());
     let is_grid5000_gutter = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
         && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
-    let gutter_bg = if is_grid5000_gutter {
-        if info.ctx.style().visuals.dark_mode {
-            Color32::from_rgb(125, 115, 55)
-        } else {
-            Color32::from_rgb(245, 227, 113)
-        }
-    } else {
-        theme_colors.background
-    };
+    // Keep the left bar always yellow (independent of filters/theme).
+    let gutter_bg = Color32::from_rgb(252, 238, 170);
     let gutter_rect = Rect::from_min_max(
         pos2(info.canvas.min.x, info.canvas.min.y),
         pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
@@ -1111,17 +1104,7 @@ fn paint_aggregated_jobs_level_2(
         row_rect: Rect,
     }
 
-    #[derive(Clone)]
-    struct GanttGutterSpan {
-        label: String,
-        rect: Rect,
-    }
-
     let mut grid5000_host_rows: Vec<GanttGutterHostRow> = Vec::new();
-    let mut grid5000_cluster_spans: Vec<GanttGutterSpan> = Vec::new();
-    let mut grid5000_site_spans: Vec<GanttGutterSpan> = Vec::new();
-
-    let mut current_site: Option<(String, f32, f32)> = None; // (label, top, bottom)
 
     let spacing_between_level_1 = font_size as f32 * 0.25; // minimal spacing between clusters
     let spacing_between_level_2 = font_size as f32 * 0.35; // minimal spacing between hosts
@@ -1419,23 +1402,13 @@ fn paint_aggregated_jobs_level_2(
         let cluster_w = (gutter_width * 0.36).clamp(60.0, 120.0);
         let host_w = (gutter_width - site_w - cluster_w).max(60.0);
 
-        let (c_site, c_cluster, c_host, c_border, c_text) = if info.ctx.style().visuals.dark_mode {
-            (
-                Color32::from_rgb(150, 140, 70),
-                Color32::from_rgb(165, 155, 80),
-                Color32::from_rgb(180, 170, 95),
-                Color32::from_gray(30),
-                Color32::from_gray(10),
-            )
-        } else {
-            (
-                Color32::from_rgb(235, 215, 110),
-                Color32::from_rgb(245, 227, 113),
-                Color32::from_rgb(252, 238, 170),
-                Color32::from_gray(30),
-                Color32::BLACK,
-            )
-        };
+        let (c_site, c_cluster, c_host, c_border, c_text) = (
+            Color32::from_rgb(235, 215, 110),
+            Color32::from_rgb(245, 227, 113),
+            Color32::from_rgb(252, 238, 170),
+            Color32::from_gray(30),
+            Color32::BLACK,
+        );
 
         // Column separators
         gutter_painter.line_segment(

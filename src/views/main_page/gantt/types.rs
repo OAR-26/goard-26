@@ -6,6 +6,15 @@ use egui::{FontId, Rect, Response};
 
 pub(super) const GUTTER_WIDTH: f32 = 200.0;
 
+// Grid5000-like gutter stripes widths (site/cluster/host).
+pub(super) const GUTTER_G5K_SITE_W: f32 = 12.0;
+pub(super) const GUTTER_G5K_CLUSTER_W: f32 = 12.0;
+pub(super) const GUTTER_G5K_HOST_W: f32 = 12.0;
+
+pub(super) fn gutter_g5k_total_w() -> f32 {
+    GUTTER_G5K_SITE_W + GUTTER_G5K_CLUSTER_W + GUTTER_G5K_HOST_W
+}
+
 pub(super) struct Info {
     pub(super) ctx: egui::Context,
     pub(super) canvas: Rect,
@@ -46,7 +55,8 @@ pub struct Options {
     pub previous_hovered_job: Option<Job>,
     pub current_hovered_resource_state: Option<ResourceState>,
     pub current_hovered_resource_label: Option<String>,
-    pub squash_resources: bool,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub hovered_grid5000_host: Option<String>,
     pub compact_rows: bool,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub zoom_to_relative_s_range: Option<(f64, (f64, f64))>,
@@ -59,7 +69,7 @@ impl Default for Options {
             sideways_pan_in_points: 0.0,
             cull_width: 0.0,
             min_width: 1.0,
-            rect_height: 16.0,
+            rect_height: 14.0,
             spacing: 0.0,
             rounding: 4.0,
             aggregate_by: Default::default(),
@@ -67,10 +77,10 @@ impl Default for Options {
             zoom_to_relative_s_range: None,
             current_hovered_job: None,
             previous_hovered_job: None,
-            squash_resources: false,
             see_all_res: false,
             current_hovered_resource_state: None,
             current_hovered_resource_label: None,
+            hovered_grid5000_host: None,
             compact_rows: true,
         }
     }

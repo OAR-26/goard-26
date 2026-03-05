@@ -93,6 +93,7 @@ app:
       none: "None"
     help: "Drag to move around.\n\
       Zoom: Ctrl/cmd + scroll or vertical drag with right click.\n\
+      Vertical zoom: Alt/Option + scroll.\n\
       Left click on a job to zoom to it.\n\
       Double left click to reset view.\n\
       Right click on a job to see details"

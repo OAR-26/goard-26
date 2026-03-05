@@ -85,7 +85,6 @@ app:
       job_color_state: "Par état"
       hide_resources: "Masquer toutes les ressources"
       show_resources: "Afficher toutes les ressources"
-      squash_resources: "Regrouper les ressources"
       level: "Niveau"
       aggregate_by: "Agrégation par"
       host: "Hôte"
@@ -93,6 +92,7 @@ app:
       none: "Aucun"
     help: "Faites glisser pour vous déplacer.\n\
       Zoom : Ctrl/cmd + défilement ou glissement vertical avec clic droit.\n\
+      Zoom vertical : Alt/Option + défilement.\n\
       Clic gauche sur un job pour zoomer dessus.\n\
       Double clic gauche pour réinitialiser la vue.\n\
       Clic droit sur un job pour voir les détails"
