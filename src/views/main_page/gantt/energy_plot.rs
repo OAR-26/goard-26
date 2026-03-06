@@ -50,8 +50,12 @@ pub fn ui_energy_global(
         return None;
     }
 
-    let line = Line::new(pts).name("W");
-    let now_line = VLine::new(now_s as f64).name("now");
+
+    let line = Line::new(pts).name("W").color(egui::Color32::BLUE);
+    let now_line = VLine::new(now_s as f64)
+        .name("now")
+        .color(egui::Color32::RED)
+        .width(2.0);
 
     // Bounds initiales = fenêtre du Gantt + Y global (juste pour démarrer)
     let initial_bounds = PlotBounds::from_min_max(

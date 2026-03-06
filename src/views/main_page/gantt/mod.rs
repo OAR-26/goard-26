@@ -176,8 +176,6 @@ impl View for GanttChart {
             status
         ));
 
-        let reset_view = false;
-
         if self.initial_start_s.is_none() {
             self.initial_start_s = Some(app.get_start_date().timestamp());
             self.initial_end_s = Some(app.get_end_date().timestamp());
@@ -341,7 +339,7 @@ impl View for GanttChart {
 
                     ui.allocate_rect(used_rect, Sense::hover());
 
-                    // --- calcul fenêtre visible + énergie 
+                    // --- calcul fenêtre visible + énergie
                     let visible_start_s = info.start_s
                         + ((-self.options.sideways_pan_in_points / info.canvas.width())
                             * self.options.canvas_width_s) as i64;
@@ -378,7 +376,7 @@ impl View for GanttChart {
 
         if let Some((vs, ve)) = visible_range {
             let now_s = Local::now().timestamp();
-        
+
             if let Some((new_vs, new_ve)) =
                 energy_plot::ui_energy_global(ui, &energy_points, vs, ve, now_s)
             {
@@ -389,14 +387,15 @@ impl View for GanttChart {
         
                 // recalculer le pan pour que visible_start_s devienne new_vs
                 // visible_start = start_s + ( -pan_px / canvas_w_px ) * canvas_width_s
-                // => pan_px = -((visible_start - start_s)/canvas_width_s) * canvas_w_px
+                // => pan_px = -((visible_start - start_s)/canvas_width_s) * usable_width_px
                 let start_s = self.initial_start_s.unwrap();
-        
+
                 // IMPORTANT: idéalement il faut la width réelle du canvas gantt.
                 // ici on prend une approximation: largeur disponible du ui du bas.
                 let canvas_w_px = ui.available_width().max(1.0);
-        
-                let pan_px = -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
+
+                let pan_px =
+                    -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
                 self.options.sideways_pan_in_points = pan_px;
             }
         }
