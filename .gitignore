@@ -4,6 +4,7 @@
 
 # Data files
 /data/
+/src/data/data.json
 
 # IDE specific files
 .vscode/
