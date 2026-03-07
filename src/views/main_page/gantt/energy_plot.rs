@@ -24,6 +24,7 @@ pub fn ui_energy_global(
     visible_start_s: i64,
     visible_end_s: i64,
     now_s: i64,
+    left_gutter_width_px: f32,
 ) -> Option<(i64, i64)> {
     ui.label("Consommation globale (estimée)");
 
@@ -50,8 +51,12 @@ pub fn ui_energy_global(
         return None;
     }
 
-    let line = Line::new(pts).name("W");
-    let now_line = VLine::new(now_s as f64).name("now");
+
+    let line = Line::new(pts).name("W").color(egui::Color32::BLUE);
+    let now_line = VLine::new(now_s as f64)
+        .name("now")
+        .color(egui::Color32::RED)
+        .width(2.0);
 
     // Bounds initiales = fenêtre du Gantt + Y global (juste pour démarrer)
     let initial_bounds = PlotBounds::from_min_max(
@@ -61,6 +66,7 @@ pub fn ui_energy_global(
 
     let plot_resp = Plot::new("energy_global_plot")
         .height(230.0)
+        .y_axis_min_width(left_gutter_width_px.max(0.0))
         .show_axes([true, true])
         .show_grid(true)
         .allow_drag(true)
