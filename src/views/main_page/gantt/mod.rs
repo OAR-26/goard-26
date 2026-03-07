@@ -267,6 +267,43 @@ impl View for GanttChart {
             });
         });
 
+        // Timeline navigation bar
+        ui.horizontal(|ui| {
+            ui.label("Navigate:");
+            if ui.button("◀ 1w").clicked() {
+                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
+                let usable_width = ui.available_width() - gutter_width;
+                let points_per_second = usable_width / self.options.canvas_width_s;
+                let week_seconds = 7 * 24 * 60 * 60; // 1 week in seconds
+                self.options.sideways_pan_in_points += week_seconds as f32 * points_per_second;
+                self.options.zoom_to_relative_s_range = None;
+            }
+            if ui.button("◀ 1d").clicked() {
+                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
+                let usable_width = ui.available_width() - gutter_width;
+                let points_per_second = usable_width / self.options.canvas_width_s;
+                let day_seconds = 24 * 60 * 60; // 1 day in seconds
+                self.options.sideways_pan_in_points += day_seconds as f32 * points_per_second;
+                self.options.zoom_to_relative_s_range = None;
+            }
+            if ui.button("1d ▶").clicked() {
+                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
+                let usable_width = ui.available_width() - gutter_width;
+                let points_per_second = usable_width / self.options.canvas_width_s;
+                let day_seconds = 24 * 60 * 60; // 1 day in seconds
+                self.options.sideways_pan_in_points -= day_seconds as f32 * points_per_second;
+                self.options.zoom_to_relative_s_range = None;
+            }
+            if ui.button("1w ▶").clicked() {
+                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
+                let usable_width = ui.available_width() - gutter_width;
+                let points_per_second = usable_width / self.options.canvas_width_s;
+                let week_seconds = 7 * 24 * 60 * 60; // 1 week in seconds
+                self.options.sideways_pan_in_points -= week_seconds as f32 * points_per_second;
+                self.options.zoom_to_relative_s_range = None;
+            }
+        });
+
         let mut visible_range: Option<(i64, i64)> = None;
         let mut energy_points: Vec<(i64, f64)> = Vec::new();
         let mut last_gantt_usable_width_px: f32 = 1.0;
