@@ -195,6 +195,58 @@ impl View for GanttChart {
             self.initial_end_s = Some(app.get_end_date().timestamp());
         }
 
+        // Always show all resources, filtered by preset if selected
+        // Remove any existing all_resources job and re-add with current preset
+        app.all_jobs.retain(|j| j.id != 0);
+
+        let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
+            .and_then(|preset_name| app.cluster_presets.iter().find(|p| p.name == *preset_name))
+            .map(|preset| preset.clusters.clone());
+
+        let all_hosts = if let Some(cluster_names) = &selected_cluster_names {
+            app.all_clusters.iter()
+                .filter(|c| cluster_names.contains(&c.name))
+                .flat_map(|c| get_all_hosts(&vec![c.clone()]))
+                .collect()
+        } else {
+            get_all_hosts(&app.all_clusters)
+        };
+
+        let all_clusters = if let Some(cluster_names) = &selected_cluster_names {
+            cluster_names.clone()
+        } else {
+            get_all_clusters(&app.all_clusters)
+        };
+
+        let all_resources = if let Some(cluster_names) = &selected_cluster_names {
+            app.all_clusters.iter()
+                .filter(|c| cluster_names.contains(&c.name))
+                .flat_map(|c| get_all_resources(&vec![c.clone()]))
+                .collect()
+        } else {
+            get_all_resources(&app.all_clusters)
+        };
+
+        app.all_jobs.push(Job {
+            id: 0,
+            owner: "all_resources".to_string(),
+            state: JobState::Unknown,
+            scheduled_start: 0,
+            walltime: 0,
+            hosts: all_hosts,
+            clusters: all_clusters,
+            command: String::new(),
+            message: None,
+            queue: String::new(),
+            assigned_resources: all_resources,
+            submission_time: 0,
+            start_time: 0,
+            stop_time: 0,
+            exit_code: None,
+            gantt_color: egui::Color32::TRANSPARENT,
+            main_resource_state: ResourceState::Unknown,
+        });
+
         ui.horizontal(|ui| {
             ui.menu_button(t!("app.gantt.settings.title"), |ui| {
                 ui.set_max_height(500.0);
@@ -213,65 +265,6 @@ impl View for GanttChart {
                     self.options.current_hovered_resource_label = None;
                 }
                 ui.separator();
-
-                if (self.options.aggregate_by.level_1 != AggregateByLevel1Enum::Owner
-                    && self.options.aggregate_by.level_2 == AggregateByLevel2Enum::None)
-                    || (self.options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
-                        && self.options.aggregate_by.level_2 == AggregateByLevel2Enum::Host)
-                {
-                    // Always show all resources, filtered by preset if selected
-                    let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
-                        .and_then(|preset_name| app.cluster_presets.iter().find(|p| p.name == *preset_name))
-                        .map(|preset| preset.clusters.clone());
-
-                    let all_hosts = if let Some(cluster_names) = &selected_cluster_names {
-                        app.all_clusters.iter()
-                            .filter(|c| cluster_names.contains(&c.name))
-                            .flat_map(|c| get_all_hosts(&vec![c.clone()]))
-                            .collect()
-                    } else {
-                        get_all_hosts(&app.all_clusters)
-                    };
-
-                    let all_clusters = if let Some(cluster_names) = &selected_cluster_names {
-                        cluster_names.clone()
-                    } else {
-                        get_all_clusters(&app.all_clusters)
-                    };
-
-                    let all_resources = if let Some(cluster_names) = &selected_cluster_names {
-                        app.all_clusters.iter()
-                            .filter(|c| cluster_names.contains(&c.name))
-                            .flat_map(|c| get_all_resources(&vec![c.clone()]))
-                            .collect()
-                    } else {
-                        get_all_resources(&app.all_clusters)
-                    };
-
-                    app.all_jobs.push(Job {
-                        id: 0,
-                        owner: "all_resources".to_string(),
-                        state: JobState::Unknown,
-                        scheduled_start: 0,
-                        walltime: 0,
-                        hosts: all_hosts,
-                        clusters: all_clusters,
-                        command: String::new(),
-                        message: None,
-                        queue: String::new(),
-                        assigned_resources: all_resources,
-                        submission_time: 0,
-                        start_time: 0,
-                        stop_time: 0,
-                        exit_code: None,
-                        gantt_color: egui::Color32::TRANSPARENT,
-                        main_resource_state: ResourceState::Unknown,
-                    });
-                    ui.separator();
-                } else {
-                    // Remove the all_resources job if not in compatible view
-                    app.all_jobs.retain(|job| job.id != 0);
-                }
 
                 // Grid5000: compact rows forced.
                 self.options.compact_rows = true;

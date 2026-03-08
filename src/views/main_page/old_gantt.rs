@@ -386,15 +386,8 @@ fn ui_canvas(
     all_cluster: &Vec<Cluster>,
     gutter_width: f32,
 ) -> f32 {
-    // Determine filtered clusters based on selected preset
-    let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
-        .and_then(|name| app.cluster_presets.iter().find(|p| p.name == *name))
-        .map(|p| p.clusters.clone());
-    let filtered_clusters: Vec<Cluster> = if let Some(names) = selected_cluster_names {
-        app.all_clusters.iter().filter(|c| names.contains(&c.name)).cloned().collect()
-    } else {
-        app.all_clusters.clone()
-    };
+    // Determine filtered clusters - always all for display, jobs are filtered separately
+    let filtered_clusters: Vec<Cluster> = app.all_clusters.clone();
 
     if options.canvas_width_s <= 0.0 {
         options.canvas_width_s = (max_ns - min_ns) as f32;
