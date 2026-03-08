@@ -10,6 +10,7 @@ use crate::models::utils::utils::{get_clusters_for_job, get_hosts_for_job};
 use crate::views::components::dashboard_components::job_table_sorting::JobSortable;
 use crate::views::view::ViewType;
 use chrono::{DateTime, Local};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -20,6 +21,12 @@ use std::sync::{Arc, Mutex};
 It manages jobs, clusters, resources, and application state, including filtering mechanisms
 and communication channels for data updates.
 */
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ClusterPreset {
+    pub name: String,
+    pub clusters: Vec<String>,
+}
+
 pub struct ApplicationContext {
     pub all_jobs: Vec<Job>,
     pub swap_all_jobs: Vec<Job>, // Used to store all jobs when refreshing (and swapped with all_jobs when refreshing is done)
@@ -27,6 +34,7 @@ pub struct ApplicationContext {
 
     pub all_clusters: Vec<Cluster>,
     pub swap_all_clusters: Vec<Cluster>, // Used to store all clusters when refreshing (and swapped with all_clusters when refreshing is done)
+    pub cluster_presets: Vec<ClusterPreset>, // saved cluster presets (admin only)
 
     // Application view state
     pub start_date: Arc<Mutex<DateTime<Local>>>,
@@ -541,6 +549,43 @@ impl ApplicationContext {
         self.view_type = ViewType::Authentification;
     }
 
+    /// Simple helper to determine if the currently connected user is the hard-coded admin.
+    pub fn is_admin(&self) -> bool {
+        matches!(self.user_connected.as_deref(), Some("admin"))
+    }
+
+    /// Persist presets list to `presets.json` in the working directory.
+    fn save_presets_to_file(&self, file_path: &str) {
+        if let Ok(json) = serde_json::to_string(&self.cluster_presets) {
+            // ignore write errors; could log if needed
+            let _ = std::fs::write(file_path, json);
+        }
+    }
+
+    /// Load presets from the given file, returning an empty vec on error.
+    fn load_presets_from_file(file_path: &str) -> Vec<ClusterPreset> {
+        match std::fs::read_to_string(file_path) {
+            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Add a new cluster preset or update an existing one with the same name.
+    /// If the operation succeeds we also write the updated list to disk.
+    pub fn add_or_update_preset(&mut self, preset: ClusterPreset) {
+        if let Some(existing) = self
+            .cluster_presets
+            .iter_mut()
+            .find(|p| p.name == preset.name)
+        {
+            *existing = preset;
+        } else {
+            self.cluster_presets.push(preset);
+        }
+        // persist immediately
+        self.save_presets_to_file("presets.json");
+    }
+
     pub fn login(&mut self, username: &str) {
         self.user_connected = Some(username.to_string());
         self.view_type = ViewType::Dashboard;
@@ -660,7 +705,11 @@ impl Default for ApplicationContext {
             see_all_jobs: false,
 
             theme_toggle_requested: false,
+            cluster_presets: Vec::new(),
         };
+        
+        // populate presets from disk if available
+        context.cluster_presets = ApplicationContext::load_presets_from_file("presets.json");
         context.update_periodically();
         context
     }

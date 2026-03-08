@@ -26,6 +26,9 @@ use eframe::egui;
 use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
 use std::collections::{BTreeMap, HashSet};
 
+use crate::models::data_structure::application_context::ClusterPreset;
+use std::collections::HashSet as StdHashSet; // to avoid confusion with earlier import
+
 use self::types::{gutter_g5k_total_w, Info, Options, GUTTER_WIDTH};
 use self::labels::short_host_label;
 
@@ -118,6 +121,12 @@ pub struct GanttChart {
     initial_end_s: Option<i64>,
 
     last_aggregate_by: (AggregateByLevel1Enum, AggregateByLevel2Enum),
+
+    // admin panel state
+    admin_panel_open: bool,
+    admin_selected_preset: Option<usize>,
+    admin_preset_name: String,
+    admin_selected_clusters: StdHashSet<String>,
 }
 
 impl Default for GanttChart {
@@ -131,6 +140,11 @@ impl Default for GanttChart {
             initial_end_s: None,
 
             last_aggregate_by: (AggregateByLevel1Enum::Cluster, AggregateByLevel2Enum::Host),
+
+            admin_panel_open: false,
+            admin_selected_preset: None,
+            admin_preset_name: String::new(),
+            admin_selected_clusters: StdHashSet::new(),
         }
     }
 }
@@ -254,6 +268,13 @@ impl View for GanttChart {
                 ui.label(t!("app.gantt.help"));
             });
 
+            // show admin panel button only for admin users
+            if app.is_admin() {
+                if ui.button("Admin").clicked() {
+                    self.admin_panel_open = true;
+                }
+            }
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(t!("app.gantt.now")).clicked() {
                     self.options.zoom_to_relative_s_range = Some((
@@ -299,6 +320,78 @@ impl View for GanttChart {
                 self.options.zoom_to_relative_s_range = None;
             }
         });
+
+        // admin panel window
+        if self.admin_panel_open {
+            // avoid borrow conflict by using a temporary
+            let mut open = self.admin_panel_open;
+            egui::Window::new("Admin configuration")
+                .open(&mut open)
+                .default_width(300.0)
+                .show(ui.ctx(), |ui| {
+                    ui.label("Cluster presets");
+                    ui.separator();
+
+                    // choose existing or new
+                    egui::ComboBox::from_label("Preset")
+                        .selected_text(
+                            self.admin_selected_preset
+                                .and_then(|i| app.cluster_presets.get(i))
+                                .map(|p| p.name.clone())
+                                .unwrap_or_else(|| "<new>".to_string()),
+                        )
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_value(&mut self.admin_selected_preset, None, "<new>")
+                                .clicked()
+                            {
+                                self.admin_selected_preset = None;
+                                self.admin_preset_name.clear();
+                                self.admin_selected_clusters.clear();
+                            }
+                            for (i, preset) in app.cluster_presets.iter().enumerate() {
+                                if ui
+                                    .selectable_value(&mut self.admin_selected_preset, Some(i), &preset.name)
+                                    .clicked()
+                                {
+                                    self.admin_preset_name = preset.name.clone();
+                                    self.admin_selected_clusters =
+                                        preset.clusters.iter().cloned().collect();
+                                }
+                            }
+                        });
+
+                    ui.separator();
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut self.admin_preset_name);
+                    ui.separator();
+                    ui.label("Clusters to include");
+                    ui.vertical(|ui| {
+                        for cluster in &app.all_clusters {
+                            let mut checked = self
+                                .admin_selected_clusters
+                                .contains(&cluster.name);
+                            if ui.checkbox(&mut checked, &cluster.name).changed() {
+                                if checked {
+                                    self.admin_selected_clusters.insert(cluster.name.clone());
+                                } else {
+                                    self.admin_selected_clusters.remove(&cluster.name);
+                                }
+                            }
+                        }
+                    });
+                    ui.add_space(8.0);
+                    if ui.button("Save").clicked() {
+                        let preset = ClusterPreset {
+                            name: self.admin_preset_name.clone(),
+                            clusters: self.admin_selected_clusters.iter().cloned().collect(),
+                        };
+                        app.add_or_update_preset(preset);
+                        self.admin_panel_open = false;
+                    }
+                });
+            self.admin_panel_open = open;
+        }
 
         let mut visible_range: Option<(i64, i64)> = None;
         let mut energy_points: Vec<(i64, f64)> = Vec::new();
