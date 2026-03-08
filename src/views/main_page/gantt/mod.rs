@@ -21,7 +21,7 @@ use crate::{
         job_details::JobDetailsWindow,
     },
 };
-use chrono::{Local, TimeZone};
+use chrono::{Local, TimeZone, Duration};
 use eframe::egui;
 use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
 use std::collections::{BTreeMap, HashSet};
@@ -269,37 +269,33 @@ impl View for GanttChart {
 
         // Timeline navigation bar
         ui.horizontal(|ui| {
+            let base_font = TextStyle::Body.resolve(ui.style());
+            let gutter_width = compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
+            let usable_width = ui.available_width() - gutter_width;
+            let points_per_second = usable_width / self.options.canvas_width_s;
+            let min_s = self.initial_start_s.unwrap();
+            let current_visible_s = min_s - (self.options.sideways_pan_in_points * self.options.canvas_width_s / usable_width) as i64;
+            let current_local = chrono::DateTime::from_timestamp(current_visible_s, 0).unwrap().with_timezone(&chrono::Local);
+            let next_day_local = current_local + Duration::days(1);
+            let day_delta_s = next_day_local.timestamp() - current_local.timestamp();
+            let next_week_local = current_local + Duration::days(7);
+            let week_delta_s = next_week_local.timestamp() - current_local.timestamp();
+
             ui.label("Navigate:");
             if ui.button("◀ 1w").clicked() {
-                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
-                let usable_width = ui.available_width() - gutter_width;
-                let points_per_second = usable_width / self.options.canvas_width_s;
-                let week_seconds = 7 * 24 * 60 * 60; // 1 week in seconds
-                self.options.sideways_pan_in_points += week_seconds as f32 * points_per_second;
+                self.options.sideways_pan_in_points += week_delta_s as f32 * points_per_second;
                 self.options.zoom_to_relative_s_range = None;
             }
             if ui.button("◀ 1d").clicked() {
-                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
-                let usable_width = ui.available_width() - gutter_width;
-                let points_per_second = usable_width / self.options.canvas_width_s;
-                let day_seconds = 24 * 60 * 60; // 1 day in seconds
-                self.options.sideways_pan_in_points += day_seconds as f32 * points_per_second;
+                self.options.sideways_pan_in_points += day_delta_s as f32 * points_per_second;
                 self.options.zoom_to_relative_s_range = None;
             }
             if ui.button("1d ▶").clicked() {
-                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
-                let usable_width = ui.available_width() - gutter_width;
-                let points_per_second = usable_width / self.options.canvas_width_s;
-                let day_seconds = 24 * 60 * 60; // 1 day in seconds
-                self.options.sideways_pan_in_points -= day_seconds as f32 * points_per_second;
+                self.options.sideways_pan_in_points -= day_delta_s as f32 * points_per_second;
                 self.options.zoom_to_relative_s_range = None;
             }
             if ui.button("1w ▶").clicked() {
-                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
-                let usable_width = ui.available_width() - gutter_width;
-                let points_per_second = usable_width / self.options.canvas_width_s;
-                let week_seconds = 7 * 24 * 60 * 60; // 1 week in seconds
-                self.options.sideways_pan_in_points -= week_seconds as f32 * points_per_second;
+                self.options.sideways_pan_in_points -= week_delta_s as f32 * points_per_second;
                 self.options.zoom_to_relative_s_range = None;
             }
         });
