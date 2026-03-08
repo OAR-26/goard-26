@@ -612,6 +612,11 @@ impl ApplicationContext {
      * - Cluster resource filtering
      */
     pub fn filter_jobs(&mut self) {
+        // Determine the selected clusters from the preset, if any
+        let selected_cluster_names: Option<Vec<String>> = self.filters.selected_preset.as_ref()
+            .and_then(|preset_name| self.cluster_presets.iter().find(|p| p.name == *preset_name))
+            .map(|preset| preset.clusters.clone());
+
         self.filtered_jobs = self
             .all_jobs
             .iter()
@@ -651,17 +656,9 @@ impl ApplicationContext {
                                     .filters
                                     .wall_time
                                     .map_or(true, |time| time <= job.get_end_date()))))
-                        && (self.filters.clusters.is_none() || {
-                            let selected_clusters = self.filters.clusters.as_ref().unwrap();
-                            selected_clusters.iter().any(|cluster| {
-                                cluster.hosts.iter().any(|host| {
-                                    host.cpus.iter().any(|cpu| {
-                                        cpu.resources.iter().any(|resource| {
-                                            job.assigned_resources.contains(&resource.id)
-                                        })
-                                    })
-                                })
-                            })
+                        && (selected_cluster_names.is_none() || {
+                            let cluster_names = selected_cluster_names.as_ref().unwrap();
+                            cluster_names.iter().any(|cluster_name| job.clusters.contains(cluster_name))
                         })
             })
             .cloned() // Clone filtred jobs here
