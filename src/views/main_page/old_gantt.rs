@@ -386,6 +386,9 @@ fn ui_canvas(
     all_cluster: &Vec<Cluster>,
     gutter_width: f32,
 ) -> f32 {
+    // Determine filtered clusters - always all for display, jobs are filtered separately
+    let filtered_clusters: Vec<Cluster> = app.all_clusters.clone();
+
     if options.canvas_width_s <= 0.0 {
         options.canvas_width_s = (max_ns - min_ns) as f32;
         options.zoom_to_relative_s_range = None;
@@ -452,7 +455,7 @@ fn ui_canvas(
                 AggregateByLevel2Enum::Owner => {
                     let mut jobs_by_host_by_owner: BTreeMap<String, BTreeMap<String, Vec<Job>>> =
                         BTreeMap::new();
-                    let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                    let filtered_clusters = filtered_clusters.clone();
                     // for each job, we add it to the corresponding host and owner
                     for job in jobs {
                         for host in job.hosts.iter() {
@@ -490,7 +493,7 @@ fn ui_canvas(
                 // No aggregation as level 2 so we only aggregate by host as level 1
                 AggregateByLevel2Enum::None => {
                     let mut jobs_by_host: BTreeMap<String, Vec<Job>> = BTreeMap::new();
-                    let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                    let filtered_clusters = filtered_clusters.clone();
 
                     // for each job, we add it to the corresponding host
                     for job in jobs {
@@ -534,7 +537,7 @@ fn ui_canvas(
             AggregateByLevel2Enum::Owner => {
                 let mut jobs_by_cluster_by_owner: BTreeMap<String, BTreeMap<String, Vec<Job>>> =
                     BTreeMap::new();
-                let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                let filtered_clusters = filtered_clusters.clone();
 
                 // for each job, we add it to the corresponding cluster and owner
                 for job in jobs {
@@ -573,7 +576,7 @@ fn ui_canvas(
             // No aggregation as level 2 so we only aggregate by cluster as level 1
             AggregateByLevel2Enum::None => {
                 let mut jobs_by_cluster: BTreeMap<String, Vec<Job>> = BTreeMap::new();
-                let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                let filtered_clusters = filtered_clusters.clone();
 
                 // for each job, we add it to the corresponding cluster
                 for job in jobs {
@@ -609,7 +612,7 @@ fn ui_canvas(
             AggregateByLevel2Enum::Host => {
                 let mut jobs_by_cluster_by_host: BTreeMap<String, BTreeMap<String, Vec<Job>>> =
                     BTreeMap::new();
-                let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                let filtered_clusters = filtered_clusters.clone();
 
                 // for each job, we add it to the corresponding cluster and host
                 for job in jobs {

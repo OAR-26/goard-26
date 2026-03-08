@@ -21,10 +21,13 @@ use crate::{
         job_details::JobDetailsWindow,
     },
 };
-use chrono::{Local, TimeZone};
+use chrono::{Local, TimeZone, Duration};
 use eframe::egui;
 use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
 use std::collections::{BTreeMap, HashSet};
+
+use crate::models::data_structure::application_context::ClusterPreset;
+use std::collections::HashSet as StdHashSet; // to avoid confusion with earlier import
 
 use self::types::{gutter_g5k_total_w, Info, Options, GUTTER_WIDTH};
 use self::labels::short_host_label;
@@ -118,6 +121,12 @@ pub struct GanttChart {
     initial_end_s: Option<i64>,
 
     last_aggregate_by: (AggregateByLevel1Enum, AggregateByLevel2Enum),
+
+    // admin panel state
+    admin_panel_open: bool,
+    admin_selected_preset: Option<usize>,
+    admin_preset_name: String,
+    admin_selected_clusters: StdHashSet<String>,
 }
 
 impl Default for GanttChart {
@@ -131,6 +140,11 @@ impl Default for GanttChart {
             initial_end_s: None,
 
             last_aggregate_by: (AggregateByLevel1Enum::Cluster, AggregateByLevel2Enum::Host),
+
+            admin_panel_open: false,
+            admin_selected_preset: None,
+            admin_preset_name: String::new(),
+            admin_selected_clusters: StdHashSet::new(),
         }
     }
 }
@@ -181,6 +195,58 @@ impl View for GanttChart {
             self.initial_end_s = Some(app.get_end_date().timestamp());
         }
 
+        // Always show all resources, filtered by preset if selected
+        // Remove any existing all_resources job and re-add with current preset
+        app.all_jobs.retain(|j| j.id != 0);
+
+        let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
+            .and_then(|preset_name| app.cluster_presets.iter().find(|p| p.name == *preset_name))
+            .map(|preset| preset.clusters.clone());
+
+        let all_hosts = if let Some(cluster_names) = &selected_cluster_names {
+            app.all_clusters.iter()
+                .filter(|c| cluster_names.contains(&c.name))
+                .flat_map(|c| get_all_hosts(&vec![c.clone()]))
+                .collect()
+        } else {
+            get_all_hosts(&app.all_clusters)
+        };
+
+        let all_clusters = if let Some(cluster_names) = &selected_cluster_names {
+            cluster_names.clone()
+        } else {
+            get_all_clusters(&app.all_clusters)
+        };
+
+        let all_resources = if let Some(cluster_names) = &selected_cluster_names {
+            app.all_clusters.iter()
+                .filter(|c| cluster_names.contains(&c.name))
+                .flat_map(|c| get_all_resources(&vec![c.clone()]))
+                .collect()
+        } else {
+            get_all_resources(&app.all_clusters)
+        };
+
+        app.all_jobs.push(Job {
+            id: 0,
+            owner: "all_resources".to_string(),
+            state: JobState::Unknown,
+            scheduled_start: 0,
+            walltime: 0,
+            hosts: all_hosts,
+            clusters: all_clusters,
+            command: String::new(),
+            message: None,
+            queue: String::new(),
+            assigned_resources: all_resources,
+            submission_time: 0,
+            start_time: 0,
+            stop_time: 0,
+            exit_code: None,
+            gantt_color: egui::Color32::TRANSPARENT,
+            main_resource_state: ResourceState::Unknown,
+        });
+
         ui.horizontal(|ui| {
             ui.menu_button(t!("app.gantt.settings.title"), |ui| {
                 ui.set_max_height(500.0);
@@ -200,50 +266,6 @@ impl View for GanttChart {
                 }
                 ui.separator();
 
-                if (self.options.aggregate_by.level_1 != AggregateByLevel1Enum::Owner
-                    && self.options.aggregate_by.level_2 == AggregateByLevel2Enum::None)
-                    || (self.options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
-                        && self.options.aggregate_by.level_2 == AggregateByLevel2Enum::Host)
-                {
-                    if ui
-                        .checkbox(
-                            &mut self.options.see_all_res,
-                            t!("app.gantt.settings.show_resources"),
-                        )
-                        .clicked()
-                    {
-                        if self.options.see_all_res {
-                            app.all_jobs.push(Job {
-                                id: 0,
-                                owner: "all_resources".to_string(),
-                                state: JobState::Unknown,
-                                scheduled_start: 0,
-                                walltime: 0,
-                                hosts: get_all_hosts(&app.all_clusters),
-                                clusters: get_all_clusters(&app.all_clusters),
-                                command: String::new(),
-                                message: None,
-                                queue: String::new(),
-                                assigned_resources: get_all_resources(&app.all_clusters),
-                                submission_time: 0,
-                                start_time: 0,
-                                stop_time: 0,
-                                exit_code: None,
-                                gantt_color: egui::Color32::TRANSPARENT,
-                                main_resource_state: ResourceState::Unknown,
-                            });
-                        } else {
-                            app.all_jobs.retain(|job| job.id != 0);
-                        }
-                    }
-                    ui.separator();
-                } else {
-                    if self.options.see_all_res {
-                        app.all_jobs.retain(|job| job.id != 0);
-                    }
-                    self.options.see_all_res = false;
-                }
-
                 // Grid5000: compact rows forced.
                 self.options.compact_rows = true;
 
@@ -253,6 +275,13 @@ impl View for GanttChart {
             ui.menu_button(" ?", |ui| {
                 ui.label(t!("app.gantt.help"));
             });
+
+            // show admin panel button only for admin users
+            if app.is_admin() {
+                if ui.button("Admin").clicked() {
+                    self.admin_panel_open = true;
+                }
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(t!("app.gantt.now")).clicked() {
@@ -269,40 +298,108 @@ impl View for GanttChart {
 
         // Timeline navigation bar
         ui.horizontal(|ui| {
+            let base_font = TextStyle::Body.resolve(ui.style());
+            let gutter_width = compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
+            let usable_width = ui.available_width() - gutter_width;
+            let points_per_second = usable_width / self.options.canvas_width_s;
+            let min_s = self.initial_start_s.unwrap();
+            let current_visible_s = min_s - (self.options.sideways_pan_in_points * self.options.canvas_width_s / usable_width) as i64;
+            let current_local = chrono::DateTime::from_timestamp(current_visible_s, 0).unwrap().with_timezone(&chrono::Local);
+            let next_day_local = current_local + Duration::days(1);
+            let day_delta_s = next_day_local.timestamp() - current_local.timestamp();
+            let next_week_local = current_local + Duration::days(7);
+            let week_delta_s = next_week_local.timestamp() - current_local.timestamp();
+
             ui.label("Navigate:");
             if ui.button("◀ 1w").clicked() {
-                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
-                let usable_width = ui.available_width() - gutter_width;
-                let points_per_second = usable_width / self.options.canvas_width_s;
-                let week_seconds = 7 * 24 * 60 * 60; // 1 week in seconds
-                self.options.sideways_pan_in_points += week_seconds as f32 * points_per_second;
+                self.options.sideways_pan_in_points += week_delta_s as f32 * points_per_second;
                 self.options.zoom_to_relative_s_range = None;
             }
             if ui.button("◀ 1d").clicked() {
-                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
-                let usable_width = ui.available_width() - gutter_width;
-                let points_per_second = usable_width / self.options.canvas_width_s;
-                let day_seconds = 24 * 60 * 60; // 1 day in seconds
-                self.options.sideways_pan_in_points += day_seconds as f32 * points_per_second;
+                self.options.sideways_pan_in_points += day_delta_s as f32 * points_per_second;
                 self.options.zoom_to_relative_s_range = None;
             }
             if ui.button("1d ▶").clicked() {
-                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
-                let usable_width = ui.available_width() - gutter_width;
-                let points_per_second = usable_width / self.options.canvas_width_s;
-                let day_seconds = 24 * 60 * 60; // 1 day in seconds
-                self.options.sideways_pan_in_points -= day_seconds as f32 * points_per_second;
+                self.options.sideways_pan_in_points -= day_delta_s as f32 * points_per_second;
                 self.options.zoom_to_relative_s_range = None;
             }
             if ui.button("1w ▶").clicked() {
-                let gutter_width = compute_gutter_width(ui.ctx(), &TextStyle::Body.resolve(ui.style()), &self.options, app, &app.all_clusters);
-                let usable_width = ui.available_width() - gutter_width;
-                let points_per_second = usable_width / self.options.canvas_width_s;
-                let week_seconds = 7 * 24 * 60 * 60; // 1 week in seconds
-                self.options.sideways_pan_in_points -= week_seconds as f32 * points_per_second;
+                self.options.sideways_pan_in_points -= week_delta_s as f32 * points_per_second;
                 self.options.zoom_to_relative_s_range = None;
             }
         });
+
+        // admin panel window
+        if self.admin_panel_open {
+            // avoid borrow conflict by using a temporary
+            let mut open = self.admin_panel_open;
+            egui::Window::new("Admin configuration")
+                .open(&mut open)
+                .default_width(300.0)
+                .show(ui.ctx(), |ui| {
+                    ui.label("Cluster presets");
+                    ui.separator();
+
+                    // choose existing or new
+                    egui::ComboBox::from_label("Preset")
+                        .selected_text(
+                            self.admin_selected_preset
+                                .and_then(|i| app.cluster_presets.get(i))
+                                .map(|p| p.name.clone())
+                                .unwrap_or_else(|| "<new>".to_string()),
+                        )
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_value(&mut self.admin_selected_preset, None, "<new>")
+                                .clicked()
+                            {
+                                self.admin_selected_preset = None;
+                                self.admin_preset_name.clear();
+                                self.admin_selected_clusters.clear();
+                            }
+                            for (i, preset) in app.cluster_presets.iter().enumerate() {
+                                if ui
+                                    .selectable_value(&mut self.admin_selected_preset, Some(i), &preset.name)
+                                    .clicked()
+                                {
+                                    self.admin_preset_name = preset.name.clone();
+                                    self.admin_selected_clusters =
+                                        preset.clusters.iter().cloned().collect();
+                                }
+                            }
+                        });
+
+                    ui.separator();
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut self.admin_preset_name);
+                    ui.separator();
+                    ui.label("Clusters to include");
+                    ui.vertical(|ui| {
+                        for cluster in &app.all_clusters {
+                            let mut checked = self
+                                .admin_selected_clusters
+                                .contains(&cluster.name);
+                            if ui.checkbox(&mut checked, &cluster.name).changed() {
+                                if checked {
+                                    self.admin_selected_clusters.insert(cluster.name.clone());
+                                } else {
+                                    self.admin_selected_clusters.remove(&cluster.name);
+                                }
+                            }
+                        }
+                    });
+                    ui.add_space(8.0);
+                    if ui.button("Save").clicked() {
+                        let preset = ClusterPreset {
+                            name: self.admin_preset_name.clone(),
+                            clusters: self.admin_selected_clusters.iter().cloned().collect(),
+                        };
+                        app.add_or_update_preset(preset);
+                        self.admin_panel_open = false;
+                    }
+                });
+            self.admin_panel_open = open;
+        }
 
         let mut visible_range: Option<(i64, i64)> = None;
         let mut energy_points: Vec<(i64, f64)> = Vec::new();

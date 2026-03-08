@@ -25,6 +25,16 @@ pub(super) fn ui_canvas(
     all_cluster: &Vec<Cluster>,
     gutter_width: f32,
 ) -> f32 {
+    // Determine filtered clusters based on selected preset
+    let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
+        .and_then(|name| app.cluster_presets.iter().find(|p| p.name == *name))
+        .map(|p| p.clusters.clone());
+    let filtered_clusters: Vec<Cluster> = if let Some(names) = selected_cluster_names {
+        app.all_clusters.iter().filter(|c| names.contains(&c.name)).cloned().collect()
+    } else {
+        app.all_clusters.clone()
+    };
+
     // Per-frame hover state.
     options.hovered_grid5000_host = None;
 
@@ -101,7 +111,7 @@ pub(super) fn ui_canvas(
             AggregateByLevel2Enum::Owner => {
                 let mut jobs_by_host_by_owner: BTreeMap<String, BTreeMap<String, Vec<&Job>>> =
                     BTreeMap::new();
-                let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                let filtered_clusters = filtered_clusters.clone();
 
                 for job in jobs.iter() {
                     for host in job.hosts.iter() {
@@ -136,7 +146,7 @@ pub(super) fn ui_canvas(
 
             AggregateByLevel2Enum::None => {
                 let mut jobs_by_host: BTreeMap<String, Vec<&Job>> = BTreeMap::new();
-                let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                let filtered_clusters = filtered_clusters.clone();
 
                 for job in jobs.iter() {
                     for host in job.hosts.iter() {
@@ -174,7 +184,7 @@ pub(super) fn ui_canvas(
             AggregateByLevel2Enum::Owner => {
                 let mut jobs_by_cluster_by_owner: BTreeMap<String, BTreeMap<String, Vec<&Job>>> =
                     BTreeMap::new();
-                let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                let filtered_clusters = filtered_clusters.clone();
 
                 for job in jobs.iter() {
                     for cluster in job.clusters.iter() {
@@ -211,7 +221,7 @@ pub(super) fn ui_canvas(
 
             AggregateByLevel2Enum::None => {
                 let mut jobs_by_cluster: BTreeMap<String, Vec<&Job>> = BTreeMap::new();
-                let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                let filtered_clusters = filtered_clusters.clone();
 
                 for job in jobs.iter() {
                     for cluster in job.clusters.iter() {
@@ -245,7 +255,7 @@ pub(super) fn ui_canvas(
             AggregateByLevel2Enum::Host => {
                 let mut jobs_by_cluster_by_host: BTreeMap<String, BTreeMap<String, Vec<&Job>>> =
                     BTreeMap::new();
-                let filtered_clusters = app.filters.clusters.clone().unwrap_or_default();
+                let filtered_clusters = filtered_clusters.clone();
 
                 for job in jobs.iter() {
                     for cluster_name in job.clusters.iter() {
