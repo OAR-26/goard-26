@@ -125,6 +125,9 @@ pub struct GanttChart {
     collapsed_jobs_level_2: BTreeMap<(String, String), bool>,
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
+    energy_filter_cluster: Option<String>,
+    energy_filter_owner: Option<String>,
+
     last_canvas_usable_width_px: f32,
 
     last_aggregate_by: (AggregateByLevel1Enum, AggregateByLevel2Enum),
@@ -157,6 +160,8 @@ impl Default for GanttChart {
             admin_original_preset_name: None,
             admin_preset_name: String::new(),
             admin_selected_clusters: StdHashSet::new(),
+            energy_filter_cluster: None,
+            energy_filter_owner: None,
         }
     }
 }
@@ -434,8 +439,8 @@ impl View for GanttChart {
         let mut last_gantt_usable_width_px: f32 = 1.0;
         let mut last_gantt_gutter_width_px: f32 = GUTTER_WIDTH;
 
-        let plot_h = 180.0;
-        let sep_h = 8.0;
+        let plot_h = 270.0;
+        let sep_h = 12.0;
 
         // réserve une hauteur pour le gantt = hauteur restante - plot
         let gantt_h = (ui.available_height() - plot_h - sep_h).max(100.0);
@@ -515,12 +520,31 @@ impl View for GanttChart {
 
                     visible_range = Some((visible_start_s, visible_end_s));
 
+                    let energy_jobs: Vec<Job> = app
+                        .filtered_jobs
+                        .iter()
+                        .filter(|job| {
+                            let cluster_ok = match &self.energy_filter_cluster {
+                                Some(cluster) => job.clusters.iter().any(|c| c == cluster),
+                                None => true,
+                            };
+
+                            let owner_ok = match &self.energy_filter_owner {
+                                Some(owner) => &job.owner == owner,
+                                None => true,
+                            };
+
+                            cluster_ok && owner_ok
+                        })
+                        .cloned()
+                        .collect();
+
                     energy_points = energy_estimate::estimate_global_energy_series(
-                        &app.filtered_jobs,
+                        &energy_jobs,
                         visible_start_s,
                         visible_end_s,
-                        10,     // 1 point toutes les 10 secondes
-                        300.0,  // watts par unité (ici unité ~ host si assigned_resources est vide)
+                        10,
+                        300.0,
                     );
 
                     let (mut mn, mut mx) = (f64::INFINITY, f64::NEG_INFINITY);
@@ -544,26 +568,90 @@ impl View for GanttChart {
 
         if let Some((vs, ve)) = visible_range {
             let now_s = Local::now().timestamp();
-
-            if let Some((new_vs, new_ve)) =
-                energy_plot::ui_energy_global(ui, &energy_points, vs, ve, now_s, last_gantt_gutter_width_px)
-            {
+        
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Filtres énergie :");
+        
+                egui::ComboBox::from_id_source("energy_filter_cluster")
+                    .selected_text(
+                        self.energy_filter_cluster
+                            .clone()
+                            .unwrap_or_else(|| "Cluster: Tous".to_string()),
+                    )
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.energy_filter_cluster,
+                            None,
+                            "Cluster: Tous",
+                        );
+        
+                        for cluster in get_all_clusters(&app.all_clusters) {
+                            ui.selectable_value(
+                                &mut self.energy_filter_cluster,
+                                Some(cluster.clone()),
+                                cluster,
+                            );
+                        }
+                    });
+        
+                let mut owners: Vec<String> = app
+                    .filtered_jobs
+                    .iter()
+                    .map(|j| j.owner.clone())
+                    .collect();
+                owners.sort();
+                owners.dedup();
+        
+                egui::ComboBox::from_id_source("energy_filter_owner")
+                    .selected_text(
+                        self.energy_filter_owner
+                            .clone()
+                            .unwrap_or_else(|| "Owner: Tous".to_string()),
+                    )
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.energy_filter_owner,
+                            None,
+                            "Owner: Tous",
+                        );
+        
+                        for owner in owners {
+                            ui.selectable_value(
+                                &mut self.energy_filter_owner,
+                                Some(owner.clone()),
+                                owner,
+                            );
+                        }
+                    });
+        
+                if ui.small_button("Reset").clicked() {
+                    self.energy_filter_cluster = None;
+                    self.energy_filter_owner = None;
+                }
+            });
+        
+            ui.add_space(4.0);
+        
+            let maybe_new_range = energy_plot::ui_energy_global(
+                ui,
+                &energy_points,
+                vs,
+                ve,
+                now_s,
+                last_gantt_gutter_width_px,
+            );
+        
+            if let Some((new_vs, new_ve)) = maybe_new_range {
                 let new_width_s = (new_ve - new_vs).max(1) as f32;
         
-                // zoom gantt = largeur en secondes visible
                 self.options.canvas_width_s = new_width_s;
         
-                // recalculer le pan pour que visible_start_s devienne new_vs
-                // visible_start = start_s + ( -pan_px / canvas_w_px ) * canvas_width_s
-                // => pan_px = -((visible_start - start_s)/canvas_width_s) * usable_width_px
                 let start_s = self.initial_start_s.unwrap();
-
-                // IMPORTANT: idéalement il faut la width réelle du canvas gantt.
-                // ici on prend une approximation: largeur disponible du ui du bas.
                 let canvas_w_px = last_gantt_usable_width_px.max(1.0);
-
+        
                 let pan_px =
                     -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
+        
                 self.options.sideways_pan_in_points = pan_px;
             }
         }

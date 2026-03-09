@@ -1,6 +1,8 @@
 use chrono::{Local, TimeZone};
 use eframe::egui;
-use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints, Text, VLine};
+use egui_plot::{
+    CoordinatesFormatter, Corner, Line, Plot, PlotBounds, PlotPoints, VLine,
+};
 
 fn fmt_hhmm(ts: i64) -> String {
     Local.timestamp_opt(ts, 0)
@@ -52,9 +54,8 @@ pub fn ui_energy_global(
     }
 
 
-    let line = Line::new(pts).name("W").color(egui::Color32::BLUE);
+    let line = Line::new(pts).color(egui::Color32::BLUE);
     let now_line = VLine::new(now_s as f64)
-        .name("now")
         .color(egui::Color32::RED)
         .width(2.0);
 
@@ -64,28 +65,31 @@ pub fn ui_energy_global(
         [visible_end_s as f64, global_y_max],
     );
 
+    let mut hover_label: Option<String> = None;
+
     let plot_resp = Plot::new("energy_global_plot")
-        .height(230.0)
+        .height(210.0)
         .y_axis_min_width(left_gutter_width_px.max(0.0))
         .show_axes([true, true])
+        .show_x(true)
+        .show_y(true)
         .show_grid(true)
         .allow_drag(true)
         .allow_zoom(true)
+        .label_formatter(|_, _| String::new())
+        .coordinates_formatter(
+            Corner::LeftTop,
+            CoordinatesFormatter::new(|_, _| String::new()),
+        )
         .x_axis_formatter(|mark, _| {
             let ts = mark.value.round() as i64;
             fmt_hhmm(ts)
         })
         .show(ui, |plot_ui| {
-            // IMPORTANT: au premier frame, on force les bounds initiales
-            // (sinon egui_plot autoscale et on perd la synchro)
-            plot_ui.set_plot_bounds(initial_bounds);
+            let vx0 = visible_start_s;
+            let vx1 = visible_end_s;
 
-            // Bounds courants (après interaction / set_plot_bounds)
-            let b = plot_ui.plot_bounds();
-            let vx0 = b.min()[0] as i64;
-            let vx1 = b.max()[0] as i64;
-
-            // Rescale Y sur la fenêtre X visible (pour ne pas "perdre" la courbe)
+            // Rescale Y uniquement sur la fenêtre visible du Gantt
             let mut y_min = f64::INFINITY;
             let mut y_max = f64::NEG_INFINITY;
             for (t, w) in points_w {
@@ -95,41 +99,50 @@ pub fn ui_energy_global(
                 }
             }
 
-            if y_min.is_finite() && y_max.is_finite() {
+            let bounds = if y_min.is_finite() && y_max.is_finite() {
                 let pad = ((y_max - y_min).abs() * 0.10).max(1.0);
-                plot_ui.set_plot_bounds(PlotBounds::from_min_max(
-                    [b.min()[0], y_min - pad],
-                    [b.max()[0], y_max + pad],
-                ));
-            }
+                PlotBounds::from_min_max(
+                    [visible_start_s as f64, y_min - pad],
+                    [visible_end_s as f64, y_max + pad],
+                )
+            } else {
+                initial_bounds
+            };
+
+            // Toujours forcer les bornes du graphe à celles du gantt
+            plot_ui.set_plot_bounds(bounds);
 
             plot_ui.line(line);
             plot_ui.vline(now_line);
 
-            // Tooltip lisible (heure)
             if let Some(pos) = plot_ui.pointer_coordinate() {
                 let ts = pos.x.round() as i64;
-                let label = format!("{}  |  {:.0} W", fmt_hhmmss(ts), pos.y);
-                plot_ui.text(Text::new(PlotPoint::new(pos.x, pos.y), label));
+                hover_label = Some(format!("{}  |  {:.0} W", fmt_hhmmss(ts), pos.y));
             }
         });
 
-    // Bounds visibles après rendu (via transform)
-    let b = plot_resp.transform.bounds();
-    let new_start = b.min()[0].round() as i64;
-    let new_end = b.max()[0].round() as i64;
+        if let (Some(label), Some(mouse_pos)) = (hover_label, plot_resp.response.hover_pos()) {
+            let painter = ui.painter();
+        
+            let font_id = egui::TextStyle::Body.resolve(ui.style());
+            let text_color = egui::Color32::WHITE;
+            let bg_color = egui::Color32::from_black_alpha(220);
+            let padding = egui::vec2(6.0, 4.0);
+        
+            let galley = painter.layout_no_wrap(label, font_id, text_color);
+            let rect = egui::Rect::from_min_size(
+                mouse_pos + egui::vec2(12.0, 12.0),
+                galley.size() + 2.0 * padding,
+            );
+        
+            painter.rect_filled(rect, 4.0, bg_color);
+            painter.galley(rect.min + padding, galley, text_color);
+        }
 
-    // Mini timeline sous le plot
-    ui.horizontal(|ui| {
-        ui.small(fmt_hhmm(new_start));
-        ui.with_layout(
-            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-            |ui| ui.small(fmt_hhmm((new_start + new_end) / 2)),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.small(fmt_hhmm(new_end));
-        });
-    });
+        let b = plot_resp.transform.bounds();
+        let new_start = b.min()[0].round() as i64;
+        let new_end = b.max()[0].round() as i64;
+    
 
     // Détection interaction
     let scrolled = ui.input(|i| i.raw_scroll_delta.y != 0.0);
