@@ -24,7 +24,7 @@ use crate::{
 use chrono::{Local, TimeZone, Duration};
 use eframe::egui;
 use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use crate::models::data_structure::application_context::ClusterPreset;
 use std::collections::HashSet as StdHashSet; // to avoid confusion with earlier import
@@ -149,46 +149,100 @@ impl Default for GanttChart {
     }
 }
 
-impl View for GanttChart {
-    fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        ui.heading(RichText::new(t!("app.gantt.title")).strong());
+impl GanttChart {
+    pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        // Ensure we have initial bounds for Center-on-now.
+        if self.initial_start_s.is_none() {
+            self.initial_start_s = Some(app.get_start_date().timestamp());
+            self.initial_end_s = Some(app.get_end_date().timestamp());
+        }
 
-        // Completeness: displayed (filtered jobs) vs loaded (resources).
-        let total_clusters = app.all_clusters.len();
-        let total_hosts: usize = app.all_clusters.iter().map(|c| c.hosts.len()).sum();
-        let mut displayed_clusters: HashSet<String> = HashSet::new();
-        let mut displayed_hosts: HashSet<String> = HashSet::new();
-        for job in app.filtered_jobs.iter() {
-            for c in job.clusters.iter() {
-                if !c.trim().is_empty() {
-                    displayed_clusters.insert(c.clone());
-                }
+        ui.menu_button(t!("app.gantt.settings.title"), |ui| {
+            ui.set_max_height(500.0);
+
+            let before = (self.options.aggregate_by.level_1, self.options.aggregate_by.level_2);
+            self.options.aggregate_by.ui(ui);
+            let after = (self.options.aggregate_by.level_1, self.options.aggregate_by.level_2);
+            if after != before || after != self.last_aggregate_by {
+                self.last_aggregate_by = after;
+                self.collapsed_jobs_level_1.clear();
+                self.collapsed_jobs_level_2.clear();
+                self.job_details_windows.clear();
+                self.options.current_hovered_job = None;
+                self.options.previous_hovered_job = None;
+                self.options.current_hovered_resource_state = None;
+                self.options.current_hovered_resource_label = None;
             }
-            for h in job.hosts.iter() {
-                if !h.trim().is_empty() {
-                    displayed_hosts.insert(h.clone());
-                }
+            ui.separator();
+
+            // Grid5000: compact rows forced.
+            self.options.compact_rows = true;
+
+            self.options.job_color.ui(ui);
+        });
+
+        // show admin panel button only for admin users
+        if app.is_admin() {
+            if ui.small_button("Admin").clicked() {
+                self.admin_panel_open = true;
             }
         }
 
-        let refreshing = *app.is_refreshing.lock().unwrap_or_else(|p| p.into_inner());
-        let status = if refreshing {
-            "refreshing"
-        } else if app.is_loading {
-            "loading"
-        } else {
-            "ready"
-        };
+        ui.add_space(6.0);
 
-        ui.label(format!(
-            "Data: jobs={} | clusters affichés {}/{} | hosts affichés {}/{} | {}",
-            app.filtered_jobs.len(),
-            displayed_clusters.len(),
-            total_clusters,
-            displayed_hosts.len(),
-            total_hosts,
-            status
-        ));
+        // Timeline navigation
+        let base_font = TextStyle::Body.resolve(ui.style());
+        let gutter_width =
+            compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
+        let usable_width = (ui.available_width() - gutter_width).max(1.0);
+        let points_per_second = usable_width / self.options.canvas_width_s;
+        let min_s = self
+            .initial_start_s
+            .unwrap_or_else(|| app.get_start_date().timestamp());
+        let current_visible_s = min_s
+            - (self.options.sideways_pan_in_points * self.options.canvas_width_s / usable_width)
+                as i64;
+        let current_local = chrono::DateTime::from_timestamp(current_visible_s, 0)
+            .unwrap()
+            .with_timezone(&chrono::Local);
+        let next_day_local = current_local + Duration::days(1);
+        let day_delta_s = next_day_local.timestamp() - current_local.timestamp();
+        let next_week_local = current_local + Duration::days(7);
+        let week_delta_s = next_week_local.timestamp() - current_local.timestamp();
+
+        ui.label(RichText::new("Nav:").text_style(TextStyle::Small));
+        if ui.small_button("◀ 1w").clicked() {
+            self.options.sideways_pan_in_points += week_delta_s as f32 * points_per_second;
+            self.options.zoom_to_relative_s_range = None;
+        }
+        if ui.small_button("◀ 1d").clicked() {
+            self.options.sideways_pan_in_points += day_delta_s as f32 * points_per_second;
+            self.options.zoom_to_relative_s_range = None;
+        }
+        if ui.small_button("1d ▶").clicked() {
+            self.options.sideways_pan_in_points -= day_delta_s as f32 * points_per_second;
+            self.options.zoom_to_relative_s_range = None;
+        }
+        if ui.small_button("1w ▶").clicked() {
+            self.options.sideways_pan_in_points -= week_delta_s as f32 * points_per_second;
+            self.options.zoom_to_relative_s_range = None;
+        }
+
+        if ui.small_button(t!("app.gantt.now")).clicked() {
+            self.options.zoom_to_relative_s_range = Some((
+                ui.ctx().input(|i| i.time),
+                (
+                    0.,
+                    (self.initial_end_s.unwrap() - self.initial_start_s.unwrap()) as f64,
+                ),
+            ));
+        }
+    }
+}
+
+impl View for GanttChart {
+    fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        // Toolbar is rendered in the global tool bar; keep this view focused on the chart.
 
         if self.initial_start_s.is_none() {
             self.initial_start_s = Some(app.get_start_date().timestamp());
@@ -247,87 +301,7 @@ impl View for GanttChart {
             main_resource_state: ResourceState::Unknown,
         });
 
-        ui.horizontal(|ui| {
-            ui.menu_button(t!("app.gantt.settings.title"), |ui| {
-                ui.set_max_height(500.0);
-
-                let before = (self.options.aggregate_by.level_1, self.options.aggregate_by.level_2);
-                self.options.aggregate_by.ui(ui);
-                let after = (self.options.aggregate_by.level_1, self.options.aggregate_by.level_2);
-                if after != before || after != self.last_aggregate_by {
-                    self.last_aggregate_by = after;
-                    self.collapsed_jobs_level_1.clear();
-                    self.collapsed_jobs_level_2.clear();
-                    self.job_details_windows.clear();
-                    self.options.current_hovered_job = None;
-                    self.options.previous_hovered_job = None;
-                    self.options.current_hovered_resource_state = None;
-                    self.options.current_hovered_resource_label = None;
-                }
-                ui.separator();
-
-                // Grid5000: compact rows forced.
-                self.options.compact_rows = true;
-
-                self.options.job_color.ui(ui);
-            });
-
-            ui.menu_button(" ?", |ui| {
-                ui.label(t!("app.gantt.help"));
-            });
-
-            // show admin panel button only for admin users
-            if app.is_admin() {
-                if ui.button("Admin").clicked() {
-                    self.admin_panel_open = true;
-                }
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(t!("app.gantt.now")).clicked() {
-                    self.options.zoom_to_relative_s_range = Some((
-                        ui.ctx().input(|i| i.time),
-                        (
-                            0.,
-                            (self.initial_end_s.unwrap() - self.initial_start_s.unwrap()) as f64,
-                        ),
-                    ));
-                }
-            });
-        });
-
-        // Timeline navigation bar
-        ui.horizontal(|ui| {
-            let base_font = TextStyle::Body.resolve(ui.style());
-            let gutter_width = compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
-            let usable_width = ui.available_width() - gutter_width;
-            let points_per_second = usable_width / self.options.canvas_width_s;
-            let min_s = self.initial_start_s.unwrap();
-            let current_visible_s = min_s - (self.options.sideways_pan_in_points * self.options.canvas_width_s / usable_width) as i64;
-            let current_local = chrono::DateTime::from_timestamp(current_visible_s, 0).unwrap().with_timezone(&chrono::Local);
-            let next_day_local = current_local + Duration::days(1);
-            let day_delta_s = next_day_local.timestamp() - current_local.timestamp();
-            let next_week_local = current_local + Duration::days(7);
-            let week_delta_s = next_week_local.timestamp() - current_local.timestamp();
-
-            ui.label("Navigate:");
-            if ui.button("◀ 1w").clicked() {
-                self.options.sideways_pan_in_points += week_delta_s as f32 * points_per_second;
-                self.options.zoom_to_relative_s_range = None;
-            }
-            if ui.button("◀ 1d").clicked() {
-                self.options.sideways_pan_in_points += day_delta_s as f32 * points_per_second;
-                self.options.zoom_to_relative_s_range = None;
-            }
-            if ui.button("1d ▶").clicked() {
-                self.options.sideways_pan_in_points -= day_delta_s as f32 * points_per_second;
-                self.options.zoom_to_relative_s_range = None;
-            }
-            if ui.button("1w ▶").clicked() {
-                self.options.sideways_pan_in_points -= week_delta_s as f32 * points_per_second;
-                self.options.zoom_to_relative_s_range = None;
-            }
-        });
+        // (Toolbar is rendered in the global tool bar.)
 
         // admin panel window
         if self.admin_panel_open {

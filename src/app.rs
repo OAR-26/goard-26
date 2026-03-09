@@ -46,7 +46,15 @@ impl eframe::App for App {
         });
 
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {
-            self.tools.render(ui, &mut self.application_context);
+            match self.application_context.view_type {
+                crate::views::view::ViewType::Gantt => {
+                    self.tools
+                        .render_with_gantt(ui, &mut self.application_context, &mut self.gantt_view);
+                }
+                _ => {
+                    self.tools.render(ui, &mut self.application_context);
+                }
+            }
         });
 
         // Check for updates

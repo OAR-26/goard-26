@@ -7,6 +7,7 @@ use crate::{
 use eframe::egui;
 
 use super::options::Options;
+use crate::views::view::ViewType;
 
 pub struct Menu {
     options_pane: Options,
@@ -66,6 +67,19 @@ impl View for Menu {
             if ui.button(t!("app.menu.options")).clicked() {
                 self.options_pane.open();
             }
+
+            // Contextual help
+            ui.menu_button("?", |ui| {
+                match app.view_type {
+                    ViewType::Gantt => {
+                        ui.label(t!("app.gantt.help"));
+                    }
+                    ViewType::Dashboard => {
+                        ui.label(t!("app.job_table.help"));
+                    }
+                    ViewType::Authentification => {}
+                }
+            });
 
             // Show External Window
             self.options_pane.ui(ui, &mut app.font_size);
