@@ -21,7 +21,7 @@ use crate::{
         job_details::JobDetailsWindow,
     },
 };
-use chrono::{Local, TimeZone, Duration};
+use chrono::{Local, TimeZone};
 use eframe::egui;
 use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
 use std::collections::BTreeMap;
@@ -125,6 +125,7 @@ pub struct GanttChart {
     collapsed_jobs_level_2: BTreeMap<(String, String), bool>,
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
+    last_canvas_usable_width_px: f32,
 
     last_aggregate_by: (AggregateByLevel1Enum, AggregateByLevel2Enum),
 
@@ -146,6 +147,7 @@ impl Default for GanttChart {
             collapsed_jobs_level_2: BTreeMap::new(),
             initial_start_s: None,
             initial_end_s: None,
+            last_canvas_usable_width_px: 1.0,
 
             last_aggregate_by: (AggregateByLevel1Enum::Cluster, AggregateByLevel2Enum::Host),
 
@@ -204,21 +206,15 @@ impl GanttChart {
         let base_font = TextStyle::Body.resolve(ui.style());
         let gutter_width =
             compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
-        let usable_width = (ui.available_width() - gutter_width).max(1.0);
-        let points_per_second = usable_width / self.options.canvas_width_s;
-        let min_s = self
-            .initial_start_s
-            .unwrap_or_else(|| app.get_start_date().timestamp());
-        let current_visible_s = min_s
-            - (self.options.sideways_pan_in_points * self.options.canvas_width_s / usable_width)
-                as i64;
-        let current_local = chrono::DateTime::from_timestamp(current_visible_s, 0)
-            .unwrap()
-            .with_timezone(&chrono::Local);
-        let next_day_local = current_local + Duration::days(1);
-        let day_delta_s = next_day_local.timestamp() - current_local.timestamp();
-        let next_week_local = current_local + Duration::days(7);
-        let week_delta_s = next_week_local.timestamp() - current_local.timestamp();
+        let fallback_usable_width = (ui.available_width() - gutter_width).max(1.0);
+        let canvas_usable_width = if self.last_canvas_usable_width_px > 1.0 {
+            self.last_canvas_usable_width_px
+        } else {
+            fallback_usable_width
+        };
+        let points_per_second = canvas_usable_width / self.options.canvas_width_s;
+        let day_delta_s: i64 = 24 * 60 * 60;
+        let week_delta_s: i64 = 7 * day_delta_s;
 
         ui.label(RichText::new("Nav:").text_style(TextStyle::Small));
         if ui.small_button("◀ 1w").clicked() {
@@ -477,6 +473,7 @@ impl View for GanttChart {
                     };
 
                     last_gantt_usable_width_px = info.usable_width();
+                    self.last_canvas_usable_width_px = info.usable_width();
                     last_gantt_gutter_width_px = gutter_width;
 
                     interaction::interact_with_canvas(&mut self.options, &info.response, &info);
