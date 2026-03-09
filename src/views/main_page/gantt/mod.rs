@@ -29,6 +29,12 @@ use std::collections::BTreeMap;
 use crate::models::data_structure::application_context::ClusterPreset;
 use std::collections::HashSet as StdHashSet; // to avoid confusion with earlier import
 
+#[derive(Clone, Copy, PartialEq)]
+enum AdminMode {
+    New,
+    Modify,
+}
+
 use self::types::{gutter_g5k_total_w, Info, Options, GUTTER_WIDTH};
 use self::labels::short_host_label;
 
@@ -124,7 +130,9 @@ pub struct GanttChart {
 
     // admin panel state
     admin_panel_open: bool,
+    admin_mode: Option<AdminMode>,
     admin_selected_preset: Option<usize>,
+    admin_original_preset_name: Option<String>,
     admin_preset_name: String,
     admin_selected_clusters: StdHashSet<String>,
 }
@@ -142,7 +150,9 @@ impl Default for GanttChart {
             last_aggregate_by: (AggregateByLevel1Enum::Cluster, AggregateByLevel2Enum::Host),
 
             admin_panel_open: false,
+            admin_mode: None,
             admin_selected_preset: None,
+            admin_original_preset_name: None,
             admin_preset_name: String::new(),
             admin_selected_clusters: StdHashSet::new(),
         }
@@ -311,66 +321,114 @@ impl View for GanttChart {
                 .open(&mut open)
                 .default_width(300.0)
                 .show(ui.ctx(), |ui| {
-                    ui.label("Cluster presets");
-                    ui.separator();
+                    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        ui.label("Cluster presets");
+                        ui.separator();
 
-                    // choose existing or new
-                    egui::ComboBox::from_label("Preset")
-                        .selected_text(
-                            self.admin_selected_preset
-                                .and_then(|i| app.cluster_presets.get(i))
-                                .map(|p| p.name.clone())
-                                .unwrap_or_else(|| "<new>".to_string()),
-                        )
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_value(&mut self.admin_selected_preset, None, "<new>")
-                                .clicked()
-                            {
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(self.admin_mode == Some(AdminMode::New), "New Preset").clicked() {
+                                self.admin_mode = Some(AdminMode::New);
                                 self.admin_selected_preset = None;
+                                self.admin_original_preset_name = None;
                                 self.admin_preset_name.clear();
                                 self.admin_selected_clusters.clear();
                             }
-                            for (i, preset) in app.cluster_presets.iter().enumerate() {
-                                if ui
-                                    .selectable_value(&mut self.admin_selected_preset, Some(i), &preset.name)
-                                    .clicked()
-                                {
-                                    self.admin_preset_name = preset.name.clone();
-                                    self.admin_selected_clusters =
-                                        preset.clusters.iter().cloned().collect();
-                                }
+                            if ui.selectable_label(self.admin_mode == Some(AdminMode::Modify), "Modify Preset").clicked() {
+                                self.admin_mode = Some(AdminMode::Modify);
+                                self.admin_selected_preset = None;
+                                self.admin_original_preset_name = None;
+                                self.admin_preset_name.clear();
+                                self.admin_selected_clusters.clear();
                             }
                         });
+                        ui.separator();
 
-                    ui.separator();
-                    ui.label("Name");
-                    ui.text_edit_singleline(&mut self.admin_preset_name);
-                    ui.separator();
-                    ui.label("Clusters to include");
-                    ui.vertical(|ui| {
-                        for cluster in &app.all_clusters {
-                            let mut checked = self
-                                .admin_selected_clusters
-                                .contains(&cluster.name);
-                            if ui.checkbox(&mut checked, &cluster.name).changed() {
-                                if checked {
-                                    self.admin_selected_clusters.insert(cluster.name.clone());
-                                } else {
-                                    self.admin_selected_clusters.remove(&cluster.name);
+                        if self.admin_mode == Some(AdminMode::Modify) {
+                            egui::ComboBox::from_label("Select Preset")
+                                .selected_text(
+                                    self.admin_selected_preset
+                                        .and_then(|i| app.cluster_presets.get(i))
+                                        .map(|p| p.name.clone())
+                                        .unwrap_or_else(|| "Select a preset".to_string()),
+                                )
+                                .show_ui(ui, |ui| {
+                                    for (i, preset) in app.cluster_presets.iter().enumerate() {
+                                        if ui
+                                            .selectable_value(&mut self.admin_selected_preset, Some(i), &preset.name)
+                                            .clicked()
+                                        {
+                                            self.admin_original_preset_name = Some(preset.name.clone());
+                                            self.admin_preset_name = preset.name.clone();
+                                            self.admin_selected_clusters =
+                                                preset.clusters.iter().cloned().collect();
+                                        }
+                                    }
+                                });
+                            ui.separator();
+                        }
+
+                        // Show form only if mode is selected and for modify, preset is selected
+                        if self.admin_mode == Some(AdminMode::New) || (self.admin_mode == Some(AdminMode::Modify) && self.admin_selected_preset.is_some()) {
+                            ui.label("Name");
+                            ui.text_edit_singleline(&mut self.admin_preset_name);
+                            ui.separator();
+                            ui.label("Clusters to include");
+                            ui.vertical(|ui| {
+                                for cluster in &app.all_clusters {
+                                    let mut checked = self
+                                        .admin_selected_clusters
+                                        .contains(&cluster.name);
+                                    if ui.checkbox(&mut checked, &cluster.name).changed() {
+                                        if checked {
+                                            self.admin_selected_clusters.insert(cluster.name.clone());
+                                        } else {
+                                            self.admin_selected_clusters.remove(&cluster.name);
+                                        }
+                                    }
                                 }
-                            }
+                            });
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                if ui.button("Save").clicked() {
+                                    if !self.admin_preset_name.trim().is_empty() {
+                                        // If modifying and name changed, remove the old preset first
+                                        if self.admin_mode == Some(AdminMode::Modify) && self.admin_original_preset_name.as_ref() != Some(&self.admin_preset_name) {
+                                            if let Some(old_name) = &self.admin_original_preset_name {
+                                                app.remove_preset(old_name);
+                                            }
+                                        }
+                                        let preset = ClusterPreset {
+                                            name: self.admin_preset_name.clone(),
+                                            clusters: self.admin_selected_clusters.iter().cloned().collect(),
+                                        };
+                                        app.add_or_update_preset(preset);
+                                        // Reset to initial state
+                                        self.admin_mode = None;
+                                        self.admin_selected_preset = None;
+                                        self.admin_original_preset_name = None;
+                                        self.admin_preset_name.clear();
+                                        self.admin_selected_clusters.clear();
+                                    }
+                                }
+                                if self.admin_mode == Some(AdminMode::Modify) && self.admin_selected_preset.is_some() {
+                                    if ui.button("Delete").clicked() {
+                                        if let Some(i) = self.admin_selected_preset {
+                                            if let Some(preset) = app.cluster_presets.get(i) {
+                                                let name = preset.name.clone();
+                                                app.remove_preset(&name);
+                                                // Reset to initial state
+                                                self.admin_mode = None;
+                                                self.admin_selected_preset = None;
+                                                self.admin_original_preset_name = None;
+                                                self.admin_preset_name.clear();
+                                                self.admin_selected_clusters.clear();
+                                            }
+                                        }
+                                    }
+                                }
+                            });
                         }
                     });
-                    ui.add_space(8.0);
-                    if ui.button("Save").clicked() {
-                        let preset = ClusterPreset {
-                            name: self.admin_preset_name.clone(),
-                            clusters: self.admin_selected_clusters.iter().cloned().collect(),
-                        };
-                        app.add_or_update_preset(preset);
-                        self.admin_panel_open = false;
-                    }
                 });
             self.admin_panel_open = open;
         }

@@ -586,6 +586,14 @@ impl ApplicationContext {
         self.save_presets_to_file("presets.json");
     }
 
+    /// Remove a cluster preset by name.
+    /// If the operation succeeds we also write the updated list to disk.
+    pub fn remove_preset(&mut self, name: &str) {
+        self.cluster_presets.retain(|p| p.name != name);
+        // persist immediately
+        self.save_presets_to_file("presets.json");
+    }
+
     pub fn login(&mut self, username: &str) {
         self.user_connected = Some(username.to_string());
         self.view_type = ViewType::Dashboard;
