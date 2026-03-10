@@ -21,13 +21,19 @@ use crate::{
         job_details::JobDetailsWindow,
     },
 };
-use chrono::{Local, TimeZone, Duration};
+use chrono::{Local, TimeZone};
 use eframe::egui;
 use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
 use std::collections::BTreeMap;
 
 use crate::models::data_structure::application_context::ClusterPreset;
 use std::collections::HashSet as StdHashSet; // to avoid confusion with earlier import
+
+#[derive(Clone, Copy, PartialEq)]
+enum AdminMode {
+    New,
+    Modify,
+}
 
 use self::types::{gutter_g5k_total_w, Info, Options, GUTTER_WIDTH};
 use self::labels::short_host_label;
@@ -119,12 +125,15 @@ pub struct GanttChart {
     collapsed_jobs_level_2: BTreeMap<(String, String), bool>,
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
+    last_canvas_usable_width_px: f32,
 
     last_aggregate_by: (AggregateByLevel1Enum, AggregateByLevel2Enum),
 
     // admin panel state
     admin_panel_open: bool,
+    admin_mode: Option<AdminMode>,
     admin_selected_preset: Option<usize>,
+    admin_original_preset_name: Option<String>,
     admin_preset_name: String,
     admin_selected_clusters: StdHashSet<String>,
 }
@@ -138,11 +147,14 @@ impl Default for GanttChart {
             collapsed_jobs_level_2: BTreeMap::new(),
             initial_start_s: None,
             initial_end_s: None,
+            last_canvas_usable_width_px: 1.0,
 
             last_aggregate_by: (AggregateByLevel1Enum::Cluster, AggregateByLevel2Enum::Host),
 
             admin_panel_open: false,
+            admin_mode: None,
             admin_selected_preset: None,
+            admin_original_preset_name: None,
             admin_preset_name: String::new(),
             admin_selected_clusters: StdHashSet::new(),
         }
@@ -194,21 +206,15 @@ impl GanttChart {
         let base_font = TextStyle::Body.resolve(ui.style());
         let gutter_width =
             compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
-        let usable_width = (ui.available_width() - gutter_width).max(1.0);
-        let points_per_second = usable_width / self.options.canvas_width_s;
-        let min_s = self
-            .initial_start_s
-            .unwrap_or_else(|| app.get_start_date().timestamp());
-        let current_visible_s = min_s
-            - (self.options.sideways_pan_in_points * self.options.canvas_width_s / usable_width)
-                as i64;
-        let current_local = chrono::DateTime::from_timestamp(current_visible_s, 0)
-            .unwrap()
-            .with_timezone(&chrono::Local);
-        let next_day_local = current_local + Duration::days(1);
-        let day_delta_s = next_day_local.timestamp() - current_local.timestamp();
-        let next_week_local = current_local + Duration::days(7);
-        let week_delta_s = next_week_local.timestamp() - current_local.timestamp();
+        let fallback_usable_width = (ui.available_width() - gutter_width).max(1.0);
+        let canvas_usable_width = if self.last_canvas_usable_width_px > 1.0 {
+            self.last_canvas_usable_width_px
+        } else {
+            fallback_usable_width
+        };
+        let points_per_second = canvas_usable_width / self.options.canvas_width_s;
+        let day_delta_s: i64 = 24 * 60 * 60;
+        let week_delta_s: i64 = 7 * day_delta_s;
 
         ui.label(RichText::new("Nav:").text_style(TextStyle::Small));
         if ui.small_button("◀ 1w").clicked() {
@@ -311,66 +317,114 @@ impl View for GanttChart {
                 .open(&mut open)
                 .default_width(300.0)
                 .show(ui.ctx(), |ui| {
-                    ui.label("Cluster presets");
-                    ui.separator();
+                    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        ui.label("Cluster presets");
+                        ui.separator();
 
-                    // choose existing or new
-                    egui::ComboBox::from_label("Preset")
-                        .selected_text(
-                            self.admin_selected_preset
-                                .and_then(|i| app.cluster_presets.get(i))
-                                .map(|p| p.name.clone())
-                                .unwrap_or_else(|| "<new>".to_string()),
-                        )
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_value(&mut self.admin_selected_preset, None, "<new>")
-                                .clicked()
-                            {
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(self.admin_mode == Some(AdminMode::New), "New Preset").clicked() {
+                                self.admin_mode = Some(AdminMode::New);
                                 self.admin_selected_preset = None;
+                                self.admin_original_preset_name = None;
                                 self.admin_preset_name.clear();
                                 self.admin_selected_clusters.clear();
                             }
-                            for (i, preset) in app.cluster_presets.iter().enumerate() {
-                                if ui
-                                    .selectable_value(&mut self.admin_selected_preset, Some(i), &preset.name)
-                                    .clicked()
-                                {
-                                    self.admin_preset_name = preset.name.clone();
-                                    self.admin_selected_clusters =
-                                        preset.clusters.iter().cloned().collect();
-                                }
+                            if ui.selectable_label(self.admin_mode == Some(AdminMode::Modify), "Modify Preset").clicked() {
+                                self.admin_mode = Some(AdminMode::Modify);
+                                self.admin_selected_preset = None;
+                                self.admin_original_preset_name = None;
+                                self.admin_preset_name.clear();
+                                self.admin_selected_clusters.clear();
                             }
                         });
+                        ui.separator();
 
-                    ui.separator();
-                    ui.label("Name");
-                    ui.text_edit_singleline(&mut self.admin_preset_name);
-                    ui.separator();
-                    ui.label("Clusters to include");
-                    ui.vertical(|ui| {
-                        for cluster in &app.all_clusters {
-                            let mut checked = self
-                                .admin_selected_clusters
-                                .contains(&cluster.name);
-                            if ui.checkbox(&mut checked, &cluster.name).changed() {
-                                if checked {
-                                    self.admin_selected_clusters.insert(cluster.name.clone());
-                                } else {
-                                    self.admin_selected_clusters.remove(&cluster.name);
+                        if self.admin_mode == Some(AdminMode::Modify) {
+                            egui::ComboBox::from_label("Select Preset")
+                                .selected_text(
+                                    self.admin_selected_preset
+                                        .and_then(|i| app.cluster_presets.get(i))
+                                        .map(|p| p.name.clone())
+                                        .unwrap_or_else(|| "Select a preset".to_string()),
+                                )
+                                .show_ui(ui, |ui| {
+                                    for (i, preset) in app.cluster_presets.iter().enumerate() {
+                                        if ui
+                                            .selectable_value(&mut self.admin_selected_preset, Some(i), &preset.name)
+                                            .clicked()
+                                        {
+                                            self.admin_original_preset_name = Some(preset.name.clone());
+                                            self.admin_preset_name = preset.name.clone();
+                                            self.admin_selected_clusters =
+                                                preset.clusters.iter().cloned().collect();
+                                        }
+                                    }
+                                });
+                            ui.separator();
+                        }
+
+                        // Show form only if mode is selected and for modify, preset is selected
+                        if self.admin_mode == Some(AdminMode::New) || (self.admin_mode == Some(AdminMode::Modify) && self.admin_selected_preset.is_some()) {
+                            ui.label("Name");
+                            ui.text_edit_singleline(&mut self.admin_preset_name);
+                            ui.separator();
+                            ui.label("Clusters to include");
+                            ui.vertical(|ui| {
+                                for cluster in &app.all_clusters {
+                                    let mut checked = self
+                                        .admin_selected_clusters
+                                        .contains(&cluster.name);
+                                    if ui.checkbox(&mut checked, &cluster.name).changed() {
+                                        if checked {
+                                            self.admin_selected_clusters.insert(cluster.name.clone());
+                                        } else {
+                                            self.admin_selected_clusters.remove(&cluster.name);
+                                        }
+                                    }
                                 }
-                            }
+                            });
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                if ui.button("Save").clicked() {
+                                    if !self.admin_preset_name.trim().is_empty() {
+                                        // If modifying and name changed, remove the old preset first
+                                        if self.admin_mode == Some(AdminMode::Modify) && self.admin_original_preset_name.as_ref() != Some(&self.admin_preset_name) {
+                                            if let Some(old_name) = &self.admin_original_preset_name {
+                                                app.remove_preset(old_name);
+                                            }
+                                        }
+                                        let preset = ClusterPreset {
+                                            name: self.admin_preset_name.clone(),
+                                            clusters: self.admin_selected_clusters.iter().cloned().collect(),
+                                        };
+                                        app.add_or_update_preset(preset);
+                                        // Reset to initial state
+                                        self.admin_mode = None;
+                                        self.admin_selected_preset = None;
+                                        self.admin_original_preset_name = None;
+                                        self.admin_preset_name.clear();
+                                        self.admin_selected_clusters.clear();
+                                    }
+                                }
+                                if self.admin_mode == Some(AdminMode::Modify) && self.admin_selected_preset.is_some() {
+                                    if ui.button("Delete").clicked() {
+                                        if let Some(i) = self.admin_selected_preset {
+                                            if let Some(preset) = app.cluster_presets.get(i) {
+                                                let name = preset.name.clone();
+                                                app.remove_preset(&name);
+                                                // Reset to initial state
+                                                self.admin_mode = None;
+                                                self.admin_selected_preset = None;
+                                                self.admin_original_preset_name = None;
+                                                self.admin_preset_name.clear();
+                                                self.admin_selected_clusters.clear();
+                                            }
+                                        }
+                                    }
+                                }
+                            });
                         }
                     });
-                    ui.add_space(8.0);
-                    if ui.button("Save").clicked() {
-                        let preset = ClusterPreset {
-                            name: self.admin_preset_name.clone(),
-                            clusters: self.admin_selected_clusters.iter().cloned().collect(),
-                        };
-                        app.add_or_update_preset(preset);
-                        self.admin_panel_open = false;
-                    }
                 });
             self.admin_panel_open = open;
         }
@@ -419,6 +473,7 @@ impl View for GanttChart {
                     };
 
                     last_gantt_usable_width_px = info.usable_width();
+                    self.last_canvas_usable_width_px = info.usable_width();
                     last_gantt_gutter_width_px = gutter_width;
 
                     interaction::interact_with_canvas(&mut self.options, &info.response, &info);
