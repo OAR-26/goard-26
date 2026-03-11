@@ -58,13 +58,11 @@ fn format_cpuset_grid5000(values: &mut Vec<i32>) -> Option<String> {
     values.sort_unstable();
     values.dedup();
     
-    // Create a RangeSetBlaze from the individual values
     let mut range_set = RangeSetBlaze::<i32>::new();
     for &val in values.iter() {
         range_set.insert(val);
     }
     
-    // Format the ranges into Grid5000-like notation
     let mut result_parts: Vec<String> = Vec::new();
     
     for range in range_set.ranges() {
@@ -83,7 +81,6 @@ fn format_cpuset_grid5000(values: &mut Vec<i32>) -> Option<String> {
 }
 
 fn extract_ints_from_str(s: &str) -> Vec<i32> {
-    // Extract positive integers from an arbitrary string.
     let mut out: Vec<i32> = Vec::new();
     let mut cur: i64 = 0;
     let mut in_num = false;
@@ -106,7 +103,6 @@ fn extract_ints_from_str(s: &str) -> Vec<i32> {
 }
 
 fn cpuset_like_grid5000(s: &crate::models::data_structure::strata::Strata) -> Option<String> {
-    // Grid5000-like cpuset: compact CPU indexes/ranges when possible.
 
     if let Some(v) = s.cpuset.as_ref() {
         match v {
@@ -134,7 +130,6 @@ fn cpuset_like_grid5000(s: &crate::models::data_structure::strata::Strata) -> Op
                 }
             }
             serde_json::Value::String(raw) => {
-                // If we get a comma-separated string list, compact it.
                 let mut ints = extract_ints_from_str(raw);
                 if ints.len() > 1 {
                     if let Some(s) = format_cpuset_grid5000(&mut ints) {
@@ -157,7 +152,6 @@ fn cpuset_like_grid5000(s: &crate::models::data_structure::strata::Strata) -> Op
     if count <= 0 {
         return None;
     }
-    // Fallback when we don't have an explicit list: assume 0..count-1.
     Some(format!("0-{}", count - 1))
 }
 
@@ -203,7 +197,6 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
             if !trimmed.is_empty() {
                 tooltip_text.push_str(&format!("{}: {}\n", kind_label.to_lowercase(), trimmed));
 
-                // Grid5000-like: show the resource/host metadata when available.
                 let mut keys_to_try: Vec<String> = Vec::new();
                 keys_to_try.push(trimmed.to_string());
                 keys_to_try.push(trimmed.split('.').next().unwrap_or(trimmed).to_string());
@@ -312,7 +305,6 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
 
         cursor_y += offset_level_1;
 
-        // paint_job_info expects a center Y
         let text_pos = pos2(info.canvas.min.x + 6.0, cursor_y + info.text_height * 0.5);
 
         let is_collapsed = collapsed_jobs.entry(level_1.clone()).or_insert(false);
@@ -348,7 +340,6 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
         };
 
         if !*is_collapsed {
-            // One row per level_1 key.
             let job_row_y = cursor_y;
 
             for job in job_list {
@@ -394,8 +385,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
     let theme_colors = get_theme_colors(&info.ctx.style());
 
     let compact = options.compact_rows;
-    // In Host -> Owner with compact mode, keep it compact while still giving
-    // a small padding for readability.
+
     let extra_row_pad = if compact
         && aggregate_by_level_1 == AggregateByLevel1Enum::Host
         && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
@@ -426,8 +416,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
     let mut grid5000_host_rows: Vec<GanttGutterHostRow> = Vec::new();
 
-    // For the Grid5000-like view we also keep spans for site/cluster in order
-    // to paint thin stripes (no text columns).
+
     let mut grid5000_cluster_spans: Vec<GanttGutterSpan> = Vec::new();
     let mut grid5000_site_spans: Vec<GanttGutterSpan> = Vec::new();
     let mut current_site: Option<(String, f32, f32)> = None;
@@ -469,7 +458,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
             cursor_y += offset_level_1;
 
-            // Compact: reserve space for the level_1 header (avoid overlap).
             let header_height = if compact {
                 options.rect_height.max(info.text_height + 2.0)
             } else {
@@ -477,7 +465,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
             };
             let header_center_y = cursor_y + header_height * 0.5;
 
-            // paint_job_info expects a center Y
             let text_pos = pos2(info.canvas.min.x + 6.0, header_center_y);
 
             let is_collapsed_level_1 = collapsed_jobs_level_1
@@ -610,7 +597,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     };
 
                     if !*is_collapsed_level_2 {
-                        // One row per level_2 key.
                         let aligned_y = if compact {
                             cursor_y
                         } else {
@@ -664,8 +650,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
         }
         cursor_y += spacing_between_level_1;
 
-        // Hover feedback for Host aggregation: show a clear left marker for the whole host section
-        // even when hovering the job bars area (not only the label widget).
         if aggregate_by_level_1 == AggregateByLevel1Enum::Host
             && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
         {
@@ -690,12 +674,10 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     );
                     gutter_painter.rect_filled(marker_rect, 0.0, alpha_fill);
 
-                    // No horizontal guide line (it reads as a line through jobs).
                 }
             }
         }
 
-        // Grid5000 (Cluster -> Host): remember vertical spans for site/cluster stripes.
         if hide_level_1_headers {
             if let (Some(top), Some(bottom)) = (cluster_top, cluster_bottom) {
                 grid5000_cluster_spans.push(GanttGutterSpan {
@@ -739,7 +721,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
         );
         let gutter_painter = info.painter.with_clip_rect(gutter_clip);
 
-        // Grid5000-like gutter: host labels + 3 stripes (site/cluster/host).
         let font_host = FontId::proportional((info.font_id.size).max(11.0));
 
         let stripes_w = gutter_g5k_total_w();
@@ -751,9 +732,8 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
         let c_cluster = Color32::from_rgb(245, 227, 113);
         let c_host = Color32::from_rgb(235, 215, 110);
 
-        // Fills first, then strokes (keep borders visible).
         let border = Stroke::new(1.0, Color32::BLACK);
-        let inset = 0.5; // keep strokes fully inside the clip rect
+        let inset = 0.5; 
 
         let site_x0 = stripes_x0;
         let site_x1 = stripes_x0 + GUTTER_G5K_SITE_W;
@@ -815,7 +795,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                 );
                 gutter_painter.rect_filled(stripe_rect, 0.0, c_host);
 
-                // Hover indicator: left marker only (no lines in the gutter zone)
                 if show_hover_marker {
                     let hover_grey_fill = Color32::from_rgba_unmultiplied(70, 70, 70, 210);
                     let marker_rect = Rect::from_min_max(
@@ -946,16 +925,14 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                 }
         }
 
-        // Borders/divisions (on top).
         let stripes_rect = Rect::from_min_max(
             pos2(site_x0 + inset, stripes_top + inset),
             pos2(host_x1 - inset, stripes_bottom - inset),
         );
         gutter_painter.rect_stroke(stripes_rect, 0.0, border);
 
-        // Right border is often visually weaker (clip/AA): reinforce it.
         let right_border = Stroke::new(2.0, Color32::BLACK);
-        let right_x = host_x1 - 1.0; // keep the whole 2px stroke inside the clip
+        let right_x = host_x1 - 1.0; 
         gutter_painter.line_segment(
             [
                 pos2(right_x, stripes_top + inset),
@@ -964,7 +941,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
             right_border,
         );
 
-        // Vertical separators between columns
         gutter_painter.line_segment(
             [
                 pos2(site_x1, stripes_top + inset),
@@ -980,7 +956,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
             border,
         );
 
-        // Cluster column: divided by cluster spans (no labels).
         for span in &grid5000_cluster_spans {
             let y = span.bottom;
             if y > stripes_top + inset && y < stripes_bottom - inset {
@@ -991,7 +966,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
             }
         }
 
-        // Host column: divided for each host row.
         for row in &grid5000_host_rows {
             let y = row.row_rect.max.y;
             if y > stripes_top + inset && y < stripes_bottom - inset {
@@ -1058,7 +1032,6 @@ fn paint_job(
         .hover_pos()
         .map_or(false, |mouse_pos| visible_rect.contains(mouse_pos));
 
-    // Grid5000: when hovering a job bar, highlight the corresponding host row in the gutter.
     let is_grid5000 = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
         && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
     if is_grid5000 && is_job_trully_hovered {
@@ -1282,7 +1255,6 @@ fn paint_job_info(
             },
         );
 
-        // Clear hover indication for host labels (works also in Aggregate by Host)
         if is_hovered {
             let hover_grey_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 140);
             let marker_rect = Rect::from_min_max(
@@ -1309,7 +1281,6 @@ fn paint_job_info(
                         .get(key_full)
                         .or_else(|| app.strata_by_host.get(&key_short));
 
-                    // Keep the 3 first lines like Grid5000: host / cluster / site
                     let derived_cluster = key_short.split('-').next().unwrap_or("").trim();
                     let cluster_line = strata
                         .and_then(|s| s.cluster.as_deref())
@@ -1403,10 +1374,8 @@ fn paint_job_info(
         .ctx
         .fonts(|f| f.layout_no_wrap(label, info.font_id.clone(), theme_colors.text_dim));
 
-    // Use caller-provided X for proper indentation; keep a small minimum padding.
     let x = pos.x.max(info.canvas.min.x + 6.0);
 
-    // Treat pos.y as CENTER to keep consistent alignment with host labels
     let top_left = pos2(x, pos.y - galley.size().y * 0.5);
     let rect = Rect::from_min_size(top_left, galley.size());
 
@@ -1427,7 +1396,6 @@ fn paint_job_info(
     );
     let gutter_painter = gutter_painter.with_clip_rect(clip_rect);
 
-    // Badge background improves readability (notably in Host -> Owner aggregation)
     let (bg, rounding) = if level == 2 {
         (theme_colors.background_timeline, 2.0)
     } else {
