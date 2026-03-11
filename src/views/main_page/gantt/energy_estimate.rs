@@ -1,7 +1,6 @@
 use crate::models::data_structure::job::Job;
 /// Estimation de la puissance globale (W) sur une fenêtre [start_s, end_s].
-///
-/// Idée:
+
 /// - Si `assigned_resources` est rempli => unités = assigned_resources.len()
 /// - Sinon => unités = hosts.len() 
 /// - Puissance = unités * watts_per_unit
@@ -18,7 +17,7 @@ pub fn estimate_global_energy_series(
         return Vec::new();
     }
 
-    // Garder seulement les jobs qui intersectent la fenêtre (perf)
+    // Garder seulement les jobs
     let mut relevant: Vec<&Job> = Vec::new();
     for j in jobs {
         let js = j.scheduled_start;

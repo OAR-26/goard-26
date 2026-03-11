@@ -18,8 +18,6 @@ fn fmt_hhmmss(ts: i64) -> String {
         .unwrap_or_else(|| "?".to_string())
 }
 
-/// Affiche le graphe énergie.
-/// Retourne Some((new_start_s, new_end_s)) si l'utilisateur a modifié la vue (drag/zoom).
 pub fn ui_energy_global(
     ui: &mut egui::Ui,
     points_w: &[(i64, f64)],
@@ -35,7 +33,6 @@ pub fn ui_energy_global(
         return None;
     }
 
-    // Convertir en points plot + min/max global
     let mut global_y_min = f64::INFINITY;
     let mut global_y_max = f64::NEG_INFINITY;
 
@@ -59,7 +56,6 @@ pub fn ui_energy_global(
         .color(egui::Color32::RED)
         .width(2.0);
 
-    // Bounds initiales = fenêtre du Gantt + Y global (juste pour démarrer)
     let initial_bounds = PlotBounds::from_min_max(
         [visible_start_s as f64, global_y_min],
         [visible_end_s as f64, global_y_max],
@@ -89,7 +85,6 @@ pub fn ui_energy_global(
             let vx0 = visible_start_s;
             let vx1 = visible_end_s;
 
-            // Rescale Y uniquement sur la fenêtre visible du Gantt
             let mut y_min = f64::INFINITY;
             let mut y_max = f64::NEG_INFINITY;
             for (t, w) in points_w {
@@ -109,7 +104,6 @@ pub fn ui_energy_global(
                 initial_bounds
             };
 
-            // Toujours forcer les bornes du graphe à celles du gantt
             plot_ui.set_plot_bounds(bounds);
 
             plot_ui.line(line);
@@ -144,7 +138,6 @@ pub fn ui_energy_global(
         let new_end = b.max()[0].round() as i64;
     
 
-    // Détection interaction
     let scrolled = ui.input(|i| i.raw_scroll_delta.y != 0.0);
     if plot_resp.response.dragged()
         || plot_resp.response.double_clicked()
