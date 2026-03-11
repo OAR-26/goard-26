@@ -567,7 +567,7 @@ impl View for GanttChart {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Filtres énergie :");
         
-                egui::ComboBox::from_id_source("energy_filter_cluster")
+                egui::ComboBox::from_id_salt("energy_filter_cluster")
                     .selected_text(
                         self.energy_filter_cluster
                             .clone()
@@ -597,7 +597,7 @@ impl View for GanttChart {
                 owners.sort();
                 owners.dedup();
         
-                egui::ComboBox::from_id_source("energy_filter_owner")
+                egui::ComboBox::from_id_salt("energy_filter_owner")
                     .selected_text(
                         self.energy_filter_owner
                             .clone()
