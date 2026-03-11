@@ -2,6 +2,7 @@ use super::types::{Info, Options};
 use egui::{lerp, PointerButton, Response};
 
 pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, info: &Info) {
+    // Déplacement horizontal du Gantt avec le clic gauche
     if response.dragged_by(PointerButton::Primary) && response.drag_delta().x != 0.0 {
         options.sideways_pan_in_points += response.drag_delta().x;
         options.zoom_to_relative_s_range = None;
@@ -9,6 +10,7 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
 
     if response.hovered() {
         let (mods, scroll_y) = info.ctx.input(|i| (i.modifiers, i.smooth_scroll_delta.y));
+        // Alt + molette verticale : zoom vertical sur la hauteur des lignes
         if mods.alt && !(mods.ctrl || mods.command) && scroll_y != 0.0 {
             const MIN_ROW_HEIGHT: f32 = 8.0;
             const MAX_ROW_HEIGHT: f32 = 80.0;
@@ -16,6 +18,7 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
             let zoom_factor_y = (-scroll_y * 0.0025).exp();
             options.rect_height = (options.rect_height * zoom_factor_y).clamp(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
 
+            // On consomme le scroll pour éviter qu’il soit réutilisé ailleurs
             info.ctx.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
             info.ctx.request_repaint();
         }
@@ -27,14 +30,14 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
 
         let mut zoom_factor = info.ctx.input(|i| i.zoom_delta_2d().x);
 
-
+        // Ctrl/Cmd + molette verticale : zoom temporel
         if zoom_factor == 1.0 {
             let (mods, scroll_y) = info.ctx.input(|i| (i.modifiers, i.smooth_scroll_delta.y));
             if (mods.ctrl || mods.command) && scroll_y != 0.0 {
                 zoom_factor *= (-scroll_y * 0.0025).exp();
             }
         }
-
+        // Drag vertical avec clic droit : zoom temporel
         if response.dragged_by(PointerButton::Secondary) {
             zoom_factor *= (response.drag_delta().y * 0.01).exp();
         }
@@ -46,6 +49,7 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
             if new_width <= max_canvas_width as f32 {
                 options.canvas_width_s = new_width;
 
+                // On zoome autour de la position de la souris
                 if let Some(mouse_pos) = response.hover_pos() {
                     let origin_x = info.canvas.min.x + info.gutter_width;
                     let zoom_center = mouse_pos.x - origin_x;
@@ -56,14 +60,14 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
             options.zoom_to_relative_s_range = None;
         }
     }
-
+    // Double clic : retour à la fenêtre temporelle complète
     if response.double_clicked() {
         options.zoom_to_relative_s_range = Some((
             info.ctx.input(|i| i.time),
             (0., (info.stop_s - info.start_s) as f64),
         ));
     }
-
+    // Animation progressive du retour à la vue globale
     if let Some((start_time, (start_s, end_s))) = options.zoom_to_relative_s_range {
         const ZOOM_DURATION: f32 = 0.75;
         let t = (info.ctx.input(|i| i.time - start_time) as f32 / ZOOM_DURATION).min(1.0);
