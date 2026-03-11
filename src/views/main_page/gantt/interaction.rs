@@ -8,8 +8,6 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
     }
 
     if response.hovered() {
-        // Vertical zoom (rows height): Alt/Option + scroll
-        // Kept separate from Ctrl/Cmd zoom (time axis) to avoid shortcut conflicts.
         let (mods, scroll_y) = info.ctx.input(|i| (i.modifiers, i.smooth_scroll_delta.y));
         if mods.alt && !(mods.ctrl || mods.command) && scroll_y != 0.0 {
             const MIN_ROW_HEIGHT: f32 = 8.0;
@@ -18,7 +16,6 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
             let zoom_factor_y = (-scroll_y * 0.0025).exp();
             options.rect_height = (options.rect_height * zoom_factor_y).clamp(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
 
-            // Best effort: prevent the same wheel event from also scrolling the ScrollArea.
             info.ctx.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
             info.ctx.request_repaint();
         }
@@ -30,8 +27,7 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
 
         let mut zoom_factor = info.ctx.input(|i| i.zoom_delta_2d().x);
 
-        // Fallback: ensure Ctrl/Cmd + scroll zooms even if `zoom_delta_2d()` doesn't pick it up
-        // on some platforms/backends.
+
         if zoom_factor == 1.0 {
             let (mods, scroll_y) = info.ctx.input(|i| (i.modifiers, i.smooth_scroll_delta.y));
             if (mods.ctrl || mods.command) && scroll_y != 0.0 {
@@ -46,7 +42,7 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
         if zoom_factor != 1.0 {
             let new_width = options.canvas_width_s / zoom_factor;
 
-            let max_canvas_width = 2 * 24 * 60 * 60; // 2 days in seconds
+            let max_canvas_width = 2 * 24 * 60 * 60; 
             if new_width <= max_canvas_width as f32 {
                 options.canvas_width_s = new_width;
 
