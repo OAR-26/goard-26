@@ -312,7 +312,6 @@ impl View for GanttChart {
             main_resource_state: ResourceState::Unknown,
         });
 
-        // (Toolbar is rendered in the global tool bar.)
 
         // admin panel window
         if self.admin_panel_open {
@@ -368,7 +367,6 @@ impl View for GanttChart {
                             ui.separator();
                         }
 
-                        // Show form only if mode is selected and for modify, preset is selected
                         if self.admin_mode == Some(AdminMode::New) || (self.admin_mode == Some(AdminMode::Modify) && self.admin_selected_preset.is_some()) {
                             ui.label("Name");
                             ui.text_edit_singleline(&mut self.admin_preset_name);
@@ -392,7 +390,6 @@ impl View for GanttChart {
                             ui.horizontal(|ui| {
                                 if ui.button("Save").clicked() {
                                     if !self.admin_preset_name.trim().is_empty() {
-                                        // If modifying and name changed, remove the old preset first
                                         if self.admin_mode == Some(AdminMode::Modify) && self.admin_original_preset_name.as_ref() != Some(&self.admin_preset_name) {
                                             if let Some(old_name) = &self.admin_original_preset_name {
                                                 app.remove_preset(old_name);
@@ -552,8 +549,6 @@ impl View for GanttChart {
                         mn = mn.min(*w);
                         mx = mx.max(*w);
                     }
-                    println!("energy_points: n={} min={} max={}", energy_points.len(), mn, mx);
-
                     let start = Local.timestamp_opt(visible_start_s, 0).unwrap();
                     let end = Local.timestamp_opt(visible_end_s, 0).unwrap();
                     app.set_localdate(start, end);
@@ -572,7 +567,7 @@ impl View for GanttChart {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Filtres énergie :");
         
-                egui::ComboBox::from_id_source("energy_filter_cluster")
+                egui::ComboBox::from_id_salt("energy_filter_cluster")
                     .selected_text(
                         self.energy_filter_cluster
                             .clone()
@@ -602,7 +597,7 @@ impl View for GanttChart {
                 owners.sort();
                 owners.dedup();
         
-                egui::ComboBox::from_id_source("energy_filter_owner")
+                egui::ComboBox::from_id_salt("energy_filter_owner")
                     .selected_text(
                         self.energy_filter_owner
                             .clone()

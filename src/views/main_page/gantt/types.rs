@@ -6,7 +6,6 @@ use egui::{FontId, Rect, Response};
 
 pub(super) const GUTTER_WIDTH: f32 = 200.0;
 
-// Grid5000-like gutter stripes widths (site/cluster/host).
 pub(super) const GUTTER_G5K_SITE_W: f32 = 12.0;
 pub(super) const GUTTER_G5K_CLUSTER_W: f32 = 12.0;
 pub(super) const GUTTER_G5K_HOST_W: f32 = 12.0;
