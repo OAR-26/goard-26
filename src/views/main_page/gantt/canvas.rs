@@ -13,6 +13,8 @@ use crate::views::components::job_details::JobDetailsWindow;
 use egui::{pos2, Rect, Stroke};
 use std::collections::BTreeMap;
 
+/// Dessine le contenu principal du canvas du diagramme de Gantt.
+
 pub(super) fn ui_canvas(
     options: &mut Options,
     app: &ApplicationContext,
@@ -25,7 +27,8 @@ pub(super) fn ui_canvas(
     all_cluster: &Vec<Cluster>,
     gutter_width: f32,
 ) -> f32 {
-
+    // si un Preset est  sélectionné dans les filtres globaux.
+    // On limite l'affichage aux clusters contenus dans ce preset.
     let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
         .and_then(|name| app.cluster_presets.iter().find(|p| p.name == *name))
         .map(|p| p.clusters.clone());
@@ -50,6 +53,8 @@ pub(super) fn ui_canvas(
     let is_grid5000 = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
         && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
     let gutter_yellow = egui::Color32::from_rgb(252, 238, 170);
+    // Le "gutter" correspond à la colonne de gauche contenant les labels
+    // (cluster / host / owner).
     let gutter_bg = if is_grid5000 {
         if info.ctx.style().visuals.dark_mode {
             egui::Color32::from_gray(20)
@@ -78,6 +83,7 @@ pub(super) fn ui_canvas(
 
     let jobs = &app.filtered_jobs;
 
+    // Regroupement des jobs selon le niveau d’agrégation sélectionné
     match options.aggregate_by.level_1 {
         AggregateByLevel1Enum::Owner => {
             let mut jobs_by_owner: BTreeMap<String, Vec<&Job>> = BTreeMap::new();
@@ -172,6 +178,7 @@ pub(super) fn ui_canvas(
             }
 
             AggregateByLevel2Enum::Host => {
+                // Cas non utilisé : Host n’a pas de fonction ici
             }
         },
 
@@ -297,7 +304,7 @@ pub(super) fn ui_canvas(
             }
         },
     }
-
+    // Tooltip global + texte de timeline
     paint_tooltip(info, options, app);
     options.previous_hovered_job = options.current_hovered_job.clone();
     options.current_hovered_job = None;

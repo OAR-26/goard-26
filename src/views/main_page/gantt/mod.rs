@@ -125,6 +125,8 @@ pub struct GanttChart {
     collapsed_jobs_level_2: BTreeMap<(String, String), bool>,
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
+
+    // Filtres dédiés au graphe énergie.
     energy_filter_cluster: Option<String>,
     energy_filter_owner: Option<String>,
 
@@ -132,7 +134,7 @@ pub struct GanttChart {
 
     last_aggregate_by: (AggregateByLevel1Enum, AggregateByLevel2Enum),
 
-    // admin panel state
+    // etat du panneau admin
     admin_panel_open: bool,
     admin_mode: Option<AdminMode>,
     admin_selected_preset: Option<usize>,
@@ -168,7 +170,7 @@ impl Default for GanttChart {
 
 impl GanttChart {
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        // Ensure we have initial bounds for Center-on-now.
+        // Initialise les bornes temporelles
         if self.initial_start_s.is_none() {
             self.initial_start_s = Some(app.get_start_date().timestamp());
             self.initial_end_s = Some(app.get_end_date().timestamp());
@@ -192,22 +194,37 @@ impl GanttChart {
             }
             ui.separator();
 
-            // Grid5000: compact rows forced.
+            // En vue Grid5000, on force le mode compact
             self.options.compact_rows = true;
 
             self.options.job_color.ui(ui);
         });
 
-        // show admin panel button only for admin users
-        if app.is_admin() {
-            if ui.small_button("Admin").clicked() {
-                self.admin_panel_open = true;
-            }
+        let is_admin = app.is_admin();
+
+        let admin_button = if is_admin {
+            egui::Button::new("Admin")
+        } else {
+            egui::Button::new("Admin")
+                .fill(Color32::from_gray(110))
+                .stroke(egui::Stroke::new(1.0, Color32::from_gray(170)))
+        };
+
+        let response = ui.add(admin_button);
+
+        if !is_admin {
+            response.clone().on_hover_text(
+                "Accès réservé aux administrateurs. Veuillez vous authentifier."
+            );
+        }
+
+        if response.clicked() && is_admin {
+            self.admin_panel_open = true;
         }
 
         ui.add_space(6.0);
 
-        // Timeline navigation
+        // Navigation rapide dans la timeline
         let base_font = TextStyle::Body.resolve(ui.style());
         let gutter_width =
             compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
@@ -253,15 +270,12 @@ impl GanttChart {
 
 impl View for GanttChart {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        // Toolbar is rendered in the global tool bar; keep this view focused on the chart.
-
+        // La toolbar est gérée ailleurs ; ici on ne dessine que la vue principale
         if self.initial_start_s.is_none() {
             self.initial_start_s = Some(app.get_start_date().timestamp());
             self.initial_end_s = Some(app.get_end_date().timestamp());
         }
-
-        // Always show all resources, filtered by preset if selected
-        // Remove any existing all_resources job and re-add with current preset
+        // On régénère toujours le job "all_resources" en fonction du preset sélectionné
         app.all_jobs.retain(|j| j.id != 0);
 
         let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
@@ -313,9 +327,8 @@ impl View for GanttChart {
         });
 
 
-        // admin panel window
+        // Panneau d’administration pour gérer les presets de clusters
         if self.admin_panel_open {
-            // avoid borrow conflict by using a temporary
             let mut open = self.admin_panel_open;
             egui::Window::new("Admin configuration")
                 .open(&mut open)
@@ -400,7 +413,7 @@ impl View for GanttChart {
                                             clusters: self.admin_selected_clusters.iter().cloned().collect(),
                                         };
                                         app.add_or_update_preset(preset);
-                                        // Reset to initial state
+                                        
                                         self.admin_mode = None;
                                         self.admin_selected_preset = None;
                                         self.admin_original_preset_name = None;
@@ -414,7 +427,7 @@ impl View for GanttChart {
                                             if let Some(preset) = app.cluster_presets.get(i) {
                                                 let name = preset.name.clone();
                                                 app.remove_preset(&name);
-                                                // Reset to initial state
+                                                // Reset de l’état du panneau
                                                 self.admin_mode = None;
                                                 self.admin_selected_preset = None;
                                                 self.admin_original_preset_name = None;
@@ -509,7 +522,7 @@ impl View for GanttChart {
 
                     ui.allocate_rect(used_rect, Sense::hover());
 
-                    // --- calcul fenêtre visible + énergie
+                    // calcul fenêtre visible + énergie
                     let visible_start_s = info.start_s
                         - ((self.options.sideways_pan_in_points / info.usable_width())
                             * self.options.canvas_width_s) as i64;
@@ -517,6 +530,7 @@ impl View for GanttChart {
 
                     visible_range = Some((visible_start_s, visible_end_s));
 
+                    // Le graphe énergie à ses propres filtres (cluster / owner), distincts des filtres visuels du Gantt.
                     let energy_jobs: Vec<Job> = app
                         .filtered_jobs
                         .iter()
@@ -556,7 +570,7 @@ impl View for GanttChart {
             });
         });
 
-        // --- zone plot FIXE en dessous ---
+        // zone plot FIXE en dessous : filtres du graphe + graphe énergie.
         ui.add_space(6.0);
         ui.separator();
         ui.add_space(2.0);
@@ -636,6 +650,7 @@ impl View for GanttChart {
                 last_gantt_gutter_width_px,
             );
         
+            // Si l’utilisateur navigue dans le graphe, on resynchronise le Gantt
             if let Some((new_vs, new_ve)) = maybe_new_range {
                 let new_width_s = (new_ve - new_vs).max(1) as f32;
         

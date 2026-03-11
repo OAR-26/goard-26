@@ -18,6 +18,8 @@ fn fmt_hhmmss(ts: i64) -> String {
         .unwrap_or_else(|| "?".to_string())
 }
 
+/// Affiche le graphe global de consommation d’énergie.
+/// Le graphe est synchronisé avec la fenêtre temporelle visible du Gantt.
 pub fn ui_energy_global(
     ui: &mut egui::Ui,
     points_w: &[(i64, f64)],
@@ -33,6 +35,7 @@ pub fn ui_energy_global(
         return None;
     }
 
+    // Bornes globales
     let mut global_y_min = f64::INFINITY;
     let mut global_y_max = f64::NEG_INFINITY;
 
@@ -61,6 +64,7 @@ pub fn ui_energy_global(
         [visible_end_s as f64, global_y_max],
     );
 
+    // Texte affiché au survol, dessiné manuellement pour éviter le tooltip de egui_plot (x=..., y=...).
     let mut hover_label: Option<String> = None;
 
     let plot_resp = Plot::new("energy_global_plot")
@@ -85,6 +89,7 @@ pub fn ui_energy_global(
             let vx0 = visible_start_s;
             let vx1 = visible_end_s;
 
+            // Recalcule les bornes y sur la fenêtre visible pour garder une courbe lisible pendant les déplacements
             let mut y_min = f64::INFINITY;
             let mut y_max = f64::NEG_INFINITY;
             for (t, w) in points_w {
@@ -104,11 +109,12 @@ pub fn ui_energy_global(
                 initial_bounds
             };
 
+            // Le graphe suit la fenêtre temporelle du Gantt
             plot_ui.set_plot_bounds(bounds);
 
             plot_ui.line(line);
             plot_ui.vline(now_line);
-
+            // Tooltip personnalisé : heure exacte + puissance en watts
             if let Some(pos) = plot_ui.pointer_coordinate() {
                 let ts = pos.x.round() as i64;
                 hover_label = Some(format!("{}  |  {:.0} W", fmt_hhmmss(ts), pos.y));
