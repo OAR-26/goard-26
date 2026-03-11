@@ -25,7 +25,7 @@ pub(super) fn ui_canvas(
     all_cluster: &Vec<Cluster>,
     gutter_width: f32,
 ) -> f32 {
-    // Determine filtered clusters based on selected preset
+
     let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
         .and_then(|name| app.cluster_presets.iter().find(|p| p.name == *name))
         .map(|p| p.clusters.clone());
@@ -35,7 +35,6 @@ pub(super) fn ui_canvas(
         app.all_clusters.clone()
     };
 
-    // Per-frame hover state.
     options.hovered_grid5000_host = None;
 
     if options.canvas_width_s <= 0.0 {
@@ -48,7 +47,6 @@ pub(super) fn ui_canvas(
 
     let theme_colors = get_theme_colors(&info.ctx.style());
 
-    // Grid5000: stripes are painted in jobs.rs.
     let is_grid5000 = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
         && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
     let gutter_yellow = egui::Color32::from_rgb(252, 238, 170);
@@ -59,7 +57,6 @@ pub(super) fn ui_canvas(
             egui::Color32::WHITE
         }
     } else {
-        // Other views keep the yellow gutter.
         gutter_yellow
     };
 
@@ -69,7 +66,6 @@ pub(super) fn ui_canvas(
     );
     info.painter.rect_filled(gutter_rect, 0.0, gutter_bg);
 
-    // Grid5000: no gutter separator.
     if !is_grid5000 {
         info.painter.line_segment(
             [
@@ -176,7 +172,6 @@ pub(super) fn ui_canvas(
             }
 
             AggregateByLevel2Enum::Host => {
-                // nothing to do here
             }
         },
 
@@ -303,7 +298,6 @@ pub(super) fn ui_canvas(
         },
     }
 
-    // Preserve the original call sequence
     paint_tooltip(info, options, app);
     options.previous_hovered_job = options.current_hovered_job.clone();
     options.current_hovered_job = None;
