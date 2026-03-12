@@ -141,6 +141,8 @@ pub struct GanttChart {
     admin_original_preset_name: Option<String>,
     admin_preset_name: String,
     admin_selected_clusters: StdHashSet<String>,
+
+    pending_navigation_refresh: bool,
 }
 
 impl Default for GanttChart {
@@ -164,6 +166,7 @@ impl Default for GanttChart {
             admin_selected_clusters: StdHashSet::new(),
             energy_filter_cluster: None,
             energy_filter_owner: None,
+            pending_navigation_refresh: false,
         }
     }
 }
@@ -242,18 +245,22 @@ impl GanttChart {
         if ui.small_button("◀ 1w").clicked() {
             self.options.sideways_pan_in_points += week_delta_s as f32 * points_per_second;
             self.options.zoom_to_relative_s_range = None;
+            self.pending_navigation_refresh = true;
         }
         if ui.small_button("◀ 1d").clicked() {
             self.options.sideways_pan_in_points += day_delta_s as f32 * points_per_second;
             self.options.zoom_to_relative_s_range = None;
+            self.pending_navigation_refresh = true;
         }
         if ui.small_button("1d ▶").clicked() {
             self.options.sideways_pan_in_points -= day_delta_s as f32 * points_per_second;
             self.options.zoom_to_relative_s_range = None;
+            self.pending_navigation_refresh = true;
         }
         if ui.small_button("1w ▶").clicked() {
             self.options.sideways_pan_in_points -= week_delta_s as f32 * points_per_second;
             self.options.zoom_to_relative_s_range = None;
+            self.pending_navigation_refresh = true;
         }
 
         if ui.small_button(t!("app.gantt.now")).clicked() {
@@ -264,6 +271,7 @@ impl GanttChart {
                     (self.initial_end_s.unwrap() - self.initial_start_s.unwrap()) as f64,
                 ),
             ));
+            self.pending_navigation_refresh = true;
         }
     }
 }
@@ -566,6 +574,18 @@ impl View for GanttChart {
                     let start = Local.timestamp_opt(visible_start_s, 0).unwrap();
                     let end = Local.timestamp_opt(visible_end_s, 0).unwrap();
                     app.set_localdate(start, end);
+
+                    if self.pending_navigation_refresh {
+                        let refreshing = *app
+                            .is_refreshing
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+                        if !refreshing {
+                            app.instant_update();
+                            self.pending_navigation_refresh = false;
+                        }
+                    }
                 });
             });
         });
@@ -663,6 +683,7 @@ impl View for GanttChart {
                     -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
         
                 self.options.sideways_pan_in_points = pan_px;
+                self.pending_navigation_refresh = true;
             }
         }
 
