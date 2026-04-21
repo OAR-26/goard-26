@@ -261,6 +261,71 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
     }
 }
 
+/// Paint job ID labels centered on contiguous blocks of the same job
+fn paint_job_id_labels(
+    info: &Info,
+    options: &Options,
+    jobs: &[&Job],
+    top_y: f32,
+) {
+    if jobs.is_empty() {
+        return;
+    }
+
+    let chart_clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
+        pos2(info.canvas.max.x, info.canvas.max.y),
+    );
+    let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
+
+    // Group consecutive jobs with the same ID
+    let mut i = 0;
+    while i < jobs.len() {
+        let current_job = jobs[i];
+        let mut j = i + 1;
+
+        // Find consecutive jobs with the same ID
+        while j < jobs.len() && jobs[j].id == current_job.id {
+            j += 1;
+        }
+
+        // Now jobs[i..j] are all consecutive with the same ID
+        // Calculate the bounding box for this group
+        let start_x = info.point_from_s(options, jobs[i].scheduled_start);
+        let mut end_x = start_x;
+
+        for k in i..j {
+            let stop_time = if jobs[k].stop_time > 0 {
+                jobs[k].stop_time
+            } else {
+                jobs[k].scheduled_start + jobs[k].walltime
+            };
+            let x = info.point_from_s(options, stop_time);
+            end_x = end_x.max(x);
+        }
+
+        // Only draw label if the block is wide enough
+        let block_width = end_x - start_x;
+        if block_width > 30.0 {
+            let center_x = (start_x + end_x) / 2.0;
+            let center_y = top_y + (options.rect_height / 2.0);
+
+            let text = format!("{}", current_job.id);
+            let font = FontId::proportional(12.0);
+
+            chart_painter.text(
+                pos2(center_x, center_y),
+                Align2::CENTER_CENTER,
+                &text,
+                font,
+                Color32::BLACK,
+            );
+        }
+
+        i = j;
+    }
+}
+
 pub(super) fn paint_aggregated_jobs_level_1<'a>(
     info: &Info,
     options: &mut Options,
@@ -355,6 +420,9 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
                     resource_label_for_state_tooltip,
                 );
             }
+
+            // Paint job ID labels on contiguous blocks
+            paint_job_id_labels(info, options, job_list, job_row_y);
 
             if !job_list.is_empty() {
                 cursor_y += row_height + spacing_between_jobs + options.spacing;
@@ -631,6 +699,10 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                                 },
                             );
                         }
+
+                        // Paint job ID labels on contiguous blocks
+                        let job_refs: Vec<&Job> = job_list.iter().map(|j| *j).collect();
+                        paint_job_id_labels(info, options, &job_refs, job_row_y);
 
                         if !job_list.is_empty() {
                             let row_spacing = if compact
