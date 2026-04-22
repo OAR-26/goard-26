@@ -1,4 +1,4 @@
-use super::jobs::{paint_aggregated_jobs_level_1, paint_aggregated_jobs_level_2, paint_tooltip};
+use super::jobs::{paint_aggregated_jobs_level_1, paint_aggregated_jobs_level_2, paint_tooltip, paint_job_id_labels};
 use super::theme::get_theme_colors;
 use super::timeline::paint_timeline_text_on_top;
 use super::types::{Info, Options};
@@ -45,7 +45,8 @@ pub(super) fn ui_canvas(
         options.zoom_to_relative_s_range = None;
     }
 
-    let mut cursor_y = info.canvas.top();
+    let mut cursor_y = info.canvas.min.y;
+    let mut all_painted_rows: Vec<super::jobs::PaintedJobRow> = Vec::new();
     cursor_y += info.text_height;
 
     let theme_colors = get_theme_colors(&info.ctx.style());
@@ -94,7 +95,7 @@ pub(super) fn ui_canvas(
                     .push(job);
             }
 
-            cursor_y = paint_aggregated_jobs_level_1(
+            let (new_cursor_y, rows) = paint_aggregated_jobs_level_1(
                 info,
                 options,
                 jobs_by_owner,
@@ -107,6 +108,8 @@ pub(super) fn ui_canvas(
                 gutter_width,
                 app,
             );
+            cursor_y = new_cursor_y;
+            all_painted_rows.extend(rows);
         }
 
         AggregateByLevel1Enum::Host => match options.aggregate_by.level_2 {
@@ -129,7 +132,7 @@ pub(super) fn ui_canvas(
                     }
                 }
 
-                cursor_y = paint_aggregated_jobs_level_2(
+                let (new_cursor_y, rows) = paint_aggregated_jobs_level_2(
                     info,
                     options,
                     jobs_by_host_by_owner,
@@ -144,6 +147,8 @@ pub(super) fn ui_canvas(
                     gutter_width,
                     app,
                 );
+                cursor_y = new_cursor_y;
+                all_painted_rows.extend(rows);
             }
 
             AggregateByLevel2Enum::None => {
@@ -162,7 +167,7 @@ pub(super) fn ui_canvas(
                     }
                 }
 
-                cursor_y = paint_aggregated_jobs_level_1(
+                let (new_cursor_y, rows) = paint_aggregated_jobs_level_1(
                     info,
                     options,
                     jobs_by_host,
@@ -175,6 +180,8 @@ pub(super) fn ui_canvas(
                     gutter_width,
                     app,
                 );
+                cursor_y = new_cursor_y;
+                all_painted_rows.extend(rows);
             }
 
             AggregateByLevel2Enum::Host => {
@@ -204,7 +211,7 @@ pub(super) fn ui_canvas(
                     }
                 }
 
-                cursor_y = paint_aggregated_jobs_level_2(
+                let (new_cursor_y, rows) = paint_aggregated_jobs_level_2(
                     info,
                     options,
                     jobs_by_cluster_by_owner,
@@ -219,6 +226,8 @@ pub(super) fn ui_canvas(
                     gutter_width,
                     app,
                 );
+                cursor_y = new_cursor_y;
+                all_painted_rows.extend(rows);
             }
 
             AggregateByLevel2Enum::None => {
@@ -239,7 +248,7 @@ pub(super) fn ui_canvas(
                     }
                 }
 
-                cursor_y = paint_aggregated_jobs_level_1(
+                let (new_cursor_y, rows) = paint_aggregated_jobs_level_1(
                     info,
                     options,
                     jobs_by_cluster,
@@ -252,6 +261,8 @@ pub(super) fn ui_canvas(
                     gutter_width,
                     app,
                 );
+                cursor_y = new_cursor_y;
+                all_painted_rows.extend(rows);
             }
 
             AggregateByLevel2Enum::Host => {
@@ -286,7 +297,7 @@ pub(super) fn ui_canvas(
                     }
                 }
 
-                cursor_y = paint_aggregated_jobs_level_2(
+                let (new_cursor_y, rows) = paint_aggregated_jobs_level_2(
                     info,
                     options,
                     jobs_by_cluster_by_host,
@@ -301,9 +312,14 @@ pub(super) fn ui_canvas(
                     gutter_width,
                     app,
                 );
+                cursor_y = new_cursor_y;
+                all_painted_rows.extend(rows);
             }
         },
     }
+    // Paint all job IDs once at the end to avoid duplicates
+    paint_job_id_labels(info, options, &all_painted_rows);
+
     // Tooltip global + texte de timeline
     paint_tooltip(info, options, app);
     options.previous_hovered_job = options.current_hovered_job.clone();
