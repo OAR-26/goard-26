@@ -236,6 +236,11 @@ fn mock_strata(id: u32) -> Strata {
         host: Some(hosts_list[random_index(hosts_list.len())].to_string()),
         nodemodel: Some(format!("nodemodel{}", random_index(10))),
         cputype: Some(format!("cputype{}", random_index(10))),
+        besteffort: None,
+        deploy: None,
+        drain: None,
+        gpudevice: None,
+        r#type: None,
     }
 }
 

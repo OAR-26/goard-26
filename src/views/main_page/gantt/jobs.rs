@@ -20,7 +20,7 @@ use crate::views::components::job_details::JobDetailsWindow;
 use egui::{
     pos2, Align2, Color32, CursorIcon, FontId, Id, LayerId, Order, Pos2, Rect, Shape, Stroke,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 fn json_value_to_inline(v: &serde_json::Value) -> Option<String> {
     match v {
@@ -263,6 +263,7 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
 
 /// A single painted job row entry, collected during the row-paint loop and
 /// later used to derive cross-row label blocks.
+#[derive(Clone, Debug, PartialEq)]
 struct PaintedJobRow {
     job_id:  u32,
     /// Canonical time interval — used as the grouping key so two rows that
@@ -271,13 +272,90 @@ struct PaintedJobRow {
     stop_s:  i64,
     /// Top-left Y of the bar rectangle for this row.
     row_y:   f32,
-    /// Cluster name this row belongs to
-    cluster_name: String,
+    /// Row-level label used for contiguous grouping (hosts in the current mode).
+    row_label: String,
+    /// Original painted row index in the visible order.
+    row_index: usize,
 }
 
-/// Paint job-ID labels, one per job per cluster block.
-/// Each unique (job_id, start_s, stop_s, cluster_name) combination gets one label
-/// positioned at the center of all its rectangles.
+struct JobBlock<'a> {
+    job_id: u32,
+    start_s: i64,
+    stop_s: i64,
+    rows: Vec<&'a PaintedJobRow>,
+}
+
+fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow]) -> Vec<JobBlock<'a>> {
+    let mut sorted_rows: Vec<&PaintedJobRow> = rows.iter().collect();
+    sorted_rows.sort_by(|a, b| a.row_y.partial_cmp(&b.row_y).unwrap_or(std::cmp::Ordering::Equal));
+
+    
+    let mut blocks = Vec::new();
+    let mut i = 0;
+    while i < sorted_rows.len() {
+        let first = sorted_rows[i];
+        let mut j = i + 1;
+        
+        // Only group rows that have the same job_id, start_s, stop_s AND are consecutive in position
+        while j < sorted_rows.len()
+            && sorted_rows[j].job_id == first.job_id
+            && sorted_rows[j].start_s == first.start_s
+            && sorted_rows[j].stop_s == first.stop_s
+            && (sorted_rows[j].row_y - sorted_rows[j - 1].row_y).abs() <= 35.0 // Allow reasonable tolerance for row spacing
+        {
+            j += 1;
+        }
+
+        blocks.push(JobBlock {
+            job_id: first.job_id,
+            start_s: first.start_s,
+            stop_s: first.stop_s,
+            rows: sorted_rows[i..j].to_vec(),
+        });
+        i = j;
+    }
+
+    blocks
+}
+
+fn debug_print_job_blocks(blocks: &[JobBlock<'_>]) {
+    static PRINT_ONCE: std::sync::Once = std::sync::Once::new();
+    PRINT_ONCE.call_once(|| {
+        if blocks.is_empty() {
+            return;
+        }
+
+        println!("=== DRAWN JOB BLOCKS ===");
+        for block in blocks {
+            let hosts: Vec<String> = block
+                .rows
+                .iter()
+                .map(|row| short_host_label(&row.row_label))
+                .collect();
+
+            let mut unique_hosts = Vec::new();
+            for host in hosts.iter() {
+                if unique_hosts.last().map(|last| last != host).unwrap_or(true) {
+                    unique_hosts.push(host.clone());
+                }
+            }
+
+            println!(
+                "drawn-label-block jobId={} start={} stop={} rows={} count={} ",
+                block.job_id,
+                block.start_s,
+                block.stop_s,
+                unique_hosts.join(", "),
+                block.rows.len(),
+            );
+        }
+        println!("=== END DRAWN JOB BLOCKS ===");
+    });
+}
+
+/// Paint job-ID labels, one per contiguous vertical job block.
+/// Host splits are preserved in debug output, but the actual ID label is painted
+/// once for the contiguous same job-id block.
 ///
 /// `rows` must be in top-to-bottom order (the order they were appended during
 /// the row-paint loop).
@@ -298,33 +376,21 @@ fn paint_job_id_labels(
     let height = options.rect_height;
     let font   = FontId::proportional(12.0);
 
-    // Group rows by (job_id, start_s, stop_s, cluster_name)
-    let mut job_blocks: HashMap<(u32, i64, i64, String), (f32, f32)> = HashMap::new();
+    let blocks = collect_contiguous_job_blocks(rows);
+    debug_print_job_blocks(&blocks);
 
-    for row in rows {
-        let key = (row.job_id, row.start_s, row.stop_s, row.cluster_name.clone());
-        let block_bottom = row.row_y + height;
-
-        job_blocks.entry(key)
-            .and_modify(|(min_y, max_y)| {
-                *min_y = min_y.min(row.row_y);
-                *max_y = max_y.max(block_bottom);
-            })
-            .or_insert((row.row_y, block_bottom));
-    }
-
-    // Paint one label per unique job block
-    for ((job_id, start_s, stop_s, _cluster_name), (block_top, block_bottom)) in job_blocks {
-        let start_x     = info.point_from_s(options, start_s);
-        let end_x       = info.point_from_s(options, stop_s);
+    for block in blocks {
+        let start_x = info.point_from_s(options, block.start_s);
+        let end_x = info.point_from_s(options, block.stop_s);
         let block_width = end_x - start_x;
+
+        let block_top = block.rows.first().unwrap().row_y;
+        let block_bottom = block.rows.last().unwrap().row_y + height;
 
         if block_width > 30.0 {
             let center_x = (start_x + end_x) / 2.0;
             let center_y = (block_top + block_bottom) / 2.0;
 
-            // Clip to the block's own rect so the label never bleeds into a
-            // neighbour.
             let block_rect = Rect::from_min_max(
                 pos2(start_x, block_top),
                 pos2(end_x,   block_bottom),
@@ -337,7 +403,7 @@ fn paint_job_id_labels(
                     .text(
                         pos2(center_x, center_y),
                         Align2::CENTER_CENTER,
-                        format!("{}", job_id),
+                        format!("{}", block.job_id),
                         font.clone(),
                         Color32::BLACK,
                     );
@@ -722,9 +788,21 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                         // Collect each job on this row for cross-row label grouping.
                         let mut row_jobs: Vec<&Job> = job_list.iter().map(|j| *j).collect();
                         row_jobs.sort_by_key(|j| (j.scheduled_start, j.stop_time));
+                        let row_label = if aggregate_by_level_2 == AggregateByLevel2Enum::Host {
+                            level_2.clone()
+                        } else {
+                            level_1.clone()
+                        };
                         for job in &row_jobs {
                             let stop_s = if job.stop_time > 0 { job.stop_time } else { job.scheduled_start + job.walltime };
-                            painted_rows.push(PaintedJobRow { job_id: job.id, start_s: job.scheduled_start, stop_s, row_y: job_row_y, cluster_name: level_1.clone() });
+                            painted_rows.push(PaintedJobRow {
+                                job_id: job.id,
+                                start_s: job.scheduled_start,
+                                stop_s,
+                                row_y: job_row_y,
+                                row_label: row_label.clone(),
+                                row_index: painted_rows.len(),
+                            });
                         }
 
                         if !job_list.is_empty() {
@@ -1507,3 +1585,4 @@ fn paint_job_info(
     }
     gutter_painter.galley(rect.min, galley, text_color);
 }
+
