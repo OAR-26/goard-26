@@ -423,10 +423,14 @@ pub(super) fn paint_job_id_labels(
             .intersect(chart_clip_rect);
 
             if !block_rect.is_negative() {
+                // Center the job ID within the visible portion of the rectangle
+                let visible_center_x = block_rect.center().x;
+                let visible_center_y = block_rect.center().y;
+                
                 info.painter
                     .with_clip_rect(block_rect)
                     .text(
-                        pos2(center_x, center_y),
+                        pos2(visible_center_x, visible_center_y),
                         Align2::CENTER_CENTER,
                         format!("{}", block.job_id),
                         font.clone(),
