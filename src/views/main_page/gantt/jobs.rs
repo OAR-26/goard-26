@@ -398,7 +398,7 @@ pub(super) fn paint_job_id_labels(
         pos2(info.canvas.max.x, info.canvas.max.y),
     );
 
-    let height = options.rect_height;
+    let height = options.rect_height.max(info.text_height);
     let font   = FontId::proportional(12.0);
 
     let blocks = collect_contiguous_job_blocks(rows, height);
@@ -789,7 +789,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                         let aligned_y = if compact {
                             cursor_y
                         } else {
-                            cursor_y - options.rect_height * 0.5
+                            cursor_y - options.rect_height.max(info.text_height) * 0.5
                         };
                         let job_row_y = aligned_y;
 
@@ -1190,7 +1190,7 @@ fn paint_job(
         return PaintResult::Culled;
     }
 
-    let height = options.rect_height;
+    let height = options.rect_height.max(info.text_height);
     let rounding = options.rounding;
 
     let rect = Rect::from_min_size(pos2(start_x, top_y), egui::vec2(width.max(options.min_width), height));
