@@ -285,7 +285,7 @@ struct JobBlock<'a> {
     rows: Vec<&'a PaintedJobRow>,
 }
 
-fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow]) -> Vec<JobBlock<'a>> {
+fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow], rect_height: f32) -> Vec<JobBlock<'a>> {
     use std::collections::HashMap;
     
     // First group by job_id, start_s, stop_s
@@ -317,14 +317,15 @@ fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow]) -> Vec<JobBlock<
                     let current_row = sorted_group[j - 1];
                     let next_row = sorted_group[j];
                     
-                    // Use pixel-based contiguity check instead of host name comparison
-                    // Since spacing is reduced, check if rows are physically close
-                    let vertical_distance = (next_row.row_y - current_row.row_y).abs();
-                    let contiguity_threshold = 20.0; // Fixed threshold for contiguity
+                    // Use pixel-based contiguity check using rectangle tops and bottoms
+                    // Check if rectangles are touching or very close
+                    let current_bottom = current_row.row_y + rect_height;
+                    let next_top = next_row.row_y;
+                    let vertical_gap = next_top - current_bottom;
                     
-                    // If rows are not physically close, don't group them
+                    // If there's a gap larger than a small threshold, don't group them
                     // This creates individual blocks for each host while keeping job ID printing
-                    if vertical_distance > contiguity_threshold {
+                    if vertical_gap > 2.0 { // Small threshold for touching/overlapping rectangles
                         break;
                     }
                 }
@@ -400,7 +401,7 @@ pub(super) fn paint_job_id_labels(
     let height = options.rect_height;
     let font   = FontId::proportional(12.0);
 
-    let blocks = collect_contiguous_job_blocks(rows);
+    let blocks = collect_contiguous_job_blocks(rows, height);
     debug_print_job_blocks(&blocks);
 
     for block in blocks {
