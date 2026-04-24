@@ -362,19 +362,19 @@ fn debug_print_job_blocks(blocks: &[JobBlock<'_>]) {
         println!("=== DEBUG: Total rectangles={}, Total IDs={}, Total blocks={}", 
                  total_rectangles, total_ids, total_blocks);
         
-        println!("=== START DRAWN JOB BLOCKS ===");
+        // println!("=== START DRAWN JOB BLOCKS ===");
         for block in blocks {
             let host_names: Vec<String> = block.rows.iter().map(|r| r.row_label.clone()).collect();
-            println!(
-                "drawn-label-block jobId={} start={} stop={} rows={} count={}",
-                block.job_id,
-                block.start_s,
-                block.stop_s,
-                host_names.join(", "),
-                block.rows.len()
-            );
+            // println!(
+            //     "drawn-label-block jobId={} start={} stop={} rows={} count={}",
+            //     block.job_id,
+            //     block.start_s,
+            //     block.stop_s,
+            //     host_names.join(", "),
+            //     block.rows.len()
+            // );
         }
-        println!("=== END DRAWN JOB BLOCKS ===");
+        // println!("=== END DRAWN JOB BLOCKS ===");
     });
 }
 
