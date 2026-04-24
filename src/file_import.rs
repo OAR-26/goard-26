@@ -8,6 +8,8 @@ use web_sys::{FileReader, Event, HtmlInputElement, FileList};
 
 #[cfg(not(target_arch = "wasm32"))]
 use rfd;
+#[cfg(not(target_arch = "wasm32"))]
+use native_dialog::FileDialog;
 
 // Global storage for file content and path
 static mut FILE_CONTENT: Option<(String, Option<String>)> = None;
@@ -85,10 +87,46 @@ pub fn trigger_file_dialog() {
 /// Trigger a file dialog and store the file content globally (native version)
 #[cfg(not(target_arch = "wasm32"))]
 pub fn trigger_file_dialog() {
-    if let Some(file) = rfd::FileDialog::new()
+    // Force the current thread to focus and wait for window to be ready
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    
+    // Try native-dialog first as it might have better window focus handling
+    match FileDialog::new()
+        .set_title("Import JSON File")
         .add_filter("JSON Files", &["json"])
-        .pick_file() 
+        .show_open_single_file() 
     {
+        Ok(Some(file)) => {
+            match std::fs::read_to_string(&file) {
+                Ok(content) => {
+                    unsafe {
+                        FILE_CONTENT = Some((content, Some(file.to_string_lossy().to_string())));
+                    }
+                    println!("File loaded successfully: {:?}", file);
+                }
+                Err(e) => {
+                    eprintln!("Failed to read file: {}", e);
+                }
+            }
+        }
+        Ok(None) => {
+            println!("No file selected");
+        }
+        Err(e) => {
+            eprintln!("Error opening file dialog: {}", e);
+            // Fallback to rfd if native-dialog fails
+            fallback_to_rfd();
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fallback_to_rfd() {
+    let dialog = rfd::FileDialog::new()
+        .add_filter("JSON Files", &["json"])
+        .set_title("Import JSON File");
+    
+    if let Some(file) = dialog.pick_file() {
         match std::fs::read_to_string(&file) {
             Ok(content) => {
                 unsafe {

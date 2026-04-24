@@ -703,16 +703,44 @@ impl ApplicationContext {
             }
         }
         
-        // Extract clusters from jobs for now
-        let mut imported_clusters = Vec::new();
+        // Extract clusters from jobs and populate them with hosts
+        let mut imported_clusters: Vec<Cluster> = Vec::new();
         for job in &imported_jobs {
             for cluster_name in &job.clusters {
-                if !imported_clusters.iter().any(|c: &Cluster| c.name == *cluster_name) {
+                let cluster = imported_clusters.iter_mut()
+                    .find(|c| c.name == *cluster_name);
+                
+                if let Some(existing_cluster) = cluster {
+                    // Add hosts from this job to the existing cluster
+                    for host_name in &job.hosts {
+                        if !existing_cluster.hosts.iter().any(|h| h.name == *host_name) {
+                            existing_cluster.hosts.push(crate::models::data_structure::host::Host {
+                                name: host_name.clone(),
+                                cpus: Vec::new(),
+                                network_address: host_name.clone(),
+                                resource_ids: Vec::new(),
+                                state: crate::models::data_structure::resource::ResourceState::Alive,
+                            });
+                        }
+                    }
+                } else {
+                    // Create new cluster with hosts from this job
+                    let mut hosts = Vec::new();
+                    for host_name in &job.hosts {
+                        hosts.push(crate::models::data_structure::host::Host {
+                            name: host_name.clone(),
+                            cpus: Vec::new(),
+                            network_address: host_name.clone(),
+                            resource_ids: Vec::new(),
+                            state: crate::models::data_structure::resource::ResourceState::Alive,
+                        });
+                    }
+                    
                     imported_clusters.push(Cluster {
                         name: cluster_name.clone(),
-                        hosts: Vec::new(), // We'll populate this from job hosts if needed
+                        hosts,
                         resource_ids: Vec::new(),
-                        state: crate::models::data_structure::resource::ResourceState::Unknown,
+                        state: crate::models::data_structure::resource::ResourceState::Alive,
                     });
                 }
             }
@@ -910,8 +938,8 @@ impl ApplicationContext {
             start_time,
             stop_time,
             exit_code: None,
-            gantt_color: egui::Color32::TRANSPARENT,
-            main_resource_state: ResourceState::Unknown,
+            gantt_color: crate::models::utils::utils::convert_id_to_color(id),
+            main_resource_state: ResourceState::Alive,
         })
     }
     
