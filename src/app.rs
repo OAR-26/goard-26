@@ -34,6 +34,13 @@ impl App {
 
         app
     }
+    
+    fn trigger_file_import(&mut self) {
+        use crate::file_import;
+        
+        // Trigger the file dialog (works for both native and WASM)
+        file_import::trigger_file_dialog();
+    }
 }
 
 impl eframe::App for App {
@@ -59,6 +66,30 @@ impl eframe::App for App {
 
         // Check for updates
         self.application_context.check_data_update();
+        
+        // Handle file import request
+        if self.application_context.request_file_import {
+            self.application_context.request_file_import = false;
+            self.trigger_file_import();
+        }
+        
+        // Check for imported file content
+        {
+            use crate::file_import;
+            if let Some((file_content, file_path)) = file_import::take_file_content() {
+                if let Err(e) = self.application_context.import_data_from_json(&file_content, file_path) {
+                    #[cfg(target_arch = "wasm32")]
+                    web_sys::console::log_1(&format!("Failed to import data: {}", e).into());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    eprintln!("Failed to import data: {}", e);
+                } else {
+                    #[cfg(target_arch = "wasm32")]
+                    web_sys::console::log_1(&"File imported successfully".into());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    println!("File imported successfully");
+                }
+            }
+        }
 
         // IMPORTANT: show the bottom panel BEFORE the central panel so it reserves space
         // instead of drawing on top of the Gantt rows.

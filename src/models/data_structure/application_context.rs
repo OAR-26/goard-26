@@ -27,6 +27,14 @@ pub struct ClusterPreset {
     pub clusters: Vec<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ImportedDataSource {
+    pub name: String,
+    pub file_path: Option<String>,
+    pub jobs: Vec<Job>,
+    pub clusters: Vec<Cluster>,
+}
+
 pub struct ApplicationContext {
     pub all_jobs: Vec<Job>,
     pub swap_all_jobs: Vec<Job>, // Used to store all jobs when refreshing (and swapped with all_jobs when refreshing is done)
@@ -60,6 +68,11 @@ pub struct ApplicationContext {
 
     // UI requests (set by views, consumed by Menu/Options)
     pub theme_toggle_requested: bool,
+    
+    // File import functionality with tabbed interface
+    pub imported_data_sources: Vec<ImportedDataSource>,
+    pub current_data_source_index: usize, // 0 = live data, 1+ = imported files
+    pub request_file_import: bool,
 }
 
 impl ApplicationContext {
@@ -626,7 +639,7 @@ impl ApplicationContext {
             .map(|preset| preset.clusters.clone());
 
         self.filtered_jobs = self
-            .all_jobs
+            .get_current_jobs()
             .iter()
             .filter(|job| {
                 job.id == 0
@@ -672,6 +685,257 @@ impl ApplicationContext {
             .cloned() // Clone filtred jobs here
             .collect();
     }
+
+    pub fn import_data_from_json(&mut self, json_str: &str, file_path: Option<String>) -> Result<(), String> {
+        use serde_json::Value;
+        
+        let json_data: Value = serde_json::from_str(json_str)
+            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        
+        // Parse jobs from JSON
+        let mut imported_jobs = Vec::new();
+        if let Some(jobs_obj) = json_data.get("jobs") {
+            if let Value::Object(jobs_map) = jobs_obj {
+                for (_job_id, job_data) in jobs_map {
+                    let job = self.parse_job_from_json(job_data)?;
+                    imported_jobs.push(job);
+                }
+            }
+        }
+        
+        // Extract clusters from jobs for now
+        let mut imported_clusters = Vec::new();
+        for job in &imported_jobs {
+            for cluster_name in &job.clusters {
+                if !imported_clusters.iter().any(|c: &Cluster| c.name == *cluster_name) {
+                    imported_clusters.push(Cluster {
+                        name: cluster_name.clone(),
+                        hosts: Vec::new(), // We'll populate this from job hosts if needed
+                        resource_ids: Vec::new(),
+                        state: crate::models::data_structure::resource::ResourceState::Unknown,
+                    });
+                }
+            }
+        }
+        
+        // Create a unique name for this data source
+        let base_name = file_path
+            .as_ref()
+            .and_then(|path| std::path::Path::new(path).file_stem())
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("Imported Data");
+        
+        let name = self.generate_unique_name(base_name);
+        
+        // Add the new data source
+        let data_source = ImportedDataSource {
+            name,
+            file_path,
+            jobs: imported_jobs,
+            clusters: imported_clusters,
+        };
+        
+        self.imported_data_sources.push(data_source);
+        
+        // Switch to the newly imported data source
+        self.current_data_source_index = self.imported_data_sources.len(); // This will be 1 + len after we add it
+        
+        Ok(())
+    }
+    
+    fn generate_unique_name(&self, base_name: &str) -> String {
+        let mut name = base_name.to_string();
+        let mut counter = 1;
+        
+        while self.imported_data_sources.iter().any(|ds| ds.name == name) {
+            name = format!("{} ({})", base_name, counter);
+            counter += 1;
+        }
+        
+        name
+    }
+    
+    pub fn get_current_data_source_name(&self) -> String {
+        if self.current_data_source_index == 0 {
+            "Live Data".to_string()
+        } else {
+            self.imported_data_sources
+                .get(self.current_data_source_index - 1)
+                .map(|ds| ds.name.clone())
+                .unwrap_or("Unknown".to_string())
+        }
+    }
+    
+    pub fn switch_to_data_source(&mut self, index: usize) {
+        if index == 0 {
+            // Live data
+            self.current_data_source_index = 0;
+        } else if let Some(_) = self.imported_data_sources.get(index - 1) {
+            // Imported data source
+            self.current_data_source_index = index;
+        }
+        // Re-filter jobs with the new data source
+        self.filter_jobs();
+    }
+    
+    pub fn close_imported_data_source(&mut self, index: usize) -> bool {
+        if index == 0 {
+            return false; // Cannot close live data
+        }
+        
+        let actual_index = index - 1;
+        if actual_index < self.imported_data_sources.len() {
+            self.imported_data_sources.remove(actual_index);
+            
+            // Adjust current index if necessary
+            if self.current_data_source_index > index {
+                self.current_data_source_index -= 1;
+            } else if self.current_data_source_index == index {
+                // If we closed the current tab, switch to live data
+                self.current_data_source_index = 0;
+            }
+            
+            // Re-filter jobs
+            self.filter_jobs();
+            return true;
+        }
+        
+        false
+    }
+    
+    pub fn get_all_data_source_names(&self) -> Vec<String> {
+        let mut names = vec!["Live Data".to_string()];
+        for ds in &self.imported_data_sources {
+            names.push(ds.name.clone());
+        }
+        names
+    }
+    
+    fn parse_job_from_json(&self, job_data: &Value) -> Result<Job, String> {
+        use crate::models::data_structure::job::JobState;
+        use crate::models::data_structure::resource::ResourceState;
+        
+        let id = job_data.get("id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0) as u32;
+            
+        let owner = job_data.get("owner")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+            
+        let state_str = job_data.get("state")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+            
+        let state = match state_str {
+            "Running" => JobState::Running,
+            "Waiting" => JobState::Waiting,
+            "Terminated" => JobState::Terminated,
+            "Error" => JobState::Error,
+            _ => JobState::Unknown,
+        };
+        
+        let start_time = job_data.get("start_time")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+            
+        let walltime = job_data.get("walltime")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+            
+        let stop_time = job_data.get("stop_time")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(start_time + walltime);
+            
+        let command = job_data.get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+            
+        let queue = job_data.get("queue_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+            
+        // Extract hosts from network_address
+        let hosts = if let Some(network_addr) = job_data.get("network_address") {
+            if let Some(hosts_array) = network_addr.as_array() {
+                hosts_array.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        
+        // Extract clusters from properties or hosts
+        let clusters = if let Some(properties) = job_data.get("properties") {
+            if let Some(props_str) = properties.as_str() {
+                // Extract cluster name from properties like "cluster='vercors18'"
+                if let Some(start) = props_str.find("cluster='") {
+                    if let Some(end) = props_str[start + 9..].find('\'') {
+                        let cluster_name = &props_str[start + 9..start + 9 + end];
+                        vec![cluster_name.to_string()]
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        
+        Ok(Job {
+            id,
+            owner,
+            state,
+            scheduled_start: start_time,
+            walltime,
+            hosts,
+            clusters,
+            command,
+            message: None,
+            queue,
+            assigned_resources: Vec::new(),
+            submission_time: start_time,
+            start_time,
+            stop_time,
+            exit_code: None,
+            gantt_color: egui::Color32::TRANSPARENT,
+            main_resource_state: ResourceState::Unknown,
+        })
+    }
+    
+    pub fn get_current_jobs(&self) -> &[Job] {
+        if self.current_data_source_index == 0 {
+            &self.all_jobs
+        } else {
+            self.imported_data_sources
+                .get(self.current_data_source_index - 1)
+                .map(|ds| &ds.jobs)
+                .unwrap_or(&self.all_jobs)
+        }
+    }
+    
+    pub fn get_current_clusters(&self) -> &Vec<Cluster> {
+        if self.current_data_source_index == 0 {
+            &self.all_clusters
+        } else {
+            self.imported_data_sources
+                .get(self.current_data_source_index - 1)
+                .map(|ds| &ds.clusters)
+                .unwrap_or(&self.all_clusters)
+        }
+    }
 }
 
 impl Default for ApplicationContext {
@@ -711,6 +975,10 @@ impl Default for ApplicationContext {
 
             theme_toggle_requested: false,
             cluster_presets: Vec::new(),
+            
+            imported_data_sources: Vec::new(),
+            current_data_source_index: 0, // Start with live data
+            request_file_import: false,
         };
         
         // populate presets from disk if available

@@ -230,7 +230,7 @@ impl GanttChart {
         // Navigation rapide dans la timeline
         let base_font = TextStyle::Body.resolve(ui.style());
         let gutter_width =
-            compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
+            compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.get_current_clusters());
         let fallback_usable_width = (ui.available_width() - gutter_width).max(1.0);
         let canvas_usable_width = if self.last_canvas_usable_width_px > 1.0 {
             self.last_canvas_usable_width_px
@@ -291,27 +291,27 @@ impl View for GanttChart {
             .map(|preset| preset.clusters.clone());
 
         let all_hosts = if let Some(cluster_names) = &selected_cluster_names {
-            app.all_clusters.iter()
+            app.get_current_clusters().iter()
                 .filter(|c| cluster_names.contains(&c.name))
                 .flat_map(|c| get_all_hosts(&vec![c.clone()]))
                 .collect()
         } else {
-            get_all_hosts(&app.all_clusters)
+            get_all_hosts(&app.get_current_clusters())
         };
 
         let all_clusters = if let Some(cluster_names) = &selected_cluster_names {
             cluster_names.clone()
         } else {
-            get_all_clusters(&app.all_clusters)
+            get_all_clusters(&app.get_current_clusters())
         };
 
         let all_resources = if let Some(cluster_names) = &selected_cluster_names {
-            app.all_clusters.iter()
+            app.get_current_clusters().iter()
                 .filter(|c| cluster_names.contains(&c.name))
                 .flat_map(|c| get_all_resources(&vec![c.clone()]))
                 .collect()
         } else {
-            get_all_resources(&app.all_clusters)
+            get_all_resources(&app.get_current_clusters())
         };
 
         app.all_jobs.push(Job {
@@ -394,7 +394,7 @@ impl View for GanttChart {
                             ui.separator();
                             ui.label("Clusters to include");
                             ui.vertical(|ui| {
-                                for cluster in &app.all_clusters {
+                                for cluster in app.get_current_clusters() {
                                     let mut checked = self
                                         .admin_selected_clusters
                                         .contains(&cluster.name);
@@ -481,7 +481,7 @@ impl View for GanttChart {
 
                     let base_font = TextStyle::Body.resolve(ui.style());
                     let gutter_width =
-                        compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
+                        compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.get_current_clusters());
 
                     let info = Info {
                         ctx: ui.ctx().clone(),
@@ -614,7 +614,7 @@ impl View for GanttChart {
                             "Cluster: Tous",
                         );
         
-                        for cluster in get_all_clusters(&app.all_clusters) {
+                        for cluster in get_all_clusters(&app.get_current_clusters()) {
                             ui.selectable_value(
                                 &mut self.energy_filter_cluster,
                                 Some(cluster.clone()),

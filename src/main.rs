@@ -1,6 +1,7 @@
 mod app;
 mod models;
 mod views;
+mod file_import;
 
 #[macro_use]
 extern crate rust_i18n;
