@@ -37,59 +37,6 @@ impl View for Tools {
 }
 
 impl Tools {
-    pub fn render_data_source_tabs(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        let data_source_names = app.get_all_data_source_names();
-        let current_index = app.current_data_source_index;
-        
-        ui.horizontal(|ui| {
-            for (index, name) in data_source_names.iter().enumerate() {
-                let is_active = index == current_index;
-                let can_close = index != 0; // Cannot close live data tab
-                
-                // Tab button styling
-                let tab_color = if is_active {
-                    ui.visuals().widgets.active.bg_fill
-                } else {
-                    ui.visuals().widgets.inactive.bg_fill
-                };
-                
-                let tab_text = if is_active {
-                    egui::RichText::new(name).strong()
-                } else {
-                    egui::RichText::new(name)
-                };
-                
-                let mut tab_button = egui::Button::new(tab_text)
-                    .fill(tab_color)
-                    .frame(true);
-                
-                if is_active {
-                    tab_button = tab_button.stroke(egui::Stroke::new(1.0, ui.visuals().widgets.active.bg_stroke.color));
-                }
-                
-                ui.horizontal(|ui| {
-                    if ui.add(tab_button).clicked() {
-                        app.switch_to_data_source(index);
-                    }
-                    
-                    // Close button for imported tabs
-                    if can_close {
-                        ui.add_space(-4.0); // Reduce spacing between tab and close button
-                        let close_btn = egui::Button::new("×")
-                            .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::new(1.0, ui.visuals().text_color()));
-                        
-                        if ui.add(close_btn).clicked() {
-                            app.close_imported_data_source(index);
-                        }
-                    }
-                });
-                
-                ui.add_space(4.0);
-            }
-        });
-    }
-    
     pub fn render_with_gantt(
         &mut self,
         ui: &mut egui::Ui,
@@ -168,10 +115,7 @@ impl Tools {
                 self.filtering_pane.open();
             }
 
-            // Data Source Tabs
-            ui.add_space(8.0);
-            self.render_data_source_tabs(ui, app);
-
+            
             // Gantt-specific controls are part of this 2nd line.
             if let Some(gantt) = gantt.as_deref_mut() {
                 gantt.render_compact_toolbar(ui, app);
