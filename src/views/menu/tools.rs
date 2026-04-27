@@ -115,6 +115,7 @@ impl Tools {
                 self.filtering_pane.open();
             }
 
+            
             // Gantt-specific controls are part of this 2nd line.
             if let Some(gantt) = gantt.as_deref_mut() {
                 gantt.render_compact_toolbar(ui, app);
@@ -182,8 +183,8 @@ impl Tools {
             if has_gantt {
                 use std::collections::HashSet;
 
-                let total_clusters = app.all_clusters.len();
-                let total_hosts: usize = app.all_clusters.iter().map(|c| c.hosts.len()).sum();
+                let total_clusters = app.get_current_clusters().len();
+                let total_hosts: usize = app.get_current_clusters().iter().map(|c| c.hosts.len()).sum();
 
                 let mut displayed_clusters: HashSet<String> = HashSet::new();
                 let mut displayed_hosts: HashSet<String> = HashSet::new();

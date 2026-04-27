@@ -42,6 +42,14 @@ impl View for Menu {
             ui.menu_button(t!("app.menu.file"), |ui| {
                 ui.set_max_width(200.0);
                 ui.vertical(|ui| {
+                    // Import File option
+                    if ui.button("📁 Import File").clicked() {
+                        app.request_file_import = true;
+                        ui.close_menu();
+                    }
+                    
+                    ui.separator();
+
                     if app.user_connected.is_some() {
                         ui.label(t!(
                             "app.menu.connected_as",
@@ -57,6 +65,7 @@ impl View for Menu {
                         }
                     }
 
+                    ui.separator();
                     if ui.button(t!("app.menu.quit")).clicked() {
                         std::process::exit(0);
                     }

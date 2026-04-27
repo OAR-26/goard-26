@@ -261,29 +261,211 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
     }
 }
 
+/// A single painted job row entry, collected during the row-paint loop and
+/// later used to derive cross-row label blocks.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PaintedJobRow {
+    job_id:  u32,
+    /// Canonical time interval — used as the grouping key so two rows that
+    /// both carry the same job id with identical start/stop are one block.
+    start_s: i64,
+    stop_s:  i64,
+    /// Top-left Y of the bar rectangle for this row.
+    row_y:   f32,
+    /// Row-level label used for contiguous grouping (hosts in the current mode).
+    row_label: String,
+    /// Original painted row index in the visible order.
+    row_index: usize,
+}
+
+struct JobBlock<'a> {
+    job_id: u32,
+    start_s: i64,
+    stop_s: i64,
+    rows: Vec<&'a PaintedJobRow>,
+}
+
+fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow], rect_height: f32) -> Vec<JobBlock<'a>> {
+    use std::collections::HashMap;
+    
+    // First group by job_id, start_s, stop_s
+    let mut group_map: HashMap<(u32, i64, i64), Vec<&PaintedJobRow>> = HashMap::new();
+    
+    for row in rows.iter() {
+        let key = (row.job_id, row.start_s, row.stop_s);
+        group_map.entry(key).or_default().push(row);
+    }
+    
+    // Then create contiguity blocks within each group
+    let mut blocks = Vec::new();
+    for ((job_id, start_s, stop_s), group_rows) in group_map {
+        // Sort rows by row_y to maintain the order they appear in the left panel
+        let mut sorted_group: Vec<&PaintedJobRow> = group_rows;
+        sorted_group.sort_by(|a, b| a.row_y.partial_cmp(&b.row_y).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Break into contiguous sub-blocks based on host order
+        let mut i = 0;
+        while i < sorted_group.len() {
+            let first = sorted_group[i];
+            let mut j = i + 1;
+            
+            // Continue while hosts are contiguous (adjacent in sorted order)
+            while j < sorted_group.len() {
+                // Check if next host is adjacent to the current one in the sorted order
+                // This creates smaller blocks of contiguous hosts
+                if j < sorted_group.len() {
+                    let current_row = sorted_group[j - 1];
+                    let next_row = sorted_group[j];
+                    
+                    // Use pixel-based contiguity check using rectangle tops and bottoms
+                    // Check if rectangles are touching or very close
+                    let current_bottom = current_row.row_y + rect_height;
+                    let next_top = next_row.row_y;
+                    let vertical_gap = next_top - current_bottom;
+                    
+                    // If there's a gap larger than a small threshold, don't group them
+                    // This creates individual blocks for each host while keeping job ID printing
+                    if vertical_gap > 2.0 { // Small threshold for touching/overlapping rectangles
+                        break;
+                    }
+                }
+                j += 1;
+            }
+            
+            // Create a sub-block for this contiguous group
+            blocks.push(JobBlock {
+                job_id,
+                start_s,
+                stop_s,
+                rows: sorted_group[i..j].to_vec(),
+            });
+            
+            i = j;
+        }
+    }
+    
+    blocks
+}
+
+fn debug_print_job_blocks(blocks: &[JobBlock<'_>]) {
+    static PRINT_ONCE: std::sync::Once = std::sync::Once::new();
+    PRINT_ONCE.call_once(|| {
+        if blocks.is_empty() {
+            return;
+        }
+
+        // Calculate statistics for testing
+        let total_rectangles: usize = blocks.iter().map(|b| b.rows.len()).sum();
+        let total_ids: usize = blocks.len();
+        let total_blocks: usize = blocks.len();
+        
+        println!("=== DEBUG: Total rectangles={}, Total IDs={}, Total blocks={}", 
+                 total_rectangles, total_ids, total_blocks);
+        
+        // println!("=== START DRAWN JOB BLOCKS ===");
+        for block in blocks {
+            let host_names: Vec<String> = block.rows.iter().map(|r| r.row_label.clone()).collect();
+            // println!(
+            //     "drawn-label-block jobId={} start={} stop={} rows={} count={}",
+            //     block.job_id,
+            //     block.start_s,
+            //     block.stop_s,
+            //     host_names.join(", "),
+            //     block.rows.len()
+            // );
+        }
+        // println!("=== END DRAWN JOB BLOCKS ===");
+    });
+}
+
+/// Paint job-ID labels, one per contiguous vertical job block.
+/// Host splits are preserved in debug output, but the actual ID label is painted
+/// once for the contiguous same job-id block.
+///
+/// `rows` must be in top-to-bottom order (the order they were appended during
+/// the row-paint loop).
+pub(super) fn paint_job_id_labels(
+    info:    &Info,
+    options: &Options,
+    rows:    &[PaintedJobRow],
+) {
+    if rows.is_empty() {
+        return;
+    }
+
+    let chart_clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
+        pos2(info.canvas.max.x, info.canvas.max.y),
+    );
+
+    let height = options.rect_height.max(info.text_height);
+    let font   = FontId::proportional(12.0);
+
+    let blocks = collect_contiguous_job_blocks(rows, height);
+    debug_print_job_blocks(&blocks);
+
+    for block in blocks {
+        let start_x = info.point_from_s(options, block.start_s);
+        let end_x = info.point_from_s(options, block.stop_s);
+        let block_width = end_x - start_x;
+
+        let block_top = block.rows.first().unwrap().row_y;
+        let block_bottom = block.rows.last().unwrap().row_y + height;
+
+        if block_width > 30.0 {
+            let center_x = (start_x + end_x) / 2.0;
+            let center_y = (block_top + block_bottom) / 2.0;
+
+            let block_rect = Rect::from_min_max(
+                pos2(start_x, block_top),
+                pos2(end_x,   block_bottom),
+            )
+            .intersect(chart_clip_rect);
+
+            if !block_rect.is_negative() {
+                // Center the job ID within the visible portion of the rectangle
+                let visible_center_x = block_rect.center().x;
+                let visible_center_y = block_rect.center().y;
+                
+                info.painter
+                    .with_clip_rect(block_rect)
+                    .text(
+                        pos2(visible_center_x, visible_center_y),
+                        Align2::CENTER_CENTER,
+                        format!("{}", block.job_id),
+                        font.clone(),
+                        Color32::BLACK,
+                    );
+            }
+        }
+    }
+}
+
 pub(super) fn paint_aggregated_jobs_level_1<'a>(
     info: &Info,
     options: &mut Options,
     jobs: BTreeMap<String, Vec<&'a Job>>,
     mut cursor_y: f32,
     details_window: &mut Vec<JobDetailsWindow>,
-    collapsed_jobs: &mut BTreeMap<String, bool>,
+    collapsed_jobs_level_1: &mut BTreeMap<String, bool>,
     font_size: i32,
     all_cluster: &Vec<Cluster>,
-    aggregate_by: AggregateByLevel1Enum,
+    aggregate_by_level_1: AggregateByLevel1Enum,
     gutter_width: f32,
     app: &ApplicationContext,
-) -> f32 {
+) -> (f32, Vec<PaintedJobRow>) {
     let theme_colors = get_theme_colors(&info.ctx.style());
 
     let compact = options.compact_rows;
     let row_height = options.rect_height.max(info.text_height);
 
-    let spacing_between_level_1 = if compact { 0.0 } else { font_size as f32 * 0.25 };
+    let spacing_between_level_1 = 0.0;
     let spacing_between_jobs = 0.0;
-    let offset_level_1 = if compact { 0.0 } else { 6.0 };
+    let offset_level_1 = 0.0;
+    let aggregate_by = &options.aggregate_by;
 
     cursor_y += spacing_between_level_1;
+    let mut painted_rows: Vec<PaintedJobRow> = Vec::new();
 
     let mut sorted_level_1: Vec<String> = jobs.keys().cloned().collect();
     sorted_level_1.sort_by(|a, b| compare_string_with_number(a, b));
@@ -307,9 +489,9 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
 
         let text_pos = pos2(info.canvas.min.x + 6.0, cursor_y + info.text_height * 0.5);
 
-        let is_collapsed = collapsed_jobs.entry(level_1.clone()).or_insert(false);
+        let is_collapsed = collapsed_jobs_level_1.entry(level_1.clone()).or_insert(false);
         *is_collapsed = false;
-        let label_meta = build_label_meta_level1(&level_1, aggregate_by, all_cluster);
+        let label_meta = build_label_meta_level1(&level_1, aggregate_by_level_1, all_cluster);
 
         paint_job_info(
             info,
@@ -326,15 +508,15 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
 
         cursor_y += spacing_between_level_1;
 
-        let state = if aggregate_by == AggregateByLevel1Enum::Owner {
+        let state = if aggregate_by_level_1 == AggregateByLevel1Enum::Owner {
             ResourceState::Alive
-        } else if aggregate_by == AggregateByLevel1Enum::Host {
+        } else if aggregate_by_level_1 == AggregateByLevel1Enum::Host {
             get_host_state_from_name(all_cluster, &level_1)
         } else {
             get_cluster_state_from_name(all_cluster, &level_1)
         };
 
-        let resource_label_for_state_tooltip = match aggregate_by {
+        let resource_label_for_state_tooltip = match aggregate_by_level_1 {
             AggregateByLevel1Enum::Host | AggregateByLevel1Enum::Cluster => Some(level_1.as_str()),
             AggregateByLevel1Enum::Owner => None,
         };
@@ -357,14 +539,14 @@ pub(super) fn paint_aggregated_jobs_level_1<'a>(
             }
 
             if !job_list.is_empty() {
-                cursor_y += row_height + spacing_between_jobs + options.spacing;
+                cursor_y += row_height + spacing_between_jobs;
             }
             cursor_y += spacing_between_level_1;
         }
         cursor_y += spacing_between_level_1;
     }
 
-    cursor_y
+    (cursor_y, painted_rows)
 }
 
 pub(super) fn paint_aggregated_jobs_level_2<'a>(
@@ -381,7 +563,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
     aggregate_by_level_2: AggregateByLevel2Enum,
     gutter_width: f32,
     app: &ApplicationContext,
-) -> f32 {
+) -> (f32, Vec<PaintedJobRow>) {
     let theme_colors = get_theme_colors(&info.ctx.style());
 
     let compact = options.compact_rows;
@@ -415,16 +597,20 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
     }
 
     let mut grid5000_host_rows: Vec<GanttGutterHostRow> = Vec::new();
+    // Collect one entry per (row, job) in top-to-bottom order for cross-row label grouping.
+    let mut painted_rows: Vec<PaintedJobRow> = Vec::new();
 
 
     let mut grid5000_cluster_spans: Vec<GanttGutterSpan> = Vec::new();
     let mut grid5000_site_spans: Vec<GanttGutterSpan> = Vec::new();
     let mut current_site: Option<(String, f32, f32)> = None;
 
-    let spacing_between_level_1 = if compact { 0.0 } else { font_size as f32 * 0.25 };
-    let spacing_between_level_2 = if compact { 0.0 } else { font_size as f32 * 0.35 };
+    let spacing_between_level_1 = 0.0;
+    let spacing_between_level_2 = 0.0;
     let spacing_between_jobs = 0.0;
-    let offset_level_1 = if compact { 0.0 } else { 6.0 };
+    let offset_level_1 = 0.0;
+    let is_grid5000 = aggregate_by_level_1 == AggregateByLevel1Enum::Cluster
+        && aggregate_by_level_2 == AggregateByLevel2Enum::Host;
 
     cursor_y += spacing_between_level_1;
 
@@ -432,6 +618,13 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
     sorted_level_1.sort_by(|a, b| compare_string_with_number(a, b));
 
     let chart_x0 = info.canvas.min.x + gutter_width;
+    let font_host = FontId::proportional((info.font_id.size).max(11.0));
+    let label_w = (gutter_width - gutter_g5k_total_w()).max(1.0);
+    let c_text = theme_colors.text;
+    let c_site = Color32::from_rgb(252, 238, 170);
+    let c_cluster = Color32::from_rgb(245, 227, 113);
+    let c_host = Color32::from_rgb(235, 215, 110);
+    let gutter_painter = info.painter.clone();
 
     for level_1 in sorted_level_1 {
         let level_1_section_top = cursor_y;
@@ -543,7 +736,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     );
 
                     if hide_level_1_headers {
-                        let extra_pad = if compact { 2.0 } else { 10.0 };
+                        let extra_pad = 0.0;
                         let row_height = options.rect_height.max(info.text_height + extra_pad);
                         let row_rect = Rect::from_min_max(
                             pos2(info.canvas.min.x, row_center_y - row_height * 0.5),
@@ -600,7 +793,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                         let aligned_y = if compact {
                             cursor_y
                         } else {
-                            cursor_y - options.rect_height * 0.5
+                            cursor_y - options.rect_height.max(info.text_height) * 0.5
                         };
                         let job_row_y = aligned_y;
 
@@ -632,16 +825,28 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                             );
                         }
 
+                        // Collect each job on this row for cross-row label grouping.
+                        let mut row_jobs: Vec<&Job> = job_list.iter().map(|j| *j).collect();
+                        row_jobs.sort_by_key(|j| (j.scheduled_start, j.stop_time));
+                        let row_label = if aggregate_by_level_2 == AggregateByLevel2Enum::Host {
+                            level_2.clone()
+                        } else {
+                            level_1.clone()
+                        };
+                        for job in &row_jobs {
+                            let stop_s = if job.stop_time > 0 { job.stop_time } else { job.scheduled_start + job.walltime };
+                            painted_rows.push(PaintedJobRow {
+                                job_id: job.id,
+                                start_s: job.scheduled_start,
+                                stop_s,
+                                row_y: job_row_y,
+                                row_label: row_label.clone(),
+                                row_index: painted_rows.len(),
+                            });
+                        }
+
                         if !job_list.is_empty() {
-                            let row_spacing = if compact
-                                && aggregate_by_level_1 == AggregateByLevel1Enum::Host
-                                && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
-                            {
-                                0.0
-                            } else {
-                                options.spacing
-                            };
-                            cursor_y += row_height + spacing_between_jobs + row_spacing;
+                            cursor_y += row_height + spacing_between_jobs;
                         }
                     }
                     cursor_y += spacing_between_level_2;
@@ -705,43 +910,8 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
 
     }
 
-    if hide_level_1_headers {
-        if let Some((_label, top, bottom)) = current_site.take() {
-            grid5000_site_spans.push(GanttGutterSpan {
-                top,
-                bottom,
-            });
-        }
-    }
-
-    if hide_level_1_headers {
-        let gutter_clip = Rect::from_min_max(
-            info.canvas.min,
-            pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
-        );
-        let gutter_painter = info.painter.with_clip_rect(gutter_clip);
-
-        let font_host = FontId::proportional((info.font_id.size).max(11.0));
-
-        let stripes_w = gutter_g5k_total_w();
-        let label_w = (gutter_width - stripes_w).max(1.0);
-        let stripes_x0 = info.canvas.min.x + label_w;
-        let c_text = theme_colors.text;
-
-        let c_site = Color32::from_rgb(252, 238, 170);
-        let c_cluster = Color32::from_rgb(245, 227, 113);
-        let c_host = Color32::from_rgb(235, 215, 110);
-
-        let border = Stroke::new(1.0, Color32::BLACK);
-        let inset = 0.5; 
-
-        let site_x0 = stripes_x0;
-        let site_x1 = stripes_x0 + GUTTER_G5K_SITE_W;
-        let cluster_x0 = site_x1;
-        let cluster_x1 = cluster_x0 + GUTTER_G5K_CLUSTER_W;
-        let host_x0 = cluster_x1;
-        let host_x1 = host_x0 + GUTTER_G5K_HOST_W;
-
+    // Paint Grid5000 gutter stripes and host labels
+    if is_grid5000 && !grid5000_host_rows.is_empty() {
         let stripes_top = grid5000_host_rows
             .first()
             .map(|r| r.row_rect.min.y)
@@ -750,6 +920,16 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
             .last()
             .map(|r| r.row_rect.max.y)
             .unwrap_or(info.canvas.max.y);
+
+        let border = Stroke::new(1.0, Color32::BLACK);
+        let inset = 0.5; 
+
+        let site_x0 = info.canvas.min.x + label_w;
+        let site_x1 = site_x0 + GUTTER_G5K_SITE_W;
+        let cluster_x0 = site_x1;
+        let cluster_x1 = cluster_x0 + GUTTER_G5K_CLUSTER_W;
+        let host_x0 = cluster_x1;
+        let host_x1 = host_x0 + GUTTER_G5K_HOST_W;
 
         for span in &grid5000_site_spans {
             if (span.bottom - span.top) <= 0.0 {
@@ -786,6 +966,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     .hovered_grid5000_host
                     .as_deref()
                     .map_or(false, |h| h == row.host_full.trim());
+
                 let show_hover_marker = is_hovered || is_job_host_hovered;
 
                 // Host stripe per row
@@ -816,6 +997,7 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                     font_host.clone(),
                     c_text,
                 );
+
                 if is_hovered {
                     info.ctx.set_cursor_icon(CursorIcon::PointingHand);
                     let layer_id = egui::LayerId::new(
@@ -931,16 +1113,6 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
         );
         gutter_painter.rect_stroke(stripes_rect, 0.0, border);
 
-        let right_border = Stroke::new(2.0, Color32::BLACK);
-        let right_x = host_x1 - 1.0; 
-        gutter_painter.line_segment(
-            [
-                pos2(right_x, stripes_top + inset),
-                pos2(right_x, stripes_bottom - inset),
-            ],
-            right_border,
-        );
-
         gutter_painter.line_segment(
             [
                 pos2(site_x1, stripes_top + inset),
@@ -975,17 +1147,22 @@ pub(super) fn paint_aggregated_jobs_level_2<'a>(
                 );
             }
         }
+
+        let right_border = Stroke::new(2.0, Color32::BLACK);
+        let right_x = host_x1 - 1.0; 
+        gutter_painter.line_segment(
+            [
+                pos2(right_x, stripes_top + inset),
+                pos2(right_x, stripes_bottom - inset),
+            ],
+            right_border,
+        );
     }
 
-    cursor_y
+    // Note: paint_job_id_labels is called once at the end in canvas.rs to avoid duplicates
+    (cursor_y, painted_rows)
 }
 
-#[derive(PartialEq)]
-enum PaintResult {
-    Culled,
-    Painted,
-    Hovered,
-}
 
 fn paint_job(
     info: &Info,
@@ -1017,7 +1194,7 @@ fn paint_job(
         return PaintResult::Culled;
     }
 
-    let height = options.rect_height;
+    let height = options.rect_height.max(info.text_height);
     let rounding = options.rounding;
 
     let rect = Rect::from_min_size(pos2(start_x, top_y), egui::vec2(width.max(options.min_width), height));
@@ -1152,22 +1329,16 @@ fn paint_job(
         }
 
         chart_painter.extend(shapes);
-
-        if is_hachure_hovered {
-            options.current_hovered_resource_state = Some(state.clone());
-            if let Some(label) = resource_label_for_state_tooltip {
-                if !label.trim().is_empty() {
-                    options.current_hovered_resource_label = Some(label.to_string());
-                }
-            }
-        }
     }
 
-    if is_job_hovered {
-        PaintResult::Hovered
-    } else {
-        PaintResult::Painted
-    }
+    PaintResult::Painted
+}
+
+#[derive(PartialEq)]
+enum PaintResult {
+    Culled,
+    Painted,
+    Hovered,
 }
 
 fn paint_job_info(
@@ -1198,7 +1369,7 @@ fn paint_job_info(
         };
 
         let indent = if level == 1 { 0.0 } else { 8.0 };
-        let extra_pad = if compact { 2.0 } else { 10.0 };
+        let extra_pad = 0.0;
         let bar_height = bar_height_hint.max(info.text_height + extra_pad);
         let top = pos.y - bar_height * 0.5;
         let left = info.canvas.min.x + 2.0 + indent;

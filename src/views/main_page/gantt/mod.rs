@@ -172,6 +172,65 @@ impl Default for GanttChart {
 }
 
 impl GanttChart {
+    pub fn render_data_source_tabs(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        ui.add_space(4.0);
+        
+        let data_source_names = app.get_all_data_source_names();
+        let current_index = app.current_data_source_index;
+        
+        ui.horizontal(|ui| {
+            for (index, name) in data_source_names.iter().enumerate() {
+                let is_active = index == current_index;
+                let can_close = index != 0; // Cannot close live data tab
+                
+                // Tab button styling
+                let tab_color = if is_active {
+                    ui.visuals().widgets.active.bg_fill
+                } else {
+                    ui.visuals().widgets.inactive.bg_fill
+                };
+                
+                let tab_text = if is_active {
+                    egui::RichText::new(name).strong()
+                } else {
+                    egui::RichText::new(name)
+                };
+                
+                let mut tab_button = egui::Button::new(tab_text)
+                    .fill(tab_color)
+                    .frame(true);
+                
+                if is_active {
+                    tab_button = tab_button.stroke(egui::Stroke::new(1.0, ui.visuals().widgets.active.bg_stroke.color));
+                }
+                
+                ui.horizontal(|ui| {
+                    if ui.add(tab_button).clicked() {
+                        app.switch_to_data_source(index);
+                    }
+                    
+                    // Close button for imported tabs
+                    if can_close {
+                        ui.add_space(-4.0); // Reduce spacing between tab and close button
+                        let close_btn = egui::Button::new("×")
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::new(1.0, ui.visuals().text_color()));
+                        
+                        if ui.add(close_btn).clicked() {
+                            app.close_imported_data_source(index);
+                        }
+                    }
+                });
+                
+                ui.add_space(4.0);
+            }
+        });
+        
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+    }
+    
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         // Initialise les bornes temporelles
         if self.initial_start_s.is_none() {
@@ -230,7 +289,7 @@ impl GanttChart {
         // Navigation rapide dans la timeline
         let base_font = TextStyle::Body.resolve(ui.style());
         let gutter_width =
-            compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
+            compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.get_current_clusters());
         let fallback_usable_width = (ui.available_width() - gutter_width).max(1.0);
         let canvas_usable_width = if self.last_canvas_usable_width_px > 1.0 {
             self.last_canvas_usable_width_px
@@ -278,61 +337,70 @@ impl GanttChart {
 
 impl View for GanttChart {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        // Render data source tabs above the Gantt chart
+        self.render_data_source_tabs(ui, app);
+        
         // La toolbar est gérée ailleurs ; ici on ne dessine que la vue principale
         if self.initial_start_s.is_none() {
             self.initial_start_s = Some(app.get_start_date().timestamp());
             self.initial_end_s = Some(app.get_end_date().timestamp());
         }
         // On régénère toujours le job "all_resources" en fonction du preset sélectionné
-        app.all_jobs.retain(|j| j.id != 0);
+        // NOTE: This should only affect live data, not imported data
+        if app.current_data_source_index == 0 {
+            app.all_jobs.retain(|j| j.id != 0);
+        }
 
         let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
             .and_then(|preset_name| app.cluster_presets.iter().find(|p| p.name == *preset_name))
             .map(|preset| preset.clusters.clone());
 
         let all_hosts = if let Some(cluster_names) = &selected_cluster_names {
-            app.all_clusters.iter()
+            app.get_current_clusters().iter()
                 .filter(|c| cluster_names.contains(&c.name))
                 .flat_map(|c| get_all_hosts(&vec![c.clone()]))
                 .collect()
         } else {
-            get_all_hosts(&app.all_clusters)
+            get_all_hosts(&app.get_current_clusters())
         };
 
         let all_clusters = if let Some(cluster_names) = &selected_cluster_names {
             cluster_names.clone()
         } else {
-            get_all_clusters(&app.all_clusters)
+            get_all_clusters(&app.get_current_clusters())
         };
 
         let all_resources = if let Some(cluster_names) = &selected_cluster_names {
-            app.all_clusters.iter()
+            app.get_current_clusters().iter()
                 .filter(|c| cluster_names.contains(&c.name))
                 .flat_map(|c| get_all_resources(&vec![c.clone()]))
                 .collect()
         } else {
-            get_all_resources(&app.all_clusters)
+            get_all_resources(&app.get_current_clusters())
         };
 
-        app.all_jobs.push(Job {
-            id: 0,
-            owner: "all_resources".to_string(),
-            state: JobState::Unknown,
-            scheduled_start: 0,
-            walltime: 0,
-            hosts: all_hosts,
-            clusters: all_clusters,
-            command: String::new(),
-            message: None,
-            queue: String::new(),
-            assigned_resources: all_resources,
-            submission_time: 0,
-            start_time: 0,
-            stop_time: 0,
-            exit_code: None,
-            gantt_color: egui::Color32::TRANSPARENT,
-            main_resource_state: ResourceState::Unknown,
-        });
+        // Add the "all_resources" job to the appropriate data source
+        if app.current_data_source_index == 0 {
+            app.all_jobs.push(Job {
+                id: 0,
+                owner: "all_resources".to_string(),
+                state: JobState::Unknown,
+                scheduled_start: 0,
+                walltime: 0,
+                hosts: all_hosts,
+                clusters: all_clusters,
+                command: String::new(),
+                message: None,
+                queue: String::new(),
+                assigned_resources: all_resources,
+                submission_time: 0,
+                start_time: 0,
+                stop_time: 0,
+                exit_code: None,
+                gantt_color: egui::Color32::TRANSPARENT,
+                main_resource_state: ResourceState::Unknown,
+            });
+        }
 
 
         // Panneau d’administration pour gérer les presets de clusters
@@ -394,7 +462,7 @@ impl View for GanttChart {
                             ui.separator();
                             ui.label("Clusters to include");
                             ui.vertical(|ui| {
-                                for cluster in &app.all_clusters {
+                                for cluster in app.get_current_clusters() {
                                     let mut checked = self
                                         .admin_selected_clusters
                                         .contains(&cluster.name);
@@ -481,7 +549,7 @@ impl View for GanttChart {
 
                     let base_font = TextStyle::Body.resolve(ui.style());
                     let gutter_width =
-                        compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.all_clusters);
+                        compute_gutter_width(ui.ctx(), &base_font, &self.options, app, &app.get_current_clusters());
 
                     let info = Info {
                         ctx: ui.ctx().clone(),
@@ -614,7 +682,7 @@ impl View for GanttChart {
                             "Cluster: Tous",
                         );
         
-                        for cluster in get_all_clusters(&app.all_clusters) {
+                        for cluster in get_all_clusters(&app.get_current_clusters()) {
                             ui.selectable_value(
                                 &mut self.energy_filter_cluster,
                                 Some(cluster.clone()),

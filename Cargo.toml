@@ -23,11 +23,13 @@ range-set-blaze = "0.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11"
+rfd = "0.15"
+native-dialog = "0.7"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3.70", features = ["Performance","Document", "Window", "Element"] }
+web-sys = { version = "0.3.70", features = ["Performance","Document", "Window", "Element", "HtmlInputElement", "File", "FileList", "Blob", "FileReader"] }
 js-sys = "0.3"
 log = "0.4"
 console_error_panic_hook = "0.1.7"
