@@ -346,7 +346,10 @@ impl View for GanttChart {
             self.initial_end_s = Some(app.get_end_date().timestamp());
         }
         // On régénère toujours le job "all_resources" en fonction du preset sélectionné
-        app.all_jobs.retain(|j| j.id != 0);
+        // NOTE: This should only affect live data, not imported data
+        if app.current_data_source_index == 0 {
+            app.all_jobs.retain(|j| j.id != 0);
+        }
 
         let selected_cluster_names: Option<Vec<String>> = app.filters.selected_preset.as_ref()
             .and_then(|preset_name| app.cluster_presets.iter().find(|p| p.name == *preset_name))
@@ -376,25 +379,28 @@ impl View for GanttChart {
             get_all_resources(&app.get_current_clusters())
         };
 
-        app.all_jobs.push(Job {
-            id: 0,
-            owner: "all_resources".to_string(),
-            state: JobState::Unknown,
-            scheduled_start: 0,
-            walltime: 0,
-            hosts: all_hosts,
-            clusters: all_clusters,
-            command: String::new(),
-            message: None,
-            queue: String::new(),
-            assigned_resources: all_resources,
-            submission_time: 0,
-            start_time: 0,
-            stop_time: 0,
-            exit_code: None,
-            gantt_color: egui::Color32::TRANSPARENT,
-            main_resource_state: ResourceState::Unknown,
-        });
+        // Add the "all_resources" job to the appropriate data source
+        if app.current_data_source_index == 0 {
+            app.all_jobs.push(Job {
+                id: 0,
+                owner: "all_resources".to_string(),
+                state: JobState::Unknown,
+                scheduled_start: 0,
+                walltime: 0,
+                hosts: all_hosts,
+                clusters: all_clusters,
+                command: String::new(),
+                message: None,
+                queue: String::new(),
+                assigned_resources: all_resources,
+                submission_time: 0,
+                start_time: 0,
+                stop_time: 0,
+                exit_code: None,
+                gantt_color: egui::Color32::TRANSPARENT,
+                main_resource_state: ResourceState::Unknown,
+            });
+        }
 
 
         // Panneau d’administration pour gérer les presets de clusters

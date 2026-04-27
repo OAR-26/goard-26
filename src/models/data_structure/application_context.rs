@@ -9,7 +9,7 @@ use crate::models::data_structure::resource::ResourceState;
 use crate::models::utils::utils::{get_clusters_for_job, get_hosts_for_job};
 use crate::views::components::dashboard_components::job_table_sorting::JobSortable;
 use crate::views::view::ViewType;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -633,13 +633,14 @@ impl ApplicationContext {
      * - Cluster resource filtering
      */
     pub fn filter_jobs(&mut self) {
+        let current_jobs = self.get_current_jobs();
+        
         // Determine the selected clusters from the preset, if any
         let selected_cluster_names: Option<Vec<String>> = self.filters.selected_preset.as_ref()
             .and_then(|preset_name| self.cluster_presets.iter().find(|p| p.name == *preset_name))
             .map(|preset| preset.clusters.clone());
 
-        self.filtered_jobs = self
-            .get_current_jobs()
+        self.filtered_jobs = current_jobs
             .iter()
             .filter(|job| {
                 job.id == 0
@@ -688,63 +689,326 @@ impl ApplicationContext {
 
     pub fn import_data_from_json(&mut self, json_str: &str, file_path: Option<String>) -> Result<(), String> {
         use serde_json::Value;
+        use crate::models::data_structure::strata::Strata;
+        use crate::models::data_structure::job::JobState;
+        use crate::models::utils::utils::{get_all_hosts, get_all_clusters, get_all_resources};
         
         let json_data: Value = serde_json::from_str(json_str)
             .map_err(|e| format!("Failed to parse JSON: {}", e))?;
         
-        // Parse jobs from JSON
+        // First, parse resources from JSON to build complete cluster hierarchy (like live data)
+        let mut imported_resources: Vec<Strata> = Vec::new();
+        if let Some(resources_array) = json_data.get("resources") {
+            if let Value::Array(resources) = resources_array {
+                for resource_data in resources {
+                    let resource: Strata = serde_json::from_value(resource_data.clone())
+                        .map_err(|e| format!("Failed to parse resource: {}", e))?;
+                    imported_resources.push(resource);
+                }
+            }
+        }
+        
+        // Build clusters from resource data (matching live data behavior)
+        let mut imported_clusters: Vec<Cluster> = Vec::new();
+        for resource in imported_resources.iter() {
+            let cluster_name = resource.cluster.as_ref().unwrap_or(&"".to_string()).clone();
+            if cluster_name == "" {
+                continue;
+            }
+            
+            // Check if cluster already exists
+            if !imported_clusters.iter().any(|cluster| cluster.name == cluster_name) {
+                // Add the cluster with one host being resource.host
+                let new_cluster = Cluster {
+                    name: cluster_name.clone(),
+                    hosts: vec![Host {
+                        name: resource.host.as_ref().unwrap_or(&"".to_string()).clone(),
+                        cpus: vec![Cpu {
+                            name: resource.cputype.as_ref().unwrap_or(&"".to_string()).clone(),
+                            resources: vec![Resource {
+                                id: resource.resource_id.unwrap_or(0),
+                                state: match resource
+                                    .state
+                                    .as_ref()
+                                    .unwrap_or(&"".to_string())
+                                    .as_str()
+                                {
+                                    "Dead" => super::resource::ResourceState::Dead,
+                                    "Alive" => super::resource::ResourceState::Alive,
+                                    "Absent" => super::resource::ResourceState::Absent,
+                                    _ => super::resource::ResourceState::Unknown,
+                                },
+                                thread_count: resource.thread_count.unwrap_or(0) as i32,
+                            }],
+                            core_count: resource.core_count.unwrap_or(0) as i32,
+                            cpufreq: resource
+                                .cpufreq
+                                .as_ref()
+                                .unwrap_or(&"".to_string())
+                                .parse::<f32>()
+                                .unwrap_or(0.0),
+                            chassis: resource
+                                .chassis
+                                .as_ref()
+                                .unwrap_or(&"".to_string())
+                                .clone(),
+                            resource_ids: vec![resource.resource_id.unwrap_or(0)],
+                        }],
+                        network_address: resource
+                            .network_address
+                            .as_ref()
+                            .unwrap_or(&"".to_string())
+                            .clone(),
+                        resource_ids: vec![resource.resource_id.unwrap_or(0)],
+                        state: super::resource::ResourceState::Unknown,
+                    }],
+                    resource_ids: vec![resource.resource_id.unwrap_or(0)],
+                    state: super::resource::ResourceState::Unknown,
+                };
+                imported_clusters.push(new_cluster);
+            } else {
+                // if the cluster already exists, check if the host exists and add the host if it doesn't
+                let cluster = imported_clusters
+                    .iter_mut()
+                    .find(|cluster| cluster.name == cluster_name)
+                    .unwrap();
+                let host_name = resource.host.as_ref().unwrap_or(&"".to_string()).clone();
+                if !cluster.hosts.iter().any(|host| {
+                    host.name == host_name
+                }) {
+                    cluster.hosts.push(Host {
+                        name: resource.host.as_ref().unwrap_or(&"".to_string()).clone(),
+                        cpus: vec![Cpu {
+                            name: resource.cputype.as_ref().unwrap_or(&"".to_string()).clone(),
+                            resources: vec![Resource {
+                                id: resource.resource_id.unwrap_or(0),
+                                state: match resource
+                                    .state
+                                    .as_ref()
+                                    .unwrap_or(&"".to_string())
+                                    .as_str()
+                                {
+                                    "Dead" => super::resource::ResourceState::Dead,
+                                    "Alive" => super::resource::ResourceState::Alive,
+                                    "Absent" => super::resource::ResourceState::Absent,
+                                    _ => super::resource::ResourceState::Unknown,
+                                },
+                                thread_count: resource.thread_count.unwrap_or(0) as i32,
+                            }],
+                            core_count: resource.core_count.unwrap_or(0) as i32,
+                            cpufreq: resource
+                                .cpufreq
+                                .as_ref()
+                                .unwrap_or(&"".to_string())
+                                .parse::<f32>()
+                                .unwrap_or(0.0),
+                            chassis: resource
+                                .chassis
+                                .as_ref()
+                                .unwrap_or(&"".to_string())
+                                .clone(),
+                            resource_ids: vec![resource.resource_id.unwrap_or(0)],
+                        }],
+                        network_address: resource
+                            .network_address
+                            .as_ref()
+                            .unwrap_or(&"".to_string())
+                            .clone(),
+                        resource_ids: vec![resource.resource_id.unwrap_or(0)],
+                        state: super::resource::ResourceState::Unknown,
+                    });
+                    // add the resource id to the cluster
+                    cluster.resource_ids.push(resource.resource_id.unwrap_or(0));
+                } else {
+                    // if the host already exists, check if the cpu exists and add the cpu if it doesn't
+                    let host = cluster
+                        .hosts
+                        .iter_mut()
+                        .find(|host| {
+                            host.name
+                                == resource.host.as_ref().unwrap_or(&"".to_string()).clone()
+                        })
+                        .unwrap();
+                    if !host.cpus.iter().any(|cpu| {
+                        cpu.name == resource.cputype.as_ref().unwrap_or(&"".to_string()).clone()
+                    }) {
+                        host.cpus.push(Cpu {
+                            name: resource.cputype.as_ref().unwrap_or(&"".to_string()).clone(),
+                            resources: vec![Resource {
+                                id: resource.resource_id.unwrap_or(0),
+                                state: match resource
+                                    .state
+                                    .as_ref()
+                                    .unwrap_or(&"".to_string())
+                                    .as_str()
+                                {
+                                    "Dead" => super::resource::ResourceState::Dead,
+                                    "Alive" => super::resource::ResourceState::Alive,
+                                    "Absent" => super::resource::ResourceState::Absent,
+                                    _ => super::resource::ResourceState::Unknown,
+                                },
+                                thread_count: resource.thread_count.unwrap_or(0) as i32,
+                            }],
+                            core_count: resource.core_count.unwrap_or(0) as i32,
+                            cpufreq: resource
+                                .cpufreq
+                                .as_ref()
+                                .unwrap_or(&"".to_string())
+                                .parse::<f32>()
+                                .unwrap_or(0.0),
+                            chassis: resource
+                                .chassis
+                                .as_ref()
+                                .unwrap_or(&"".to_string())
+                                .clone(),
+                            resource_ids: vec![resource.resource_id.unwrap_or(0)],
+                        });
+
+                        // add the resource id to the host and the cluster
+                        host.resource_ids.push(resource.resource_id.unwrap_or(0));
+                        cluster.resource_ids.push(resource.resource_id.unwrap_or(0));
+                    } else {
+                        // if the cpu already exists, add the resource to the cpu
+                        let cpu = host
+                            .cpus
+                            .iter_mut()
+                            .find(|cpu| {
+                                cpu.name
+                                    == resource
+                                        .cputype
+                                        .as_ref()
+                                        .unwrap_or(&"".to_string())
+                                        .clone()
+                            })
+                            .unwrap();
+                        cpu.resources.push(Resource {
+                            id: resource.resource_id.unwrap_or(0),
+                            state: match resource
+                                .state
+                                .as_ref()
+                                .unwrap_or(&"".to_string())
+                                .as_str()
+                            {
+                                "Dead" => super::resource::ResourceState::Dead,
+                                "Alive" => super::resource::ResourceState::Alive,
+                                "Absent" => super::resource::ResourceState::Absent,
+                                _ => super::resource::ResourceState::Unknown,
+                            },
+                            thread_count: resource.thread_count.unwrap_or(0) as i32,
+                        });
+
+                        // add the resource id to the cpu, the host and the cluster
+                        cpu.resource_ids.push(resource.resource_id.unwrap_or(0));
+                        host.resource_ids.push(resource.resource_id.unwrap_or(0));
+                        cluster.resource_ids.push(resource.resource_id.unwrap_or(0));
+                    }
+                }
+            }
+        }
+        
+        // Calculate host and cluster states based on their resources (matching live data behavior)
+        // For each host set its state to the state the most resources have
+        for cluster in imported_clusters.iter_mut() {
+            for host in cluster.hosts.iter_mut() {
+                let mut dead_count = 0;
+                let mut alive_count = 0;
+                let mut absent_count = 0;
+                for cpu in host.cpus.iter() {
+                    for resource in cpu.resources.iter() {
+                        match resource.state {
+                            ResourceState::Dead => dead_count += 1,
+                            ResourceState::Alive => alive_count += 1,
+                            ResourceState::Absent => absent_count += 1,
+                            _ => (),
+                        }
+                    }
+                }
+                if dead_count >= alive_count && dead_count >= absent_count {
+                    host.state = ResourceState::Dead;
+                } else if absent_count >= dead_count && absent_count >= alive_count {
+                    host.state = ResourceState::Absent;
+                } else if alive_count > dead_count && alive_count > absent_count {
+                    host.state = ResourceState::Alive;
+                } else {
+                    host.state = ResourceState::Unknown;
+                }
+            }
+        }
+
+        // For each cluster set its state to the state the most hosts have
+        for cluster in imported_clusters.iter_mut() {
+            let mut dead_count = 0;
+            let mut alive_count = 0;
+            let mut absent_count = 0;
+            for host in cluster.hosts.iter() {
+                match host.state {
+                    ResourceState::Dead => dead_count += 1,
+                    ResourceState::Alive => alive_count += 1,
+                    ResourceState::Absent => absent_count += 1,
+                    _ => (),
+                }
+            }
+            if dead_count >= alive_count && dead_count >= absent_count {
+                cluster.state = ResourceState::Dead;
+            } else if absent_count >= dead_count && absent_count >= alive_count {
+                cluster.state = ResourceState::Absent;
+            } else if alive_count > dead_count && alive_count > absent_count {
+                cluster.state = ResourceState::Alive;
+            } else {
+                cluster.state = ResourceState::Unknown;
+            }
+        }
+        
+        // Now parse jobs from JSON
         let mut imported_jobs = Vec::new();
         if let Some(jobs_obj) = json_data.get("jobs") {
             if let Value::Object(jobs_map) = jobs_obj {
                 for (_job_id, job_data) in jobs_map {
-                    let job = self.parse_job_from_json(job_data)?;
+                    let job = self.parse_job_from_json(&job_data)?;
                     imported_jobs.push(job);
                 }
             }
         }
         
-        // Extract clusters from jobs and populate them with hosts
-        let mut imported_clusters: Vec<Cluster> = Vec::new();
-        for job in &imported_jobs {
-            for cluster_name in &job.clusters {
-                let cluster = imported_clusters.iter_mut()
-                    .find(|c| c.name == *cluster_name);
-                
-                if let Some(existing_cluster) = cluster {
-                    // Add hosts from this job to the existing cluster
-                    for host_name in &job.hosts {
-                        if !existing_cluster.hosts.iter().any(|h| h.name == *host_name) {
-                            existing_cluster.hosts.push(crate::models::data_structure::host::Host {
-                                name: host_name.clone(),
-                                cpus: Vec::new(),
-                                network_address: host_name.clone(),
-                                resource_ids: Vec::new(),
-                                state: crate::models::data_structure::resource::ResourceState::Alive,
-                            });
-                        }
-                    }
-                } else {
-                    // Create new cluster with hosts from this job
-                    let mut hosts = Vec::new();
-                    for host_name in &job.hosts {
-                        hosts.push(crate::models::data_structure::host::Host {
-                            name: host_name.clone(),
-                            cpus: Vec::new(),
-                            network_address: host_name.clone(),
-                            resource_ids: Vec::new(),
-                            state: crate::models::data_structure::resource::ResourceState::Alive,
-                        });
-                    }
-                    
-                    imported_clusters.push(Cluster {
-                        name: cluster_name.clone(),
-                        hosts,
-                        resource_ids: Vec::new(),
-                        state: crate::models::data_structure::resource::ResourceState::Alive,
-                    });
-                }
+        // Update job clusters and hosts based on the imported clusters (matching live data behavior)
+        for job in imported_jobs.iter_mut() {
+            // Store original clusters/hosts before processing
+            let original_clusters = job.clusters.clone();
+            let original_hosts = job.hosts.clone();
+            
+            job.clusters = get_clusters_for_job(job, &imported_clusters);
+            job.hosts = get_hosts_for_job(job, &imported_clusters);
+            job.update_majority_resource_state(&imported_clusters);
+            
+            // Debug message for jobs without resources (skip empty hosts)
+            if job.assigned_resources.is_empty() && !original_hosts.is_empty() && !original_hosts.iter().any(|h| h.is_empty()) {
+                println!("DEBUG: Job {} keeping JSON-parsed clusters: {:?}, hosts: {:?}", job.id, original_clusters, original_hosts);
             }
         }
+        
+        // Add the "all_resources" job to imported data (matching live data behavior)
+        let all_hosts = get_all_hosts(&imported_clusters);
+        let all_clusters = get_all_clusters(&imported_clusters);
+        let all_resources = get_all_resources(&imported_clusters);
+        imported_jobs.push(Job {
+            id: 0,
+            owner: "all_resources".to_string(),
+            state: JobState::Unknown,
+            scheduled_start: 0,
+            walltime: 0,
+            hosts: all_hosts,
+            clusters: all_clusters,
+            command: String::new(),
+            message: None,
+            queue: String::new(),
+            assigned_resources: all_resources,
+            submission_time: 0,
+            start_time: 0,
+            stop_time: 0,
+            exit_code: None,
+            gantt_color: egui::Color32::TRANSPARENT,
+            main_resource_state: ResourceState::Unknown,
+        });
         
         // Create a unique name for this data source
         let base_name = file_path
@@ -801,9 +1065,50 @@ impl ApplicationContext {
         } else if let Some(_) = self.imported_data_sources.get(index - 1) {
             // Imported data source
             self.current_data_source_index = index;
+        } else {
+            return;
         }
-        // Re-filter jobs with the new data source
+        // Get the jobs for the current data source and collect needed data
+        let jobs: Vec<Job> = self.get_current_jobs().to_vec();
+        let jobs_count = jobs.len();
+        
+        // Adjust time range for imported data to show all jobs
+        if index != 0 && !jobs.is_empty() {
+            // Find min and max timestamps from imported jobs
+            let mut min_time = i64::MAX;
+            let mut max_time = i64::MIN;
+            
+            for job in jobs.iter().filter(|j| j.id != 0) {
+                let job_start = job.start_time;
+                let job_end = job.get_end_date();
+                min_time = min_time.min(job_start).min(job_end);
+                max_time = max_time.max(job_start).max(job_end);
+            }
+            
+            if min_time != i64::MAX && max_time != i64::MIN {
+                // Set time range to encompass all imported jobs with some padding
+                let padding = (max_time - min_time) / 10; // 10% padding on each side
+                let start_time = Local.timestamp_opt(min_time - padding, 0).unwrap();
+                let end_time = Local.timestamp_opt(max_time + padding, 0).unwrap();
+                self.set_localdate(start_time, end_time);
+            }
+        }
+        
+        // Re-filter jobs
         self.filter_jobs();
+        
+        // Simple debug output
+        let clusters = self.get_current_clusters();
+        let host_count: usize = clusters.iter().map(|c| c.hosts.len()).sum();
+        println!("Tab switched: {} clusters, {} hosts, {} jobs", 
+                clusters.len(), host_count, jobs_count);
+        
+        // Print all job details for debugging
+        for job in jobs.iter().filter(|j| j.id != 0) {
+            println!("Job: ID={}, clusters={:?}, hosts={:?}, start={}, stop={}", 
+                    job.id, job.clusters, job.hosts, job.start_time, job.stop_time);
+            println!("Job assigned_resources: {:?}", job.assigned_resources);
+        }
     }
     
     pub fn close_imported_data_source(&mut self, index: usize) -> bool {
@@ -922,6 +1227,20 @@ impl ApplicationContext {
             Vec::new()
         };
         
+        // Extract assigned_resources from resource_id array
+        let assigned_resources = if let Some(resources) = job_data.get("resource_id") {
+            if let Some(resources_array) = resources.as_array() {
+                resources_array.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|s| s.parse::<u32>().ok())
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        
         Ok(Job {
             id,
             owner,
@@ -933,7 +1252,7 @@ impl ApplicationContext {
             command,
             message: None,
             queue,
-            assigned_resources: Vec::new(),
+            assigned_resources,
             submission_time: start_time,
             start_time,
             stop_time,
