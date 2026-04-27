@@ -979,11 +979,6 @@ impl ApplicationContext {
             job.clusters = get_clusters_for_job(job, &imported_clusters);
             job.hosts = get_hosts_for_job(job, &imported_clusters);
             job.update_majority_resource_state(&imported_clusters);
-            
-            // Debug message for jobs without resources (skip empty hosts)
-            if job.assigned_resources.is_empty() && !original_hosts.is_empty() && !original_hosts.iter().any(|h| h.is_empty()) {
-                println!("DEBUG: Job {} keeping JSON-parsed clusters: {:?}, hosts: {:?}", job.id, original_clusters, original_hosts);
-            }
         }
         
         // Add the "all_resources" job to imported data (matching live data behavior)
@@ -1096,19 +1091,6 @@ impl ApplicationContext {
         
         // Re-filter jobs
         self.filter_jobs();
-        
-        // Simple debug output
-        let clusters = self.get_current_clusters();
-        let host_count: usize = clusters.iter().map(|c| c.hosts.len()).sum();
-        println!("Tab switched: {} clusters, {} hosts, {} jobs", 
-                clusters.len(), host_count, jobs_count);
-        
-        // Print all job details for debugging
-        for job in jobs.iter().filter(|j| j.id != 0) {
-            println!("Job: ID={}, clusters={:?}, hosts={:?}, start={}, stop={}", 
-                    job.id, job.clusters, job.hosts, job.start_time, job.stop_time);
-            println!("Job assigned_resources: {:?}", job.assigned_resources);
-        }
     }
     
     pub fn close_imported_data_source(&mut self, index: usize) -> bool {
