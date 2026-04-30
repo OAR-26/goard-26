@@ -76,6 +76,7 @@ pub(super) fn ui_canvas(
             app,
             all_cluster,
             &mut all_painted_rows,
+            &[],
         );
 
         draw_stripe_borders(info, n_total, gutter_width, stripes_y_start, cursor_y);

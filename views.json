@@ -9,10 +9,10 @@
   },
   {
     "name": "Subnets",
-    "levels": ["slash_16", "slash_17", "slash_18", "slash_19", "slash_20", "slash_21", "slash_22", "subnet_address"]
+    "levels": ["site", "slash_16", "slash_17", "slash_18", "slash_19", "slash_20", "slash_21", "slash_22", "subnet_address"]
   },
   {
     "name": "Disks",
-    "levels": ["cluster", "host", "disk"]
+    "levels": ["site", "cluster", "host", "type", "disk"]
   }
 ]

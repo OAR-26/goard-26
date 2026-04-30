@@ -385,9 +385,87 @@ fn group_resource_paths<'a>(
     }).collect()
 }
 
+/// Resolve a single field value for a resource, with sibling-lookup enrichment.
+///
+/// Non-compute resource types (disks, kavlan, …) often lack `cluster`, `site`,
+/// or even `host` as direct fields.  For those we find the sibling compute node
+/// in `strata_by_host` (linked via `network_address`, `host`, or `nodeset`) and
+/// copy the missing value from there.
+fn resolve_field(
+    strata: &Strata,
+    field: &str,
+    strata_by_host: &std::collections::HashMap<String, Strata>,
+) -> String {
+    // Find the sibling compute-node strata via any host-linking field on the resource.
+    let sibling = || -> Option<&Strata> {
+        for key in [
+            strata.network_address.as_deref(),
+            strata.host.as_deref(),
+            strata.nodeset.as_deref(),
+        ].iter().flatten() {
+            let key = key.trim();
+            if key.is_empty() { continue; }
+            if let Some(h) = strata_by_host.get(key)
+                .or_else(|| strata_by_host.get(key.split('.').next().unwrap_or(key)))
+            {
+                return Some(h);
+            }
+        }
+        None
+    };
+
+    match field {
+        "host" | "network_address" => {
+            // Own fields first, then sibling's network_address for normalization.
+            strata.network_address.as_deref()
+                .or(strata.host.as_deref())
+                .or(strata.nodeset.as_deref())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| sibling()?.network_address.as_deref()
+                    .map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+                .unwrap_or_else(|| format!("(no {})", field))
+        }
+
+        "cluster" => {
+            // Own field → sibling compute node's cluster.
+            strata.cluster.as_deref().map(str::trim).filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| sibling()?.cluster.as_deref()
+                    .map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+                .unwrap_or_else(|| "(no cluster)".to_string())
+        }
+
+        "site" => {
+            // Derive from own FQDN first, then from sibling's FQDN.
+            let site_from = |fqdn: &str| -> Option<String> {
+                let s = fqdn.split('.').nth(1).unwrap_or("").trim();
+                if s.is_empty() { None } else { Some(s.to_string()) }
+            };
+            let own_fqdn = strata.network_address.as_deref()
+                .or(strata.host.as_deref())
+                .or(strata.nodeset.as_deref())
+                .unwrap_or("");
+            site_from(own_fqdn)
+                .or_else(|| {
+                    let sib = sibling()?;
+                    let fqdn = sib.network_address.as_deref()
+                        .or(sib.host.as_deref())
+                        .unwrap_or("");
+                    site_from(fqdn)
+                })
+                .unwrap_or_else(|| "(no site)".to_string())
+        }
+
+        _ => strata_field_string(strata, field),
+    }
+}
+
 /// Build a resource-first group tree.
-/// Every resource in `strata_by_resource_id` whose path contains no "(no X)"
-/// placeholder is included as a leaf row, even with zero jobs.
+/// Every resource in `strata_by_resource_id` whose LEAF-level field is present
+/// is included as a row, even with zero jobs.  Missing intermediate fields are
+/// derived where possible (e.g. cluster inferred from host lookup).
 /// Jobs are overlaid as a reverse lookup: resource_id → jobs.
 pub(super) fn build_resource_groups<'a>(
     app: &'a ApplicationContext,
@@ -413,12 +491,11 @@ pub(super) fn build_resource_groups<'a>(
 
     for (&rid, strata) in &app.strata_by_resource_id {
         let path: Vec<String> = levels.iter()
-            .map(|f| strata_field_string(strata, f))
+            .map(|f| resolve_field(strata, f, &app.strata_by_host))
             .collect();
-        // Skip resources that don't have the leaf-level field — they don't
-        // belong to this view.  Intermediate "(no X)" buckets are allowed so
-        // that e.g. disk resources without a cluster field still appear in the
-        // Disks view grouped under "(no cluster)".
+        // Skip if the leaf field is missing — the resource doesn't belong to
+        // this view.  Intermediate "(no X)" values are kept so resources still
+        // appear even when some grouping fields are absent.
         if path.last().map_or(true, |v| v.starts_with("(no ")) {
             continue;
         }
@@ -623,6 +700,8 @@ pub(super) fn draw_level_n<'a>(
     app: &ApplicationContext,
     all_clusters: &Vec<Cluster>,
     painted_rows: &mut Vec<PaintedJobRow>,
+    // Accumulated (field, value) pairs from ancestor levels, used for stripe tooltip.
+    path_context: &[(String, String)],
 ) -> f32 {
     let theme_colors = get_theme_colors(&info.ctx.style());
     let chart_x0 = info.canvas.min.x + gutter_width;
@@ -696,6 +775,9 @@ pub(super) fn draw_level_n<'a>(
 
             // ── n > 1: inner ─────────────────────────────────────────────────
             ResourceGroup::Inner(sub_groups) => {
+                let mut child_context = path_context.to_vec();
+                child_context.push((field.clone(), key.clone()));
+
                 cursor_y = draw_level_n(
                     info,
                     options,
@@ -711,6 +793,7 @@ pub(super) fn draw_level_n<'a>(
                     app,
                     all_clusters,
                     painted_rows,
+                    &child_context,
                 );
             }
         }
@@ -723,7 +806,32 @@ pub(super) fn draw_level_n<'a>(
                 pos2(stripe_x, span_top),
                 pos2(stripe_x + STRIPE_W, span_bottom),
             );
-            info.painter.rect_filled(stripe_rect, 0.0, s_color);
+
+            let is_hovered = info.response.hover_pos()
+                .map_or(false, |m| stripe_rect.contains(m));
+
+            let fill = if is_hovered {
+                Color32::from_rgba_unmultiplied(100, 149, 237, 180) // cornflower-blue highlight
+            } else {
+                s_color
+            };
+            info.painter.rect_filled(stripe_rect, 0.0, fill);
+
+            // Stripe hover tooltip — shows the full path from root to this level.
+            if is_hovered {
+                let mut tooltip_lines: Vec<String> = path_context
+                    .iter()
+                    .map(|(f, v)| format!("{}: {}", f, v))
+                    .collect();
+                tooltip_lines.push(format!("{}: {}", field, key));
+                let tooltip_text = tooltip_lines.join("\n");
+                egui::show_tooltip_at_pointer(
+                    &info.ctx,
+                    info.response.layer_id,
+                    egui::Id::new(("stripe_tip", depth, key.as_str())),
+                    |ui| { ui.label(tooltip_text); },
+                );
+            }
 
             // Horizontal separator at the bottom of each group within the stripe.
             if span_bottom < info.canvas.max.y {
