@@ -759,6 +759,26 @@ pub(super) fn draw_level_n<'a>(
                 draw_leaf_label(info, key, field, cursor_y, label_x_end, row_height, app, options);
 
                 let job_row_y = cursor_y;
+
+                // Check if hovering over the entire row and draw vertical dash
+                let row_rect = Rect::from_min_max(
+                    pos2(info.canvas.min.x, job_row_y),
+                    pos2(info.canvas.max.x, job_row_y + row_height),
+                );
+                let is_row_hovered = info.response.hover_pos()
+                    .map_or(false, |m| row_rect.contains(m));
+                if is_row_hovered {
+                    let hover_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 140);
+                    info.painter.rect_filled(
+                        Rect::from_min_max(
+                            pos2(info.canvas.min.x, job_row_y),
+                            pos2(info.canvas.min.x + 4.0, job_row_y + row_height),
+                        ),
+                        0.0,
+                        hover_fill,
+                    );
+                }
+
                 for job in jobs.iter() {
                     paint_job(
                         info,
