@@ -69,38 +69,17 @@ fn compute_gutter_width(
     app: &ApplicationContext,
     _all_clusters: &Vec<crate::models::data_structure::cluster::Cluster>,
 ) -> f32 {
-    let min_w = GUTTER_WIDTH;
     let n_total = options.levels.len();
-
-    // Width for the stripe columns at the right of the gutter.
     let stripes_w = gutter_stripes_total_w(n_total);
 
-    // Find the longest leaf-level label across all visible jobs.
-    let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("host");
+    let max_label = jobs::max_leaf_label(app, &options.levels);
     let font_leaf = FontId::proportional((base_font.size).max(11.0));
-    let mut max_label = "label".to_string();
-
-    for job in app.filtered_jobs.iter() {
-        let candidates: Vec<String> = match leaf_field {
-            "host" => job.hosts.iter().map(|h| short_host_label(h)).collect(),
-            "cluster" => job.clusters.clone(),
-            "owner" => vec![job.owner.clone()],
-            _ => job.hosts.iter().map(|h| short_host_label(h)).collect(),
-        };
-        for label in candidates {
-            if label.len() > max_label.len() {
-                max_label = label;
-            }
-        }
-    }
-
-    let label_left_pad = 4.0;
-    let label_right_pad = 4.0;
     let label_text_w = ctx
         .fonts(|f| f.layout_no_wrap(max_label, font_leaf, Color32::BLACK).size().x);
-    let label_w = label_text_w + label_left_pad + label_right_pad;
+    // 4px left pad + 4px right pad; minimum 40px label area so an empty view isn't invisible.
+    let label_w = (label_text_w + 8.0).max(40.0);
 
-    (label_w + stripes_w).clamp(min_w, 650.0)
+    (label_w + stripes_w).min(650.0)
 }
 
 pub struct GanttChart {

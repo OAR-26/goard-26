@@ -462,6 +462,27 @@ fn resolve_field(
     }
 }
 
+/// Returns the longest leaf label string that will be rendered for the current view.
+/// Used by `compute_gutter_width` so the gutter fits its content exactly.
+pub(super) fn max_leaf_label(app: &ApplicationContext, levels: &[String]) -> String {
+    let leaf_field = match levels.last() {
+        Some(f) => f.as_str(),
+        None => return String::new(),
+    };
+    let mut longest = String::new();
+    for strata in app.strata_by_resource_id.values() {
+        let raw = resolve_field(strata, leaf_field, &app.strata_by_host);
+        if raw.starts_with("(no ") {
+            continue;
+        }
+        let label = if leaf_field == "host" { short_host_label(&raw) } else { raw };
+        if label.len() > longest.len() {
+            longest = label;
+        }
+    }
+    longest
+}
+
 /// Build a resource-first group tree.
 /// Every resource in `strata_by_resource_id` whose LEAF-level field is present
 /// is included as a row, even with zero jobs.  Missing intermediate fields are
