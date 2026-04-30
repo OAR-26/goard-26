@@ -324,96 +324,123 @@ fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
         "chassis" => s.chassis.clone(),
         "gpu_model" | "gpumodel" => s.gpu_model.clone(),
         "type" => s.r#type.clone(),
+        // Kavlan
+        "vlan" => s.vlan.clone(),
+        // Subnet — leaf shows full CIDR; slash_ fields give opaque parent-block IDs
+        "subnet_address" => match (&s.subnet_address, s.subnet_prefix) {
+            (Some(a), Some(p)) => Some(format!("{}/{}", a, p)),
+            (Some(a), None) => Some(a.clone()),
+            _ => None,
+        },
+        "subnet_prefix" => s.subnet_prefix.map(|p| format!("/{}", p)),
+        "slash_16" => s.slash_16.clone(),
+        "slash_17" => s.slash_17.clone(),
+        "slash_18" => s.slash_18.clone(),
+        "slash_19" => s.slash_19.clone(),
+        "slash_20" => s.slash_20.clone(),
+        "slash_21" => s.slash_21.clone(),
+        "slash_22" => s.slash_22.clone(),
+        // Disk
+        "disk" => s.disk.clone(),
+        "nodeset" => s.nodeset.clone(),
         _ => None,
     }
 }
 
-fn get_field_for_host(job: &Job, host: &str, field: &str, app: &ApplicationContext) -> String {
-    match field {
-        "host" => host.to_string(),
-        "owner" => job.owner.clone(),
-        "cluster" => {
-            let key_short = short_host_label(host);
-            app.strata_by_host.get(host)
-                .or_else(|| app.strata_by_host.get(key_short.as_str()))
-                .and_then(|s| s.cluster.clone())
-                .map(|c| c.trim().to_string())
-                .filter(|c| !c.is_empty())
-                .unwrap_or_else(|| "(no cluster)".to_string())
-        }
-        other => {
-            let key_short = short_host_label(host);
-            app.strata_by_host.get(host)
-                .or_else(|| app.strata_by_host.get(key_short.as_str()))
-                .and_then(|s| strata_field_value(s, other))
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| format!("(no {})", other))
-        }
-    }
+fn strata_field_string(strata: &Strata, field: &str) -> String {
+    strata_field_value(strata, field)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| format!("(no {})", field))
 }
 
-// For each job, generate one path per host (deduped).
-// If the job has no hosts, produce a single fallback path.
-fn job_paths_for_levels(job: &Job, levels: &[String], app: &ApplicationContext) -> Vec<Vec<String>> {
-    if job.hosts.is_empty() {
-        let path = levels.iter().map(|f| {
-            if f == "owner" { job.owner.clone() } else { format!("(no {})", f) }
-        }).collect();
-        return vec![path];
-    }
-    let mut seen = std::collections::HashSet::new();
-    let mut paths = Vec::new();
-    for host in &job.hosts {
-        let path: Vec<String> = levels.iter().map(|f| get_field_for_host(job, host, f, app)).collect();
-        if seen.insert(path.clone()) {
-            paths.push(path);
-        }
-    }
-    paths
+// ---------------------------------------------------------------------------
+// ResourceGroup — resource-first recursive hierarchy node
+// ---------------------------------------------------------------------------
+
+pub(super) enum ResourceGroup<'a> {
+    Leaf { jobs: Vec<&'a Job> },
+    Inner(BTreeMap<String, ResourceGroup<'a>>),
 }
 
-fn group_by_paths<'a>(
-    assignments: Vec<(&'a Job, Vec<String>)>,
+fn group_resource_paths<'a>(
+    assignments: Vec<(Vec<String>, Vec<&'a Job>)>,
     n_levels: usize,
-) -> BTreeMap<String, JobGroup<'a>> {
-    let mut by_key: BTreeMap<String, Vec<(&'a Job, Vec<String>)>> = BTreeMap::new();
-    for (job, path) in assignments {
+) -> BTreeMap<String, ResourceGroup<'a>> {
+    let mut by_key: BTreeMap<String, Vec<(Vec<String>, Vec<&'a Job>)>> = BTreeMap::new();
+    for (path, jobs) in assignments {
         let key = path[0].clone();
-        by_key.entry(key).or_default().push((job, path[1..].to_vec()));
+        by_key.entry(key).or_default().push((path[1..].to_vec(), jobs));
     }
     by_key.into_iter().map(|(k, sub)| {
         let group = if n_levels == 1 {
-            JobGroup::Leaf(sub.into_iter().map(|(job, _)| job).collect())
+            let mut all_jobs: Vec<&'a Job> = sub.into_iter().flat_map(|(_, j)| j).collect();
+            all_jobs.sort_by_key(|j| j.id);
+            all_jobs.dedup_by_key(|j| j.id);
+            ResourceGroup::Leaf { jobs: all_jobs }
         } else {
-            JobGroup::Inner(group_by_paths(sub, n_levels - 1))
+            ResourceGroup::Inner(group_resource_paths(sub, n_levels - 1))
         };
         (k, group)
     }).collect()
 }
 
-// ---------------------------------------------------------------------------
-// JobGroup — recursive hierarchy node
-// ---------------------------------------------------------------------------
-
-pub(super) enum JobGroup<'a> {
-    Leaf(Vec<&'a Job>),
-    Inner(BTreeMap<String, JobGroup<'a>>),
-}
-
-pub(super) fn build_job_groups<'a>(
-    jobs: &[&'a Job],
+/// Build a resource-first group tree.
+/// Every resource in `strata_by_resource_id` whose path contains no "(no X)"
+/// placeholder is included as a leaf row, even with zero jobs.
+/// Jobs are overlaid as a reverse lookup: resource_id → jobs.
+pub(super) fn build_resource_groups<'a>(
+    app: &'a ApplicationContext,
     levels: &[String],
-    app: &ApplicationContext,
-) -> BTreeMap<String, JobGroup<'a>> {
+    jobs: &[&'a Job],
+) -> BTreeMap<String, ResourceGroup<'a>> {
+    use std::collections::{HashMap, HashSet};
     assert!(!levels.is_empty(), "levels must not be empty");
-    let mut assignments: Vec<(&'a Job, Vec<String>)> = Vec::new();
+
+    // Reverse job index: resource_id -> &Job
+    let mut jobs_by_resource: HashMap<u32, Vec<&'a Job>> = HashMap::new();
     for &job in jobs {
-        for path in job_paths_for_levels(job, levels, app) {
-            assignments.push((job, path));
+        for &rid in &job.assigned_resources {
+            jobs_by_resource.entry(rid).or_default().push(job);
         }
     }
-    group_by_paths(assignments, levels.len())
+
+    // Job id -> &Job for leaf assembly
+    let job_by_id: HashMap<u32, &'a Job> = jobs.iter().map(|&j| (j.id, j)).collect();
+
+    // path -> set of job IDs (deduplicated across resources sharing the same path)
+    let mut leaf_job_ids: BTreeMap<Vec<String>, HashSet<u32>> = BTreeMap::new();
+
+    for (&rid, strata) in &app.strata_by_resource_id {
+        let path: Vec<String> = levels.iter()
+            .map(|f| strata_field_string(strata, f))
+            .collect();
+        // Skip resources that don't have the leaf-level field — they don't
+        // belong to this view.  Intermediate "(no X)" buckets are allowed so
+        // that e.g. disk resources without a cluster field still appear in the
+        // Disks view grouped under "(no cluster)".
+        if path.last().map_or(true, |v| v.starts_with("(no ")) {
+            continue;
+        }
+        let entry = leaf_job_ids.entry(path).or_default();
+        if let Some(resource_jobs) = jobs_by_resource.get(&rid) {
+            for job in resource_jobs {
+                entry.insert(job.id);
+            }
+        }
+    }
+
+    let assignments: Vec<(Vec<String>, Vec<&'a Job>)> = leaf_job_ids.into_iter()
+        .map(|(path, job_ids)| {
+            let mut job_list: Vec<&'a Job> = job_ids.iter()
+                .filter_map(|id| job_by_id.get(id).copied())
+                .collect();
+            job_list.sort_by_key(|j| j.id);
+            (path, job_list)
+        })
+        .collect();
+
+    group_resource_paths(assignments, levels.len())
 }
 
 // ---------------------------------------------------------------------------
@@ -584,7 +611,7 @@ fn resource_state_for_key(key: &str, field: &str, all_clusters: &Vec<Cluster>) -
 pub(super) fn draw_level_n<'a>(
     info: &Info,
     options: &mut Options,
-    groups: &BTreeMap<String, JobGroup<'a>>,
+    groups: &BTreeMap<String, ResourceGroup<'a>>,
     levels: &[String],
     depth: usize,
     n_total: usize,
@@ -626,7 +653,7 @@ pub(super) fn draw_level_n<'a>(
 
         match group {
             // ── n == 1: leaf ─────────────────────────────────────────────────
-            JobGroup::Leaf(jobs) => {
+            ResourceGroup::Leaf { jobs } => {
                 let state = resource_state_for_key(key, field, all_clusters);
 
                 draw_leaf_label(info, key, field, cursor_y, label_x_end, row_height, app, options);
@@ -664,13 +691,11 @@ pub(super) fn draw_level_n<'a>(
                     });
                 }
 
-                if !jobs.is_empty() {
-                    cursor_y += row_height;
-                }
+                cursor_y += row_height;
             }
 
             // ── n > 1: inner ─────────────────────────────────────────────────
-            JobGroup::Inner(sub_groups) => {
+            ResourceGroup::Inner(sub_groups) => {
                 cursor_y = draw_level_n(
                     info,
                     options,

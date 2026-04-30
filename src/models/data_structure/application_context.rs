@@ -60,8 +60,11 @@ pub struct ApplicationContext {
     pub resources_receiver: Receiver<Vec<Strata>>,
     pub resources_sender: Sender<Vec<Strata>>,
 
-    // Latest resource metadata indexed by host (used for rich hover tooltips).
+    // Resource metadata indexed by host name (tooltip lookups for compute nodes).
     pub strata_by_host: HashMap<String, Strata>,
+    // Resource metadata indexed by OAR resource_id — covers all resource types
+    // (default/compute, kavlan, subnet, disk, etc.) so Gantt grouping works for any field.
+    pub strata_by_resource_id: HashMap<u32, Strata>,
 
     pub font_size: i32,
     pub see_all_jobs: bool,
@@ -150,6 +153,14 @@ impl ApplicationContext {
                             .or_default()
                             .extend(ints);
                     }
+                }
+            }
+
+            // Index every resource by its OAR resource_id for generic field lookup.
+            self.strata_by_resource_id.clear();
+            for r in new_resources.iter() {
+                if let Some(rid) = r.resource_id {
+                    self.strata_by_resource_id.insert(rid, r.clone());
                 }
             }
 
@@ -708,6 +719,14 @@ impl ApplicationContext {
             }
         }
         
+        // Index all imported resources by resource_id for generic Gantt field lookup.
+        self.strata_by_resource_id.clear();
+        for r in imported_resources.iter() {
+            if let Some(rid) = r.resource_id {
+                self.strata_by_resource_id.insert(rid, r.clone());
+            }
+        }
+
         // Build clusters from resource data (matching live data behavior)
         let mut imported_clusters: Vec<Cluster> = Vec::new();
         for resource in imported_resources.iter() {
@@ -1289,6 +1308,7 @@ impl Default for ApplicationContext {
             user_connected: None,
 
             strata_by_host: HashMap::new(),
+            strata_by_resource_id: HashMap::new(),
 
             filtered_jobs: Vec::new(),
             filters: JobFilters::default(),

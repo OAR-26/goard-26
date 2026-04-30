@@ -26,6 +26,33 @@ use std::collections::BTreeMap;
 use crate::models::data_structure::application_context::ClusterPreset;
 use std::collections::HashSet as StdHashSet;
 
+// ---------------------------------------------------------------------------
+// View hierarchy configuration (loaded from views.json)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize, Clone)]
+struct GanttView {
+    name: String,
+    levels: Vec<String>,
+}
+
+fn load_gantt_views() -> Vec<GanttView> {
+    let fallback = vec![
+        GanttView {
+            name: "Compute: site → cluster → host".to_string(),
+            levels: vec!["site".to_string(), "cluster".to_string(), "host".to_string()],
+        },
+        GanttView {
+            name: "Network: site → type → vlan".to_string(),
+            levels: vec!["site".to_string(), "type".to_string(), "vlan".to_string()],
+        },
+    ];
+    match std::fs::read_to_string("views.json") {
+        Ok(content) => serde_json::from_str(&content).unwrap_or(fallback),
+        Err(_) => fallback,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum AdminMode {
     New,
@@ -85,6 +112,9 @@ pub struct GanttChart {
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
 
+    gantt_views: Vec<GanttView>,
+    current_view_index: usize,
+
     energy_filter_cluster: Option<String>,
     energy_filter_owner: Option<String>,
 
@@ -102,8 +132,13 @@ pub struct GanttChart {
 
 impl Default for GanttChart {
     fn default() -> Self {
+        let views = load_gantt_views();
+        let mut options = Options::default();
+        if let Some(first) = views.first() {
+            options.levels = first.levels.clone();
+        }
         GanttChart {
-            options: Default::default(),
+            options,
             job_details_windows: Vec::new(),
             collapsed_jobs_level_1: BTreeMap::new(),
             collapsed_jobs_level_2: BTreeMap::new(),
@@ -119,6 +154,8 @@ impl Default for GanttChart {
             energy_filter_cluster: None,
             energy_filter_owner: None,
             pending_navigation_refresh: false,
+            gantt_views: views,
+            current_view_index: 0,
         }
     }
 }
@@ -184,6 +221,23 @@ impl GanttChart {
             self.initial_start_s = Some(app.get_start_date().timestamp());
             self.initial_end_s = Some(app.get_end_date().timestamp());
         }
+
+        // "View" dropdown in the top toolbar — mirrors the tab row below
+        let current_view_name = self.gantt_views
+            .get(self.current_view_index)
+            .map(|v| v.name.as_str())
+            .unwrap_or("View");
+        ui.menu_button(format!("View: {}", current_view_name), |ui| {
+            for i in 0..self.gantt_views.len() {
+                let is_active = self.current_view_index == i;
+                let name = self.gantt_views[i].name.clone();
+                if ui.selectable_label(is_active, &name).clicked() {
+                    self.current_view_index = i;
+                    self.options.levels = self.gantt_views[i].levels.clone();
+                    ui.close_menu();
+                }
+            }
+        });
 
         ui.menu_button(t!("app.gantt.settings.title"), |ui| {
             ui.set_max_height(500.0);

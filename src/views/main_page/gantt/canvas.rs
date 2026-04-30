@@ -1,5 +1,5 @@
 use super::jobs::{
-    build_job_groups, draw_level_n, draw_stripe_borders, paint_job_id_labels, paint_tooltip,
+    build_resource_groups, draw_level_n, draw_stripe_borders, paint_job_id_labels, paint_tooltip,
 };
 use super::theme::get_theme_colors;
 use super::timeline::paint_timeline_text_on_top;
@@ -56,9 +56,9 @@ pub(super) fn ui_canvas(
     let label_x_end = gutter_width - gutter_stripes_total_w(n_total);
     let stripe_x_start = info.canvas.min.x + label_x_end;
 
-    if !jobs_refs.is_empty() && n_total > 0 {
+    if n_total > 0 {
         let levels = options.levels.clone();
-        let groups = build_job_groups(&jobs_refs, &levels, app);
+        let groups = build_resource_groups(app, &levels, &jobs_refs);
 
         let stripes_y_start = cursor_y;
         cursor_y = draw_level_n(
