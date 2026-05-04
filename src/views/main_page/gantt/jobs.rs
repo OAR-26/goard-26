@@ -156,12 +156,7 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
             tooltip_text.push('\n');
         }
 
-        let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("host");
-        let kind_label = match leaf_field {
-            "host" => "Host",
-            "cluster" => "Cluster",
-            _ => "Resource",
-        };
+        let kind_label = options.leaf_display_name.as_str();
 
         if let Some(label) = options.current_hovered_resource_label.as_deref() {
             let trimmed = label.trim();
@@ -788,7 +783,7 @@ fn draw_leaf_label(
     if is_hovered {
         info.ctx.set_cursor_icon(CursorIcon::PointingHand);
         // Show host details tooltip when hovering the label
-        if options.levels.last().map(|s| s.as_str()) == Some("host") {
+        if options.leaf_hover_details {
             let layer_id = LayerId::new(Order::Tooltip, Id::new("gantt-label-layer"));
             egui::containers::popup::show_tooltip(
                 &info.ctx,
@@ -837,7 +832,8 @@ fn draw_leaf_label(
 // Resource-state lookup for any field
 // ---------------------------------------------------------------------------
 
-fn resource_state_for_key(key: &str, field: &str, all_clusters: &Vec<Cluster>) -> ResourceState {
+fn resource_state_for_key(key: &str, field: &str, all_clusters: &Vec<Cluster>, enabled: bool) -> ResourceState {
+    if !enabled { return ResourceState::Alive; }
     let owned = key.to_string();
     match field {
         "host" => get_host_state_from_name(all_clusters, &owned),
@@ -918,7 +914,7 @@ pub(super) fn draw_level_n<'a>(
         match group {
             // ── n == 1: leaf ─────────────────────────────────────────────────
             ResourceGroup::Leaf { jobs, label } => {
-                let state = resource_state_for_key(key, field, all_clusters);
+                let state = resource_state_for_key(key, field, all_clusters, options.resource_state);
 
                 draw_leaf_label(info, key, label.as_deref(), cursor_y, label_x_end, row_height, app, options, path_context);
 

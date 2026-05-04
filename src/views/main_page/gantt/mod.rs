@@ -40,7 +40,15 @@ struct GanttView {
     leaf_label_template: Option<String>,
     #[serde(default)]
     sort_by_label: bool,
+    #[serde(default = "default_leaf_display_name")]
+    leaf_display_name: String,
+    #[serde(default)]
+    leaf_hover_details: bool,
+    #[serde(default)]
+    resource_state: bool,
 }
+
+fn default_leaf_display_name() -> String { "Resource".to_string() }
 
 fn load_gantt_views() -> Vec<GanttView> {
     let fallback = vec![
@@ -50,6 +58,9 @@ fn load_gantt_views() -> Vec<GanttView> {
             filter: None,
             leaf_label_template: Some("{host|short}".to_string()),
             sort_by_label: false,
+            leaf_display_name: "Host".to_string(),
+            leaf_hover_details: true,
+            resource_state: true,
         },
         GanttView {
             name: "Network: site → type → vlan".to_string(),
@@ -57,6 +68,9 @@ fn load_gantt_views() -> Vec<GanttView> {
             filter: None,
             leaf_label_template: Some("{type}/{vlan}".to_string()),
             sort_by_label: false,
+            leaf_display_name: "VLAN".to_string(),
+            leaf_hover_details: false,
+            resource_state: false,
         },
     ];
     match std::fs::read_to_string("views.json") {
@@ -130,6 +144,9 @@ impl Default for GanttChart {
             options.resource_filter = first.filter.clone();
             options.leaf_label_template = first.leaf_label_template.clone();
             options.sort_by_label = first.sort_by_label;
+            options.leaf_display_name = first.leaf_display_name.clone();
+            options.leaf_hover_details = first.leaf_hover_details;
+            options.resource_state = first.resource_state;
         }
         GanttChart {
             options,
@@ -231,6 +248,9 @@ impl GanttChart {
                     self.options.resource_filter = self.gantt_views[i].filter.clone();
                     self.options.leaf_label_template = self.gantt_views[i].leaf_label_template.clone();
                     self.options.sort_by_label = self.gantt_views[i].sort_by_label;
+                    self.options.leaf_display_name = self.gantt_views[i].leaf_display_name.clone();
+                    self.options.leaf_hover_details = self.gantt_views[i].leaf_hover_details;
+                    self.options.resource_state = self.gantt_views[i].resource_state;
                     ui.close_menu();
                 }
             }

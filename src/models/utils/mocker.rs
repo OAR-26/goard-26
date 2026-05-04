@@ -241,6 +241,18 @@ fn mock_strata(id: u32) -> Strata {
         drain: None,
         gpudevice: None,
         r#type: None,
+        vlan: None,
+        subnet_address: None,
+        subnet_prefix: None,
+        slash_16: None,
+        slash_17: None,
+        slash_18: None,
+        slash_19: None,
+        slash_20: None,
+        slash_21: None,
+        slash_22: None,
+        disk: None,
+        nodeset: None,
     }
 }
 
