@@ -1,7 +1,13 @@
 [
   {
     "name": "Nodes",
-    "levels": ["site", "cluster", "host"]
+    "levels": ["site", "cluster", "host"],
+    "filter": {"field": "production", "value": "YES", "exclude": true}
+  },
+  {
+    "name": "Nodes (production)",
+    "levels": ["site", "cluster", "host"],
+    "filter": {"field": "production", "value": "YES", "exclude": false}
   },
   {
     "name": "vlans",

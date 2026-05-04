@@ -58,7 +58,7 @@ pub(super) fn ui_canvas(
 
     if n_total > 0 {
         let levels = options.levels.clone();
-        let groups = build_resource_groups(app, &levels, &jobs_refs);
+        let groups = build_resource_groups(app, &levels, &jobs_refs, options.resource_filter.as_ref());
 
         let stripes_y_start = cursor_y;
         cursor_y = draw_level_n(

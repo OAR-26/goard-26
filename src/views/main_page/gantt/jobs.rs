@@ -340,6 +340,7 @@ fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
         "slash_20" => s.slash_20.clone(),
         "slash_21" => s.slash_21.clone(),
         "slash_22" => s.slash_22.clone(),
+        "production" => s.production.clone(),
         // Disk
         "disk" => s.disk.clone(),
         "nodeset" => s.nodeset.clone(),
@@ -455,6 +456,16 @@ fn resolve_field(
                         .unwrap_or("");
                     site_from(fqdn)
                 })
+                .or_else(|| {
+                    // kavlan/subnet resources have no FQDN at all; pick from any
+                    // compute node since OAR data is always single-site.
+                    strata_by_host.values().find_map(|s| {
+                        let fqdn = s.network_address.as_deref()
+                            .or(s.host.as_deref())
+                            .unwrap_or("");
+                        site_from(fqdn)
+                    })
+                })
                 .unwrap_or_else(|| "(no site)".to_string())
         }
 
@@ -492,6 +503,7 @@ pub(super) fn build_resource_groups<'a>(
     app: &'a ApplicationContext,
     levels: &[String],
     jobs: &[&'a Job],
+    filter: Option<&super::types::ResourceFilter>,
 ) -> BTreeMap<String, ResourceGroup<'a>> {
     use std::collections::{HashMap, HashSet};
     assert!(!levels.is_empty(), "levels must not be empty");
@@ -519,6 +531,14 @@ pub(super) fn build_resource_groups<'a>(
         // appear even when some grouping fields are absent.
         if path.last().map_or(true, |v| v.starts_with("(no ")) {
             continue;
+        }
+        if let Some(f) = filter {
+            let actual = strata_field_value(strata, &f.field)
+                .unwrap_or_default();
+            let matches = actual.trim() == f.value.trim();
+            if f.exclude == matches {
+                continue;
+            }
         }
         let entry = leaf_job_ids.entry(path).or_default();
         if let Some(resource_jobs) = jobs_by_resource.get(&rid) {

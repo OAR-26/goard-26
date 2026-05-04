@@ -34,6 +34,8 @@ use std::collections::HashSet as StdHashSet;
 struct GanttView {
     name: String,
     levels: Vec<String>,
+    #[serde(default)]
+    filter: Option<types::ResourceFilter>,
 }
 
 fn load_gantt_views() -> Vec<GanttView> {
@@ -41,10 +43,12 @@ fn load_gantt_views() -> Vec<GanttView> {
         GanttView {
             name: "Compute: site → cluster → host".to_string(),
             levels: vec!["site".to_string(), "cluster".to_string(), "host".to_string()],
+            filter: None,
         },
         GanttView {
             name: "Network: site → type → vlan".to_string(),
             levels: vec!["site".to_string(), "type".to_string(), "vlan".to_string()],
+            filter: None,
         },
     ];
     match std::fs::read_to_string("views.json") {
@@ -115,6 +119,7 @@ impl Default for GanttChart {
         let mut options = Options::default();
         if let Some(first) = views.first() {
             options.levels = first.levels.clone();
+            options.resource_filter = first.filter.clone();
         }
         GanttChart {
             options,
@@ -213,6 +218,7 @@ impl GanttChart {
                 if ui.selectable_label(is_active, &name).clicked() {
                     self.current_view_index = i;
                     self.options.levels = self.gantt_views[i].levels.clone();
+                    self.options.resource_filter = self.gantt_views[i].filter.clone();
                     ui.close_menu();
                 }
             }

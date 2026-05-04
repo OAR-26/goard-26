@@ -37,6 +37,17 @@ impl Info {
     }
 }
 
+/// Optional equality filter applied to every resource before grouping.
+/// `exclude = false` → keep only resources where field == value.
+/// `exclude = true`  → keep only resources where field != value.
+#[derive(serde::Deserialize, Clone, Debug)]
+pub(super) struct ResourceFilter {
+    pub field: String,
+    pub value: String,
+    #[serde(default)]
+    pub exclude: bool,
+}
+
 pub struct Options {
     pub canvas_width_s: f32,
     pub sideways_pan_in_points: f32,
@@ -57,6 +68,7 @@ pub struct Options {
     /// matching stripes when hovering a job bar).
     pub hovered_leaf_label: Option<String>,
     pub compact_rows: bool,
+    pub resource_filter: Option<ResourceFilter>,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub zoom_to_relative_s_range: Option<(f64, (f64, f64))>,
 }
@@ -80,6 +92,7 @@ impl Default for Options {
             current_hovered_resource_label: None,
             hovered_leaf_label: None,
             compact_rows: true,
+            resource_filter: None,
         }
     }
 }
