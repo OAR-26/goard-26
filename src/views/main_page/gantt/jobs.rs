@@ -360,30 +360,42 @@ fn strata_field_string(strata: &Strata, field: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub(super) enum ResourceGroup<'a> {
-    Leaf { jobs: Vec<&'a Job> },
+    /// `label` is pre-computed from the view's `leaf_label_template` at build
+    /// time (when strata fields are available).  `None` → render the raw key.
+    Leaf { jobs: Vec<&'a Job>, label: Option<String> },
     Inner(BTreeMap<String, ResourceGroup<'a>>),
 }
 
+// Each assignment carries: path, jobs, pre-computed leaf label.
 fn group_resource_paths<'a>(
-    assignments: Vec<(Vec<String>, Vec<&'a Job>)>,
+    assignments: Vec<(Vec<String>, Vec<&'a Job>, Option<String>)>,
     n_levels: usize,
 ) -> BTreeMap<String, ResourceGroup<'a>> {
-    let mut by_key: BTreeMap<String, Vec<(Vec<String>, Vec<&'a Job>)>> = BTreeMap::new();
-    for (path, jobs) in assignments {
+    let mut by_key: BTreeMap<String, Vec<(Vec<String>, Vec<&'a Job>, Option<String>)>> = BTreeMap::new();
+    for (path, jobs, label) in assignments {
         let key = path[0].clone();
-        by_key.entry(key).or_default().push((path[1..].to_vec(), jobs));
+        by_key.entry(key).or_default().push((path[1..].to_vec(), jobs, label));
     }
     by_key.into_iter().map(|(k, sub)| {
         let group = if n_levels == 1 {
-            let mut all_jobs: Vec<&'a Job> = sub.into_iter().flat_map(|(_, j)| j).collect();
+            // All entries at this leaf share the same pre-computed label (first wins).
+            let label = sub.iter().find_map(|(_, _, l)| l.clone());
+            let mut all_jobs: Vec<&'a Job> = sub.into_iter().flat_map(|(_, j, _)| j).collect();
             all_jobs.sort_by_key(|j| j.id);
             all_jobs.dedup_by_key(|j| j.id);
-            ResourceGroup::Leaf { jobs: all_jobs }
+            ResourceGroup::Leaf { jobs: all_jobs, label }
         } else {
             ResourceGroup::Inner(group_resource_paths(sub, n_levels - 1))
         };
         (k, group)
     }).collect()
+}
+
+fn min_leaf_label<'a>(group: &'a ResourceGroup<'_>) -> Option<&'a str> {
+    match group {
+        ResourceGroup::Leaf { label, .. } => label.as_deref(),
+        ResourceGroup::Inner(sub) => sub.values().find_map(min_leaf_label),
+    }
 }
 
 /// Resolve a single field value for a resource, with sibling-lookup enrichment.
@@ -475,18 +487,31 @@ fn resolve_field(
 
 /// Returns the longest leaf label string that will be rendered for the current view.
 /// Used by `compute_gutter_width` so the gutter fits its content exactly.
-pub(super) fn max_leaf_label(app: &ApplicationContext, levels: &[String]) -> String {
+pub(super) fn max_leaf_label(
+    app: &ApplicationContext,
+    levels: &[String],
+    template: Option<&str>,
+) -> String {
     let leaf_field = match levels.last() {
         Some(f) => f.as_str(),
         None => return String::new(),
     };
+    let ancestor_fields = &levels[..levels.len().saturating_sub(1)];
     let mut longest = String::new();
     for strata in app.strata_by_resource_id.values() {
         let raw = resolve_field(strata, leaf_field, &app.strata_by_host);
         if raw.starts_with("(no ") {
             continue;
         }
-        let label = if leaf_field == "host" { short_host_label(&raw) } else { raw };
+        let label = if let Some(tmpl) = template {
+            let path_context: Vec<(String, String)> = ancestor_fields
+                .iter()
+                .map(|f| (f.clone(), resolve_field(strata, f, &app.strata_by_host)))
+                .collect();
+            resolve_label_with_strata(tmpl, &path_context, leaf_field, &raw, strata)
+        } else {
+            raw
+        };
         if label.len() > longest.len() {
             longest = label;
         }
@@ -504,11 +529,11 @@ pub(super) fn build_resource_groups<'a>(
     levels: &[String],
     jobs: &[&'a Job],
     filter: Option<&super::types::ResourceFilter>,
+    template: Option<&str>,
 ) -> BTreeMap<String, ResourceGroup<'a>> {
     use std::collections::{HashMap, HashSet};
     assert!(!levels.is_empty(), "levels must not be empty");
 
-    // Reverse job index: resource_id -> &Job
     let mut jobs_by_resource: HashMap<u32, Vec<&'a Job>> = HashMap::new();
     for &job in jobs {
         for &rid in &job.assigned_resources {
@@ -516,49 +541,106 @@ pub(super) fn build_resource_groups<'a>(
         }
     }
 
-    // Job id -> &Job for leaf assembly
     let job_by_id: HashMap<u32, &'a Job> = jobs.iter().map(|&j| (j.id, j)).collect();
 
-    // path -> set of job IDs (deduplicated across resources sharing the same path)
-    let mut leaf_job_ids: BTreeMap<Vec<String>, HashSet<u32>> = BTreeMap::new();
+    // path -> (job id set, representative strata for label resolution)
+    let mut leaf_data: BTreeMap<Vec<String>, (HashSet<u32>, &Strata)> = BTreeMap::new();
 
     for (&rid, strata) in &app.strata_by_resource_id {
         let path: Vec<String> = levels.iter()
             .map(|f| resolve_field(strata, f, &app.strata_by_host))
             .collect();
-        // Skip if the leaf field is missing — the resource doesn't belong to
-        // this view.  Intermediate "(no X)" values are kept so resources still
-        // appear even when some grouping fields are absent.
         if path.last().map_or(true, |v| v.starts_with("(no ")) {
             continue;
         }
         if let Some(f) = filter {
-            let actual = strata_field_value(strata, &f.field)
-                .unwrap_or_default();
+            let actual = strata_field_value(strata, &f.field).unwrap_or_default();
             let matches = actual.trim() == f.value.trim();
             if f.exclude == matches {
                 continue;
             }
         }
-        let entry = leaf_job_ids.entry(path).or_default();
+        let entry = leaf_data.entry(path).or_insert_with(|| (HashSet::new(), strata));
         if let Some(resource_jobs) = jobs_by_resource.get(&rid) {
             for job in resource_jobs {
-                entry.insert(job.id);
+                entry.0.insert(job.id);
             }
         }
     }
 
-    let assignments: Vec<(Vec<String>, Vec<&'a Job>)> = leaf_job_ids.into_iter()
-        .map(|(path, job_ids)| {
+    let assignments: Vec<(Vec<String>, Vec<&'a Job>, Option<String>)> = leaf_data
+        .into_iter()
+        .map(|(path, (job_ids, rep_strata))| {
             let mut job_list: Vec<&'a Job> = job_ids.iter()
                 .filter_map(|id| job_by_id.get(id).copied())
                 .collect();
             job_list.sort_by_key(|j| j.id);
-            (path, job_list)
+
+            let label = template.map(|tmpl| {
+                // Build context: ancestor levels + all strata fields as fallback.
+                let path_context: Vec<(String, String)> = levels[..levels.len() - 1]
+                    .iter()
+                    .zip(path.iter())
+                    .map(|(f, v)| (f.clone(), v.clone()))
+                    .collect();
+                let leaf_field = levels.last().map(|s| s.as_str()).unwrap_or("");
+                let leaf_key = path.last().map(|s| s.as_str()).unwrap_or("");
+                // resolve_label: path_context first, then raw strata field.
+                resolve_label_with_strata(tmpl, &path_context, leaf_field, leaf_key, rep_strata)
+            });
+
+            (path, job_list, label)
         })
         .collect();
 
     group_resource_paths(assignments, levels.len())
+}
+
+/// Like `apply_label_template` but falls back to `strata_field_value` for
+/// placeholders not found in path_context or the leaf key.
+fn resolve_label_with_strata(
+    template: &str,
+    path_context: &[(String, String)],
+    leaf_field: &str,
+    leaf_key: &str,
+    strata: &Strata,
+) -> String {
+    let lookup = |field: &str| -> String {
+        if field == leaf_field { return leaf_key.to_string(); }
+        if let Some((_, v)) = path_context.iter().find(|(f, _)| f == field) {
+            return v.clone();
+        }
+        strata_field_value(strata, field).unwrap_or_default()
+    };
+
+    let mut result = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        result.push_str(&rest[..open]);
+        rest = &rest[open + 1..];
+        if let Some(close) = rest.find('}') {
+            let inner = &rest[..close];
+            rest = &rest[close + 1..];
+            let rendered = if let Some(pipe) = inner.find('|') {
+                let field = &inner[..pipe];
+                let modifier = &inner[pipe + 1..];
+                let raw = lookup(field);
+                match modifier {
+                    "short" => raw.split('.').next().unwrap_or(&raw).to_string(),
+                    _ => raw,
+                }
+            } else {
+                lookup(inner)
+            };
+            result.push_str(&rendered);
+        } else {
+            result.push('{');
+            result.push_str(rest);
+            break;
+        }
+    }
+    result.push_str(rest);
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -579,23 +661,73 @@ fn stripe_color(depth: usize) -> Color32 {
 // Leaf-level label (drawn to the LEFT of the stripe)
 // ---------------------------------------------------------------------------
 
+/// Resolve a `{field}` / `{field|modifier}` template.
+///
+/// Supported modifiers:
+/// - `short` — take the first segment before `.` (strips domain from FQDNs)
+///
+/// Unknown `{placeholders}` are left unchanged.
+fn apply_label_template(
+    template: &str,
+    path_context: &[(String, String)],
+    leaf_field: &str,
+    leaf_key: &str,
+) -> String {
+    let lookup = |field: &str| -> String {
+        if field == leaf_field {
+            return leaf_key.to_string();
+        }
+        path_context.iter()
+            .find(|(f, _)| f == field)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+
+    let mut result = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        result.push_str(&rest[..open]);
+        rest = &rest[open + 1..];
+        if let Some(close) = rest.find('}') {
+            let inner = &rest[..close];
+            rest = &rest[close + 1..];
+            let rendered = if let Some(pipe) = inner.find('|') {
+                let field = &inner[..pipe];
+                let modifier = &inner[pipe + 1..];
+                let raw = lookup(field);
+                match modifier {
+                    "short" => raw.split('.').next().unwrap_or(&raw).to_string(),
+                    _ => raw,
+                }
+            } else {
+                lookup(inner)
+            };
+            result.push_str(&rendered);
+        } else {
+            result.push('{');
+            result.push_str(rest);
+            break;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 fn draw_leaf_label(
     info: &Info,
     key: &str,
-    field: &str,
+    precomputed_label: Option<&str>,
     row_y: f32,
     label_x_end: f32,
     row_height: f32,
     app: &ApplicationContext,
-    _options: &Options,
+    options: &Options,
+    path_context: &[(String, String)],
 ) {
     let theme_colors = get_theme_colors(&info.ctx.style());
     let visuals = info.ctx.style().visuals.clone();
 
-    let label_text = match field {
-        "host" => short_host_label(key),
-        _ => key.to_string(),
-    };
+    let label_text = precomputed_label.unwrap_or(key).to_string();
 
     let indent = 2.0;
     let left = info.canvas.min.x + indent;
@@ -656,7 +788,7 @@ fn draw_leaf_label(
     if is_hovered {
         info.ctx.set_cursor_icon(CursorIcon::PointingHand);
         // Show host details tooltip when hovering the label
-        if field == "host" {
+        if options.levels.last().map(|s| s.as_str()) == Some("host") {
             let layer_id = LayerId::new(Order::Tooltip, Id::new("gantt-label-layer"));
             egui::containers::popup::show_tooltip(
                 &info.ctx,
@@ -759,7 +891,19 @@ pub(super) fn draw_level_n<'a>(
     };
 
     let mut sorted_keys: Vec<&String> = groups.keys().collect();
-    sorted_keys.sort_by(|a, b| compare_string_with_number(a, b));
+    if options.sort_by_label {
+        sorted_keys.sort_by(|a, b| {
+            let la = min_leaf_label(groups.get(*a).unwrap())
+                .map(str::to_string)
+                .unwrap_or_else(|| (*a).clone());
+            let lb = min_leaf_label(groups.get(*b).unwrap())
+                .map(str::to_string)
+                .unwrap_or_else(|| (*b).clone());
+            compare_string_with_number(&la, &lb)
+        });
+    } else {
+        sorted_keys.sort_by(|a, b| compare_string_with_number(a, b));
+    }
 
     for key in sorted_keys {
         let group = groups.get(key).unwrap();
@@ -773,10 +917,10 @@ pub(super) fn draw_level_n<'a>(
 
         match group {
             // ── n == 1: leaf ─────────────────────────────────────────────────
-            ResourceGroup::Leaf { jobs } => {
+            ResourceGroup::Leaf { jobs, label } => {
                 let state = resource_state_for_key(key, field, all_clusters);
 
-                draw_leaf_label(info, key, field, cursor_y, label_x_end, row_height, app, options);
+                draw_leaf_label(info, key, label.as_deref(), cursor_y, label_x_end, row_height, app, options, path_context);
 
                 let job_row_y = cursor_y;
 

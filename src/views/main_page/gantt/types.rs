@@ -69,6 +69,14 @@ pub struct Options {
     pub hovered_leaf_label: Option<String>,
     pub compact_rows: bool,
     pub resource_filter: Option<ResourceFilter>,
+    /// Optional template for the leaf-row label.  `{field}` placeholders are
+    /// replaced by the corresponding value from the ancestor path context or
+    /// the leaf key itself.  Example: `"{type}/{vlan}"`.
+    pub leaf_label_template: Option<String>,
+    /// When true, groups at every level are sorted by their minimum pre-computed
+    /// leaf label rather than by the raw grouping key.  Use when grouping keys
+    /// are opaque IDs (e.g. slash_* subnet blocks) that don't sort meaningfully.
+    pub sort_by_label: bool,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub zoom_to_relative_s_range: Option<(f64, (f64, f64))>,
 }
@@ -93,6 +101,8 @@ impl Default for Options {
             hovered_leaf_label: None,
             compact_rows: true,
             resource_filter: None,
+            leaf_label_template: None,
+            sort_by_label: false,
         }
     }
 }

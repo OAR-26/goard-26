@@ -36,6 +36,10 @@ struct GanttView {
     levels: Vec<String>,
     #[serde(default)]
     filter: Option<types::ResourceFilter>,
+    #[serde(default)]
+    leaf_label_template: Option<String>,
+    #[serde(default)]
+    sort_by_label: bool,
 }
 
 fn load_gantt_views() -> Vec<GanttView> {
@@ -44,11 +48,15 @@ fn load_gantt_views() -> Vec<GanttView> {
             name: "Compute: site → cluster → host".to_string(),
             levels: vec!["site".to_string(), "cluster".to_string(), "host".to_string()],
             filter: None,
+            leaf_label_template: Some("{host|short}".to_string()),
+            sort_by_label: false,
         },
         GanttView {
             name: "Network: site → type → vlan".to_string(),
             levels: vec!["site".to_string(), "type".to_string(), "vlan".to_string()],
             filter: None,
+            leaf_label_template: Some("{type}/{vlan}".to_string()),
+            sort_by_label: false,
         },
     ];
     match std::fs::read_to_string("views.json") {
@@ -76,7 +84,7 @@ fn compute_gutter_width(
     let n_total = options.levels.len();
     let stripes_w = gutter_stripes_total_w(n_total);
 
-    let max_label = jobs::max_leaf_label(app, &options.levels);
+    let max_label = jobs::max_leaf_label(app, &options.levels, options.leaf_label_template.as_deref());
     let font_leaf = FontId::proportional((base_font.size).max(11.0));
     let label_text_w = ctx
         .fonts(|f| f.layout_no_wrap(max_label, font_leaf, Color32::BLACK).size().x);
@@ -120,6 +128,8 @@ impl Default for GanttChart {
         if let Some(first) = views.first() {
             options.levels = first.levels.clone();
             options.resource_filter = first.filter.clone();
+            options.leaf_label_template = first.leaf_label_template.clone();
+            options.sort_by_label = first.sort_by_label;
         }
         GanttChart {
             options,
@@ -219,6 +229,8 @@ impl GanttChart {
                     self.current_view_index = i;
                     self.options.levels = self.gantt_views[i].levels.clone();
                     self.options.resource_filter = self.gantt_views[i].filter.clone();
+                    self.options.leaf_label_template = self.gantt_views[i].leaf_label_template.clone();
+                    self.options.sort_by_label = self.gantt_views[i].sort_by_label;
                     ui.close_menu();
                 }
             }
