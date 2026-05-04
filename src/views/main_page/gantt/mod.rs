@@ -646,7 +646,23 @@ impl View for GanttChart {
                                 Some(owner) => &job.owner == owner,
                                 None => true,
                             };
-                            cluster_ok && owner_ok
+                            // Mirror the Gantt: keep job only if ≥1 assigned resource
+                            // would appear in the current view (valid leaf field + filter).
+                            let leaf_field = self.options.levels.last().map(|s| s.as_str()).unwrap_or("");
+                            let view_ok = job.assigned_resources.iter().any(|&rid| {
+                                let Some(s) = app.strata_by_resource_id.get(&rid) else { return false; };
+                                let leaf_val = jobs::resolve_field(s, leaf_field, &app.strata_by_host);
+                                if leaf_val.starts_with("(no ") { return false; }
+                                match &self.options.resource_filter {
+                                    None => true,
+                                    Some(f) => {
+                                        let actual = jobs::strata_field_value(s, &f.field).unwrap_or_default();
+                                        let matches = actual.trim() == f.value.trim();
+                                        f.exclude != matches
+                                    }
+                                }
+                            });
+                            cluster_ok && owner_ok && view_ok
                         })
                         .cloned()
                         .collect();

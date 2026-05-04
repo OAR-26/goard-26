@@ -309,7 +309,7 @@ pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[Painte
 // from strata so a job never appears under the wrong cluster/group)
 // ---------------------------------------------------------------------------
 
-fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
+pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
     match field {
         "cluster" => s.cluster.clone(),
         "host" | "network_address" => s.network_address.clone().or_else(|| s.host.clone()),
@@ -404,7 +404,7 @@ fn min_leaf_label<'a>(group: &'a ResourceGroup<'_>) -> Option<&'a str> {
 /// or even `host` as direct fields.  For those we find the sibling compute node
 /// in `strata_by_host` (linked via `network_address`, `host`, or `nodeset`) and
 /// copy the missing value from there.
-fn resolve_field(
+pub(super) fn resolve_field(
     strata: &Strata,
     field: &str,
     strata_by_host: &std::collections::HashMap<String, Strata>,
