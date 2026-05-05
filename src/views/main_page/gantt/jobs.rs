@@ -156,40 +156,40 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
             tooltip_text.push('\n');
         }
 
-        let kind_label = options.leaf_display_name.as_str();
+        let kind_label = options.leaf_info_preset.as_ref()
+            .map(|p| p.name.as_str())
+            .unwrap_or("Resource");
 
         if let Some(label) = options.current_hovered_resource_label.as_deref() {
             let trimmed = label.trim();
             if !trimmed.is_empty() {
                 tooltip_text.push_str(&format!("{}: {}\n", kind_label.to_lowercase(), trimmed));
-                let keys = [trimmed.to_string(), trimmed.split('.').next().unwrap_or(trimmed).to_string()];
-                for key in &keys {
-                    if let Some(s) = app.strata_by_host.get(key) {
-                        if let Some(c) = s.cluster.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            tooltip_text.push_str(&format!("cluster: {}\n", c));
-                        }
-                        if let Some(n) = s.network_address.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            tooltip_text.push_str(&format!("network_address: {}\n", n));
-                        }
-                        if let Some(c) = s.comment.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            tooltip_text.push_str(&format!("comment: {}\n", c));
-                        }
-                        if let Some(cp) = cpuset_display(s) {
-                            let cp = cp.trim();
-                            if !cp.is_empty() {
-                                tooltip_text.push_str(&format!("cpuset: {}\n", cp));
+                let preset_fields = options.leaf_info_preset.as_ref()
+                    .map(|p| p.fields.as_slice())
+                    .unwrap_or(&[]);
+                if !preset_fields.is_empty() {
+                    let keys = [
+                        trimmed.to_string(),
+                        trimmed.split('.').next().unwrap_or(trimmed).to_string(),
+                    ];
+                    for key in &keys {
+                        if let Some(s) = app.strata_by_host.get(key) {
+                            for field in preset_fields {
+                                let val = if field == "cpuset" {
+                                    cpuset_display(s)
+                                        .map(|v| v.trim().to_string())
+                                        .filter(|v| !v.is_empty())
+                                } else {
+                                    strata_field_value(s, field)
+                                        .map(|v| v.trim().to_string())
+                                        .filter(|v| !v.is_empty())
+                                };
+                                if let Some(v) = val {
+                                    tooltip_text.push_str(&format!("{}: {}\n", field, v));
+                                }
                             }
+                            break;
                         }
-                        if let Some(m) = s.nodemodel.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            tooltip_text.push_str(&format!("nodemodel: {}\n", m));
-                        }
-                        if let Some(c) = s.cputype.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            tooltip_text.push_str(&format!("cputype: {}\n", c));
-                        }
-                        if let Some(r) = s.resource_id {
-                            tooltip_text.push_str(&format!("resource_id: {}\n", r));
-                        }
-                        break;
                     }
                 }
             }
@@ -307,18 +307,35 @@ pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[Painte
 pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
     match field {
         "cluster" => s.cluster.clone(),
-        "host" | "network_address" => s.network_address.clone().or_else(|| s.host.clone()),
+        "host" => s.network_address.clone().or_else(|| s.host.clone()),
+        "network_address" => s.network_address.clone(),
+        "ip" => s.ip.clone(),
         "site" => {
             let fqdn = s.network_address.as_deref().or(s.host.as_deref()).unwrap_or("");
             let site = fqdn.split('.').nth(1).unwrap_or("").trim();
             if site.is_empty() { None } else { Some(site.to_string()) }
         }
         "state" => s.state.clone(),
+        "next_state" => s.next_state.clone(),
         "cputype" => s.cputype.clone(),
         "nodemodel" => s.nodemodel.clone(),
         "chassis" => s.chassis.clone(),
         "gpu_model" | "gpumodel" => s.gpu_model.clone(),
+        "gpu_compute_capability" => s.gpu_compute_capability.clone(),
         "type" => s.r#type.clone(),
+        "comment" => s.comment.clone(),
+        "production" => s.production.clone(),
+        "besteffort" => s.besteffort.clone(),
+        "deploy" => s.deploy.clone(),
+        "drain" => s.drain.clone(),
+        "desktop_computing" => s.desktop_computing.clone(),
+        "cpufreq" => s.cpufreq.clone(),
+        "memnode" => s.memnode.map(|v| format!("{} MB", v / 1024)),
+        "memcore" => s.memcore.map(|v| v.to_string()),
+        "memcpu" => s.memcpu.map(|v| format!("{} MB", v / 1024)),
+        "core_count" => s.core_count.map(|v| v.to_string()),
+        "thread_count" => s.thread_count.map(|v| v.to_string()),
+        "resource_id" => s.resource_id.map(|v| v.to_string()),
         // Kavlan
         "vlan" => s.vlan.clone(),
         // Subnet — leaf shows full CIDR; slash_ fields give opaque parent-block IDs
@@ -335,7 +352,6 @@ pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
         "slash_20" => s.slash_20.clone(),
         "slash_21" => s.slash_21.clone(),
         "slash_22" => s.slash_22.clone(),
-        "production" => s.production.clone(),
         // Disk
         "disk" => s.disk.clone(),
         "nodeset" => s.nodeset.clone(),
@@ -782,44 +798,36 @@ fn draw_leaf_label(
 
     if is_hovered {
         info.ctx.set_cursor_icon(CursorIcon::PointingHand);
-        // Show host details tooltip when hovering the label
-        if options.leaf_hover_details {
+        let preset_fields = options.leaf_info_preset.as_ref()
+            .map(|p| p.fields.as_slice())
+            .unwrap_or(&[]);
+        if !preset_fields.is_empty() {
+            let kind_label = options.leaf_info_preset.as_ref()
+                .map(|p| p.name.as_str())
+                .unwrap_or("Resource");
+            let fields_snapshot: Vec<String> = preset_fields.iter().cloned().collect();
             let layer_id = LayerId::new(Order::Tooltip, Id::new("gantt-label-layer"));
             egui::containers::popup::show_tooltip(
                 &info.ctx,
                 layer_id,
                 Id::new(format!("gantt-leaf-label-{}", key)),
                 |ui: &mut egui::Ui| {
-                    ui.label(format!("host: {}", key));
+                    ui.label(format!("{}: {}", kind_label.to_lowercase(), key));
                     let key_short = short_host_label(key);
                     if let Some(s) = app.strata_by_host.get(key).or_else(|| app.strata_by_host.get(&key_short)) {
-                        if let Some(c) = s.cluster.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            ui.label(format!("cluster: {}", c));
-                        }
-                        let site = key.split('.').nth(1).unwrap_or("").trim();
-                        if !site.is_empty() {
-                            ui.label(format!("site: {}", site));
-                        }
-                        if let Some(b) = s.besteffort.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            ui.label(format!("besteffort: {}", b));
-                        }
-                        if let Some(n) = s.network_address.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            ui.label(format!("network_address: {}", n));
-                        }
-                        if let Some(c) = s.comment.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            ui.label(format!("comment: {}", c));
-                        }
-                        if let Some(cp) = cpuset_display(s) {
-                            let cp = cp.trim();
-                            if !cp.is_empty() {
-                                ui.label(format!("cpuset: {}", cp));
+                        for field in &fields_snapshot {
+                            let val = if field == "cpuset" {
+                                cpuset_display(s)
+                                    .map(|v| v.trim().to_string())
+                                    .filter(|v| !v.is_empty())
+                            } else {
+                                strata_field_value(s, field)
+                                    .map(|v| v.trim().to_string())
+                                    .filter(|v| !v.is_empty())
+                            };
+                            if let Some(v) = val {
+                                ui.label(format!("{}: {}", field, v));
                             }
-                        }
-                        if let Some(cpu) = s.cputype.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            ui.label(format!("cputype: {}", cpu));
-                        }
-                        if let Some(m) = s.nodemodel.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            ui.label(format!("nodemodel: {}", m));
                         }
                     }
                 },
@@ -832,8 +840,7 @@ fn draw_leaf_label(
 // Resource-state lookup for any field
 // ---------------------------------------------------------------------------
 
-fn resource_state_for_key(key: &str, field: &str, all_clusters: &Vec<Cluster>, enabled: bool) -> ResourceState {
-    if !enabled { return ResourceState::Alive; }
+fn resource_state_for_key(key: &str, field: &str, all_clusters: &Vec<Cluster>) -> ResourceState {
     let owned = key.to_string();
     match field {
         "host" => get_host_state_from_name(all_clusters, &owned),
@@ -914,7 +921,7 @@ pub(super) fn draw_level_n<'a>(
         match group {
             // ── n == 1: leaf ─────────────────────────────────────────────────
             ResourceGroup::Leaf { jobs, label } => {
-                let state = resource_state_for_key(key, field, all_clusters, options.resource_state);
+                let state = resource_state_for_key(key, field, all_clusters);
 
                 draw_leaf_label(info, key, label.as_deref(), cursor_y, label_x_end, row_height, app, options, path_context);
 

@@ -30,7 +30,7 @@ use std::collections::HashSet as StdHashSet;
 // View hierarchy configuration (loaded from views.json)
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Deserialize, Clone)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 struct GanttView {
     name: String,
     levels: Vec<String>,
@@ -40,42 +40,94 @@ struct GanttView {
     leaf_label_template: Option<String>,
     #[serde(default)]
     sort_by_label: bool,
-    #[serde(default = "default_leaf_display_name")]
+    /// ID of the `LeafInfoPreset` that defines this view's tooltip label and fields.
+    #[serde(default)]
+    leaf_infos: Option<String>,
+    // Backward-compat: read from old JSON, never written back.
+    #[serde(default, skip_serializing)]
     leaf_display_name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     leaf_hover_details: bool,
-    #[serde(default)]
-    resource_state: bool,
 }
 
-fn default_leaf_display_name() -> String { "Resource".to_string() }
+#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+struct ViewsConfig {
+    #[serde(default)]
+    views: Vec<GanttView>,
+    #[serde(default)]
+    leaf_info_presets: Vec<types::LeafInfoPreset>,
+}
 
-fn load_gantt_views() -> Vec<GanttView> {
-    let fallback = vec![
-        GanttView {
-            name: "Compute: site → cluster → host".to_string(),
-            levels: vec!["site".to_string(), "cluster".to_string(), "host".to_string()],
-            filter: None,
-            leaf_label_template: Some("{host|short}".to_string()),
-            sort_by_label: false,
-            leaf_display_name: "Host".to_string(),
-            leaf_hover_details: true,
-            resource_state: true,
+fn load_views_config() -> ViewsConfig {
+    let fallback = ViewsConfig {
+        views: vec![
+            GanttView {
+                name: "Compute: site → cluster → host".to_string(),
+                levels: vec!["site".to_string(), "cluster".to_string(), "host".to_string()],
+                filter: None,
+                leaf_label_template: Some("{host|short}".to_string()),
+                sort_by_label: false,
+                leaf_infos: None,
+                leaf_display_name: "Host".to_string(),
+                leaf_hover_details: true,
+            },
+            GanttView {
+                name: "Network: site → type → vlan".to_string(),
+                levels: vec!["site".to_string(), "type".to_string(), "vlan".to_string()],
+                filter: None,
+                leaf_label_template: Some("{type}/{vlan}".to_string()),
+                sort_by_label: false,
+                leaf_infos: None,
+                leaf_display_name: "VLAN".to_string(),
+                leaf_hover_details: false,
+            },
+        ],
+        leaf_info_presets: vec![],
+    };
+    let Ok(content) = std::fs::read_to_string("views.json") else { return fallback; };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else { return fallback; };
+    if val.is_array() {
+        // Old format: bare array of views — no presets
+        let views: Vec<GanttView> = serde_json::from_value(val).unwrap_or(fallback.views.clone());
+        ViewsConfig { views, leaf_info_presets: vec![] }
+    } else {
+        serde_json::from_value(val).unwrap_or(fallback)
+    }
+}
+
+fn resolve_leaf_preset<'a>(
+    presets: &'a [types::LeafInfoPreset],
+    id: &Option<String>,
+) -> Option<&'a types::LeafInfoPreset> {
+    presets.iter().find(|p| Some(&p.id) == id.as_ref())
+}
+
+/// Build a transient preset from old `leaf_display_name` / `leaf_hover_details` fields.
+fn backward_compat_preset(view: &GanttView) -> Option<types::LeafInfoPreset> {
+    if view.leaf_display_name.is_empty() { return None; }
+    Some(types::LeafInfoPreset {
+        id: String::new(),
+        name: view.leaf_display_name.clone(),
+        fields: if view.leaf_hover_details {
+            vec![
+                "cluster".to_string(), "network_address".to_string(),
+                "comment".to_string(), "nodemodel".to_string(),
+                "cputype".to_string(), "resource_id".to_string(),
+            ]
+        } else {
+            vec![]
         },
-        GanttView {
-            name: "Network: site → type → vlan".to_string(),
-            levels: vec!["site".to_string(), "type".to_string(), "vlan".to_string()],
-            filter: None,
-            leaf_label_template: Some("{type}/{vlan}".to_string()),
-            sort_by_label: false,
-            leaf_display_name: "VLAN".to_string(),
-            leaf_hover_details: false,
-            resource_state: false,
-        },
-    ];
-    match std::fs::read_to_string("views.json") {
-        Ok(content) => serde_json::from_str(&content).unwrap_or(fallback),
-        Err(_) => fallback,
+    })
+}
+
+fn save_views_config(views: &[GanttView], presets: &[types::LeafInfoPreset]) {
+    #[derive(serde::Serialize)]
+    struct Out<'a> {
+        views: &'a [GanttView],
+        leaf_info_presets: &'a [types::LeafInfoPreset],
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&Out { views, leaf_info_presets: presets }) {
+        let _ = std::fs::write("views.json", json);
     }
 }
 
@@ -119,6 +171,7 @@ pub struct GanttChart {
 
     gantt_views: Vec<GanttView>,
     current_view_index: usize,
+    leaf_info_presets: Vec<types::LeafInfoPreset>,
 
     energy_filter_cluster: Option<String>,
     energy_filter_owner: Option<String>,
@@ -133,20 +186,39 @@ pub struct GanttChart {
     admin_selected_clusters: StdHashSet<String>,
 
     pending_navigation_refresh: bool,
+
+    // Create-view panel state
+    create_view_open: bool,
+    cv_name: String,
+    cv_levels: Vec<String>,
+    cv_template: String,
+    cv_preset_id: Option<String>,
+    cv_sort_by_label: bool,
+    cv_filter_enabled: bool,
+    cv_filter_field: String,
+    cv_filter_value: String,
+    cv_filter_exclude: bool,
+    cv_error: Option<String>,
+
+    // Create-preset panel state
+    create_preset_open: bool,
+    cp_name: String,
+    cp_fields: Vec<String>,
+    cp_error: Option<String>,
 }
 
 impl Default for GanttChart {
     fn default() -> Self {
-        let views = load_gantt_views();
+        let config = load_views_config();
         let mut options = Options::default();
-        if let Some(first) = views.first() {
+        if let Some(first) = config.views.first() {
             options.levels = first.levels.clone();
             options.resource_filter = first.filter.clone();
             options.leaf_label_template = first.leaf_label_template.clone();
             options.sort_by_label = first.sort_by_label;
-            options.leaf_display_name = first.leaf_display_name.clone();
-            options.leaf_hover_details = first.leaf_hover_details;
-            options.resource_state = first.resource_state;
+            options.leaf_info_preset = resolve_leaf_preset(&config.leaf_info_presets, &first.leaf_infos)
+                .cloned()
+                .or_else(|| backward_compat_preset(first));
         }
         GanttChart {
             options,
@@ -165,8 +237,24 @@ impl Default for GanttChart {
             energy_filter_cluster: None,
             energy_filter_owner: None,
             pending_navigation_refresh: false,
-            gantt_views: views,
+            gantt_views: config.views,
             current_view_index: 0,
+            leaf_info_presets: config.leaf_info_presets,
+            create_view_open: false,
+            cv_name: String::new(),
+            cv_levels: Vec::new(),
+            cv_template: String::new(),
+            cv_preset_id: None,
+            cv_sort_by_label: false,
+            cv_filter_enabled: false,
+            cv_filter_field: String::new(),
+            cv_filter_value: String::new(),
+            cv_filter_exclude: false,
+            cv_error: None,
+            create_preset_open: false,
+            cp_name: String::new(),
+            cp_fields: Vec::new(),
+            cp_error: None,
         }
     }
 }
@@ -248,11 +336,34 @@ impl GanttChart {
                     self.options.resource_filter = self.gantt_views[i].filter.clone();
                     self.options.leaf_label_template = self.gantt_views[i].leaf_label_template.clone();
                     self.options.sort_by_label = self.gantt_views[i].sort_by_label;
-                    self.options.leaf_display_name = self.gantt_views[i].leaf_display_name.clone();
-                    self.options.leaf_hover_details = self.gantt_views[i].leaf_hover_details;
-                    self.options.resource_state = self.gantt_views[i].resource_state;
+                    self.options.leaf_info_preset =
+                        resolve_leaf_preset(&self.leaf_info_presets, &self.gantt_views[i].leaf_infos)
+                            .cloned()
+                            .or_else(|| backward_compat_preset(&self.gantt_views[i]));
                     ui.close_menu();
                 }
+            }
+            ui.separator();
+            let is_admin = app.is_admin();
+            let create_btn = egui::Button::new("＋ Create view");
+            let create_btn = if is_admin { create_btn } else {
+                create_btn.fill(egui::Color32::TRANSPARENT)
+            };
+            let resp = ui.add_enabled(is_admin, create_btn);
+            let resp = if !is_admin { resp.on_hover_text("Admin access required") } else { resp };
+            if resp.clicked() {
+                self.cv_name.clear();
+                self.cv_levels.clear();
+                self.cv_template.clear();
+                self.cv_preset_id = None;
+                self.cv_sort_by_label = false;
+                self.cv_filter_enabled = false;
+                self.cv_filter_field.clear();
+                self.cv_filter_value.clear();
+                self.cv_filter_exclude = false;
+                self.cv_error = None;
+                self.create_view_open = true;
+                ui.close_menu();
             }
         });
 
@@ -555,6 +666,172 @@ impl View for GanttChart {
                         });
                 });
             self.admin_panel_open = open;
+        }
+
+        // ── Create-view panel ─────────────────────────────────────────────────
+        const KNOWN_FIELDS: &[(&str, &str)] = &[
+            ("site",           "Site (derived from FQDN)"),
+            ("cluster",        "Cluster"),
+            ("host",           "Host / compute node"),
+            ("type",           "OAR resource type"),
+            ("vlan",           "VLAN ID"),
+            ("disk",           "Disk identifier"),
+            ("nodeset",        "Nodeset"),
+            ("subnet_address", "Subnet address"),
+            ("slash_16",       "Subnet /16 block"),
+            ("slash_17",       "Subnet /17 block"),
+            ("slash_18",       "Subnet /18 block"),
+            ("slash_19",       "Subnet /19 block"),
+            ("slash_20",       "Subnet /20 block"),
+            ("slash_21",       "Subnet /21 block"),
+            ("slash_22",       "Subnet /22 block"),
+            ("state",          "OAR resource state"),
+            ("production",     "Production flag (YES/NO)"),
+            ("cputype",        "CPU type"),
+            ("nodemodel",      "Node model"),
+            ("gpu_model",      "GPU model"),
+            ("chassis",        "Chassis"),
+        ];
+
+        if self.create_view_open {
+            let mut still_open = true;
+            egui::Window::new("Create view")
+                .open(&mut still_open)
+                .resizable(true)
+                .default_width(520.0)
+                .show(ui.ctx(), |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.set_min_width(480.0);
+
+                        // Name
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.cv_name);
+                        ui.add_space(6.0);
+
+                        // Leaf info preset
+                        ui.label("Leaf info preset (tooltip label & fields):");
+                        ui.horizontal(|ui| {
+                            let selected_name = self.cv_preset_id.as_deref()
+                                .and_then(|id| self.leaf_info_presets.iter().find(|p| p.id == id))
+                                .map(|p| p.name.as_str())
+                                .unwrap_or("— none —");
+                            egui::ComboBox::from_id_salt("cv_preset")
+                                .selected_text(selected_name)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.cv_preset_id, None, "— none —");
+                                    for p in &self.leaf_info_presets {
+                                        let id = p.id.clone();
+                                        ui.selectable_value(&mut self.cv_preset_id, Some(id), &p.name);
+                                    }
+                                });
+                            if ui.button("＋").on_hover_text("Create new preset").clicked() {
+                                self.cp_name.clear();
+                                self.cp_fields.clear();
+                                self.cp_error = None;
+                                self.create_preset_open = true;
+                            }
+                        });
+                        ui.add_space(6.0);
+
+                        // Levels
+                        ui.label("Hierarchy levels (outermost → leaf):");
+                        let mut remove_idx: Option<usize> = None;
+                        let mut swap: Option<(usize, usize)> = None;
+                        for (i, level) in self.cv_levels.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{}. {}", i + 1, level));
+                                if i > 0 && ui.small_button("▲").clicked() { swap = Some((i - 1, i)); }
+                                if i + 1 < self.cv_levels.len() && ui.small_button("▼").clicked() { swap = Some((i, i + 1)); }
+                                if ui.small_button("✕").clicked() { remove_idx = Some(i); }
+                            });
+                        }
+                        if let Some(i) = remove_idx { self.cv_levels.remove(i); }
+                        if let Some((a, b)) = swap { self.cv_levels.swap(a, b); }
+
+                        ui.add_space(4.0);
+                        ui.label("Add field:");
+                        ui.horizontal_wrapped(|ui| {
+                            for (field, desc) in KNOWN_FIELDS {
+                                if self.cv_levels.iter().any(|l| l == field) { continue; }
+                                if ui.button(*field).on_hover_text(*desc).clicked() {
+                                    self.cv_levels.push(field.to_string());
+                                }
+                            }
+                        });
+                        ui.add_space(6.0);
+
+                        // Leaf label template
+                        ui.label("Leaf label template (e.g. {host|short}, {type}/{vlan}):");
+                        ui.text_edit_singleline(&mut self.cv_template);
+                        ui.add_space(6.0);
+
+                        // Options
+                        ui.checkbox(&mut self.cv_sort_by_label, "Sort by label (use when levels are opaque IDs)");
+                        ui.add_space(6.0);
+
+                        // Filter
+                        ui.checkbox(&mut self.cv_filter_enabled, "Add resource filter");
+                        if self.cv_filter_enabled {
+                            ui.indent("filter_indent", |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("Field:");
+                                    egui::ComboBox::from_id_salt("cv_filter_field")
+                                        .selected_text(if self.cv_filter_field.is_empty() { "—" } else { &self.cv_filter_field })
+                                        .show_ui(ui, |ui| {
+                                            for (f, desc) in KNOWN_FIELDS {
+                                                ui.selectable_value(&mut self.cv_filter_field, f.to_string(), format!("{} — {}", f, desc));
+                                            }
+                                        });
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Value:");
+                                    ui.text_edit_singleline(&mut self.cv_filter_value);
+                                });
+                                ui.checkbox(&mut self.cv_filter_exclude, "Exclude matching (denylist instead of allowlist)");
+                            });
+                        }
+                        ui.add_space(8.0);
+
+                        // Error
+                        if let Some(err) = &self.cv_error {
+                            ui.colored_label(egui::Color32::RED, err);
+                        }
+
+                        // Save
+                        if ui.button("Save view").clicked() {
+                            if self.cv_name.trim().is_empty() {
+                                self.cv_error = Some("Name required.".into());
+                            } else if self.cv_levels.is_empty() {
+                                self.cv_error = Some("At least one level required.".into());
+                            } else if self.cv_filter_enabled && (self.cv_filter_field.is_empty() || self.cv_filter_value.is_empty()) {
+                                self.cv_error = Some("Filter requires field and value.".into());
+                            } else {
+                                let new_view = GanttView {
+                                    name: self.cv_name.trim().to_string(),
+                                    levels: self.cv_levels.clone(),
+                                    leaf_label_template: if self.cv_template.trim().is_empty() { None } else { Some(self.cv_template.trim().to_string()) },
+                                    leaf_infos: self.cv_preset_id.clone(),
+                                    sort_by_label: self.cv_sort_by_label,
+                                    // backward-compat fields unused for new views
+                                    leaf_display_name: String::new(),
+                                    leaf_hover_details: false,
+                                    filter: if self.cv_filter_enabled {
+                                        Some(types::ResourceFilter {
+                                            field: self.cv_filter_field.clone(),
+                                            value: self.cv_filter_value.clone(),
+                                            exclude: self.cv_filter_exclude,
+                                        })
+                                    } else { None },
+                                };
+                                self.gantt_views.push(new_view);
+                                save_views_config(&self.gantt_views, &self.leaf_info_presets);
+                                self.cv_error = None;
+                                self.create_view_open = false;
+                            }
+                        }
+                    });
+                });
+            if !still_open { self.create_view_open = false; }
         }
 
         let mut visible_range: Option<(i64, i64)> = None;

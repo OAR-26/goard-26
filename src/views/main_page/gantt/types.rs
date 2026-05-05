@@ -40,12 +40,23 @@ impl Info {
 /// Optional equality filter applied to every resource before grouping.
 /// `exclude = false` → keep only resources where field == value.
 /// `exclude = true`  → keep only resources where field != value.
-#[derive(serde::Deserialize, Clone, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub(super) struct ResourceFilter {
     pub field: String,
     pub value: String,
     #[serde(default)]
     pub exclude: bool,
+}
+
+/// A reusable preset that defines how a leaf resource is described in tooltips.
+/// `name` is shown as the label prefix (e.g. "host: node1.cluster");
+/// `fields` lists strata fields to display below it.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+pub struct LeafInfoPreset {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 pub struct Options {
@@ -77,12 +88,8 @@ pub struct Options {
     /// leaf label rather than by the raw grouping key.  Use when grouping keys
     /// are opaque IDs (e.g. slash_* subnet blocks) that don't sort meaningfully.
     pub sort_by_label: bool,
-    /// Human-readable name for the leaf resource type shown in tooltips (e.g. "Host", "VLAN").
-    pub leaf_display_name: String,
-    /// Show detailed strata info tooltip when hovering a leaf label.
-    pub leaf_hover_details: bool,
-    /// Colour-code leaf rows by OAR resource state (dead/alive/…).
-    pub resource_state: bool,
+    /// Resolved preset for the current view — drives tooltip label and field list.
+    pub leaf_info_preset: Option<LeafInfoPreset>,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub zoom_to_relative_s_range: Option<(f64, (f64, f64))>,
 }
@@ -109,9 +116,7 @@ impl Default for Options {
             resource_filter: None,
             leaf_label_template: None,
             sort_by_label: false,
-            leaf_display_name: "Resource".to_string(),
-            leaf_hover_details: false,
-            resource_state: false,
+            leaf_info_preset: None,
         }
     }
 }
