@@ -14,7 +14,7 @@
       },
       "leaf_label_template": "{host|short}",
       "sort_by_label": false,
-      "leaf_infos": null
+      "leaf_infos": "host_info"
     },
     {
       "name": "Nodes (production)",
@@ -30,7 +30,7 @@
       },
       "leaf_label_template": "{host|short}",
       "sort_by_label": false,
-      "leaf_infos": null
+      "leaf_infos": "host_info"
     },
     {
       "name": "vlans",
@@ -42,7 +42,7 @@
       "filter": null,
       "leaf_label_template": "{type}/{vlan}",
       "sort_by_label": false,
-      "leaf_infos": null
+      "leaf_infos": "vlan_info"
     },
     {
       "name": "Subnets",
@@ -59,7 +59,7 @@
       "filter": null,
       "leaf_label_template": "{subnet_address}",
       "sort_by_label": true,
-      "leaf_infos": null
+      "leaf_infos": "subnet_info"
     },
     {
       "name": "Disks",
@@ -73,47 +73,64 @@
       "filter": null,
       "leaf_label_template": "{disk}",
       "sort_by_label": false,
-      "leaf_infos": null
+      "leaf_infos": "disk_info"
     },
     {
-      "name": "secondTry",
+      "name": "today",
       "levels": [
+        "site",
         "host",
-        "cputype",
-        "production"
-      ],
-      "filter": null,
-      "leaf_label_template": "host",
-      "sort_by_label": false,
-      "leaf_infos": null
-    },
-    {
-      "name": "thirdTry",
-      "levels": [
-        "site",
-        "cputype",
-        "production"
-      ],
-      "filter": null,
-      "leaf_label_template": "{host}",
-      "sort_by_label": false,
-      "leaf_infos": null
-    },
-    {
-      "name": "forth",
-      "levels": [
-        "site",
-        "type",
         "gpu_model",
-        "slash_21",
-        "state",
-        "cputype"
+        "chassis"
       ],
       "filter": null,
-      "leaf_label_template": "{type}",
+      "leaf_label_template": "{site}/{host|short}",
       "sort_by_label": false,
-      "leaf_infos": null
+      "leaf_infos": "newtry"
     }
   ],
-  "leaf_info_presets": []
+  "leaf_info_presets": [
+    {
+      "id": "host_info",
+      "name": "Host",
+      "fields": [
+        "cluster",
+        "network_address",
+        "comment",
+        "nodemodel",
+        "cputype",
+        "resource_id"
+      ]
+    },
+    {
+      "id": "vlan_info",
+      "name": "VLAN",
+      "fields": []
+    },
+    {
+      "id": "subnet_info",
+      "name": "Subnet",
+      "fields": []
+    },
+    {
+      "id": "disk_info",
+      "name": "Disk",
+      "fields": []
+    },
+    {
+      "id": "newtry",
+      "name": "newTry",
+      "fields": [
+        "slash_16",
+        "type",
+        "host",
+        "slash_22",
+        "ip",
+        "cputype",
+        "gpu_model",
+        "desktop_computing",
+        "site"
+      ]
+    }
+  ]
 }

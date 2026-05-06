@@ -670,27 +670,44 @@ impl View for GanttChart {
 
         // ── Create-view panel ─────────────────────────────────────────────────
         const KNOWN_FIELDS: &[(&str, &str)] = &[
-            ("site",           "Site (derived from FQDN)"),
-            ("cluster",        "Cluster"),
-            ("host",           "Host / compute node"),
-            ("type",           "OAR resource type"),
-            ("vlan",           "VLAN ID"),
-            ("disk",           "Disk identifier"),
-            ("nodeset",        "Nodeset"),
-            ("subnet_address", "Subnet address"),
-            ("slash_16",       "Subnet /16 block"),
-            ("slash_17",       "Subnet /17 block"),
-            ("slash_18",       "Subnet /18 block"),
-            ("slash_19",       "Subnet /19 block"),
-            ("slash_20",       "Subnet /20 block"),
-            ("slash_21",       "Subnet /21 block"),
-            ("slash_22",       "Subnet /22 block"),
-            ("state",          "OAR resource state"),
-            ("production",     "Production flag (YES/NO)"),
-            ("cputype",        "CPU type"),
-            ("nodemodel",      "Node model"),
-            ("gpu_model",      "GPU model"),
-            ("chassis",        "Chassis"),
+            // Hierarchy-level fields
+            ("site",                    "Site (derived from FQDN)"),
+            ("cluster",                 "Cluster"),
+            ("host",                    "Host / compute node"),
+            ("type",                    "OAR resource type"),
+            ("vlan",                    "VLAN ID"),
+            ("disk",                    "Disk identifier"),
+            ("nodeset",                 "Nodeset"),
+            ("subnet_address",          "Subnet address (full CIDR)"),
+            ("slash_16",                "Subnet /16 block"),
+            ("slash_17",                "Subnet /17 block"),
+            ("slash_18",                "Subnet /18 block"),
+            ("slash_19",                "Subnet /19 block"),
+            ("slash_20",                "Subnet /20 block"),
+            ("slash_21",                "Subnet /21 block"),
+            ("slash_22",                "Subnet /22 block"),
+            // Tooltip-only fields
+            ("state",                   "OAR resource state"),
+            ("next_state",              "Next OAR state"),
+            ("production",              "Production flag (YES/NO)"),
+            ("network_address",         "Network address (FQDN)"),
+            ("ip",                      "IP address"),
+            ("comment",                 "Admin comment"),
+            ("nodemodel",               "Node model"),
+            ("cputype",                 "CPU type"),
+            ("cpufreq",                 "CPU frequency"),
+            ("core_count",              "Physical core count"),
+            ("thread_count",            "Thread count"),
+            ("memnode",                 "Node memory (MB)"),
+            ("memcore",                 "Memory per core (MB)"),
+            ("gpu_model",               "GPU model"),
+            ("gpu_compute_capability",  "GPU compute capability"),
+            ("chassis",                 "Chassis"),
+            ("resource_id",             "OAR resource ID"),
+            ("besteffort",              "Best-effort flag"),
+            ("deploy",                  "Deploy flag"),
+            ("drain",                   "Drain flag"),
+            ("desktop_computing",       "Desktop computing flag"),
         ];
 
         if self.create_view_open {
@@ -832,6 +849,60 @@ impl View for GanttChart {
                     });
                 });
             if !still_open { self.create_view_open = false; }
+        }
+
+        // ── Create-preset panel ───────────────────────────────────────────────
+        if self.create_preset_open {
+            let mut still_open = true;
+            egui::Window::new("Create info preset")
+                .open(&mut still_open)
+                .resizable(true)
+                .default_width(420.0)
+                .show(ui.ctx(), |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.set_min_width(380.0);
+
+                        ui.label("Preset name:");
+                        ui.text_edit_singleline(&mut self.cp_name);
+                        ui.add_space(6.0);
+
+                        ui.label("Fields to show in tooltip:");
+                        for (field, desc) in KNOWN_FIELDS {
+                            let mut checked = self.cp_fields.iter().any(|f| f == field);
+                            if ui.checkbox(&mut checked, format!("{} — {}", field, desc)).changed() {
+                                if checked {
+                                    self.cp_fields.push(field.to_string());
+                                } else {
+                                    self.cp_fields.retain(|f| f != field);
+                                }
+                            }
+                        }
+                        ui.add_space(8.0);
+
+                        if let Some(err) = &self.cp_error {
+                            ui.colored_label(egui::Color32::RED, err);
+                        }
+
+                        if ui.button("Save preset").clicked() {
+                            let name = self.cp_name.trim().to_string();
+                            if name.is_empty() {
+                                self.cp_error = Some("Name required.".into());
+                            } else {
+                                let id = name.to_lowercase().replace(' ', "_");
+                                let preset = types::LeafInfoPreset {
+                                    id: id.clone(),
+                                    name,
+                                    fields: self.cp_fields.clone(),
+                                };
+                                self.leaf_info_presets.push(preset);
+                                self.cv_preset_id = Some(id);
+                                save_views_config(&self.gantt_views, &self.leaf_info_presets);
+                                self.create_preset_open = false;
+                            }
+                        }
+                    });
+                });
+            if !still_open { self.create_preset_open = false; }
         }
 
         let mut visible_range: Option<(i64, i64)> = None;
