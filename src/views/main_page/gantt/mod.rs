@@ -205,6 +205,31 @@ pub struct GanttChart {
     cp_name: String,
     cp_fields: Vec<String>,
     cp_error: Option<String>,
+
+    // Edit-view panel state
+    edit_view_open: bool,
+    ev_idx: Option<usize>,
+    ev_name: String,
+    ev_levels: Vec<String>,
+    ev_template: String,
+    ev_preset_id: Option<String>,
+    ev_sort_by_label: bool,
+    ev_filter_enabled: bool,
+    ev_filter_field: String,
+    ev_filter_value: String,
+    ev_filter_exclude: bool,
+    ev_error: Option<String>,
+
+    delete_view_confirm: Option<usize>,
+
+    // Edit presets
+    edit_preset_open: bool,
+    ep_idx: Option<usize>,
+    ep_name: String,
+    ep_fields: Vec<String>,
+    ep_error: Option<String>,
+
+    delete_preset_confirm: Option<String>,
 }
 
 impl Default for GanttChart {
@@ -255,6 +280,25 @@ impl Default for GanttChart {
             cp_name: String::new(),
             cp_fields: Vec::new(),
             cp_error: None,
+            edit_view_open: false,
+            ev_idx: None,
+            ev_name: String::new(),
+            ev_levels: Vec::new(),
+            ev_template: String::new(),
+            ev_preset_id: None,
+            ev_sort_by_label: false,
+            ev_filter_enabled: false,
+            ev_filter_field: String::new(),
+            ev_filter_value: String::new(),
+            ev_filter_exclude: false,
+            ev_error: None,
+            delete_view_confirm: None,
+            edit_preset_open: false,
+            ep_idx: None,
+            ep_name: String::new(),
+            ep_fields: Vec::new(),
+            ep_error: None,
+            delete_preset_confirm: None,
         }
     }
 }
@@ -326,29 +370,51 @@ impl GanttChart {
             .get(self.current_view_index)
             .map(|v| v.name.as_str())
             .unwrap_or("View");
+        let is_admin = app.is_admin();
         ui.menu_button(format!("View: {}", current_view_name), |ui| {
             for i in 0..self.gantt_views.len() {
                 let is_active = self.current_view_index == i;
                 let name = self.gantt_views[i].name.clone();
-                if ui.selectable_label(is_active, &name).clicked() {
-                    self.current_view_index = i;
-                    self.options.levels = self.gantt_views[i].levels.clone();
-                    self.options.resource_filter = self.gantt_views[i].filter.clone();
-                    self.options.leaf_label_template = self.gantt_views[i].leaf_label_template.clone();
-                    self.options.sort_by_label = self.gantt_views[i].sort_by_label;
-                    self.options.leaf_info_preset =
-                        resolve_leaf_preset(&self.leaf_info_presets, &self.gantt_views[i].leaf_infos)
-                            .cloned()
-                            .or_else(|| backward_compat_preset(&self.gantt_views[i]));
-                    ui.close_menu();
-                }
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(is_active, &name).clicked() {
+                        self.current_view_index = i;
+                        self.options.levels = self.gantt_views[i].levels.clone();
+                        self.options.resource_filter = self.gantt_views[i].filter.clone();
+                        self.options.leaf_label_template = self.gantt_views[i].leaf_label_template.clone();
+                        self.options.sort_by_label = self.gantt_views[i].sort_by_label;
+                        self.options.leaf_info_preset =
+                            resolve_leaf_preset(&self.leaf_info_presets, &self.gantt_views[i].leaf_infos)
+                                .cloned()
+                                .or_else(|| backward_compat_preset(&self.gantt_views[i]));
+                        ui.close_menu();
+                    }
+                    if is_admin {
+                        if ui.small_button("e").on_hover_text("Edit view").clicked() {
+                            let v = &self.gantt_views[i];
+                            self.ev_idx = Some(i);
+                            self.ev_name = v.name.clone();
+                            self.ev_levels = v.levels.clone();
+                            self.ev_template = v.leaf_label_template.clone().unwrap_or_default();
+                            self.ev_preset_id = v.leaf_infos.clone();
+                            self.ev_sort_by_label = v.sort_by_label;
+                            self.ev_filter_enabled = v.filter.is_some();
+                            self.ev_filter_field = v.filter.as_ref().map(|f| f.field.clone()).unwrap_or_default();
+                            self.ev_filter_value = v.filter.as_ref().map(|f| f.value.clone()).unwrap_or_default();
+                            self.ev_filter_exclude = v.filter.as_ref().map(|f| f.exclude).unwrap_or(false);
+                            self.ev_error = None;
+                            self.edit_view_open = true;
+                            ui.close_menu();
+                        }
+                        if ui.small_button("x").on_hover_text("Delete view").clicked() {
+                            self.delete_view_confirm = Some(i);
+                            ui.close_menu();
+                        }
+                    }
+                });
             }
             ui.separator();
-            let is_admin = app.is_admin();
-            let create_btn = egui::Button::new("＋ Create view");
-            let create_btn = if is_admin { create_btn } else {
-                create_btn.fill(egui::Color32::TRANSPARENT)
-            };
+            let create_btn = egui::Button::new("+ Create view");
+            let create_btn = if is_admin { create_btn } else { create_btn.fill(egui::Color32::TRANSPARENT) };
             let resp = ui.add_enabled(is_admin, create_btn);
             let resp = if !is_admin { resp.on_hover_text("Admin access required") } else { resp };
             if resp.clicked() {
@@ -371,8 +437,6 @@ impl GanttChart {
             ui.set_max_height(500.0);
             self.options.job_color.ui(ui);
         });
-
-        let is_admin = app.is_admin();
 
         let admin_button = if is_admin {
             egui::Button::new("Admin")
@@ -731,17 +795,35 @@ impl View for GanttChart {
                             let selected_name = self.cv_preset_id.as_deref()
                                 .and_then(|id| self.leaf_info_presets.iter().find(|p| p.id == id))
                                 .map(|p| p.name.as_str())
-                                .unwrap_or("— none —");
+                                .unwrap_or("(none)");
                             egui::ComboBox::from_id_salt("cv_preset")
                                 .selected_text(selected_name)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.cv_preset_id, None, "— none —");
-                                    for p in &self.leaf_info_presets {
-                                        let id = p.id.clone();
-                                        ui.selectable_value(&mut self.cv_preset_id, Some(id), &p.name);
+                                    let snap: Vec<(usize, String, String)> = self.leaf_info_presets.iter()
+                                        .enumerate().map(|(i, p)| (i, p.id.clone(), p.name.clone())).collect();
+                                    ui.selectable_value(&mut self.cv_preset_id, None, "(none)");
+                                    let mut do_edit: Option<usize> = None;
+                                    let mut do_delete: Option<String> = None;
+                                    for (i, id, name) in &snap {
+                                        ui.horizontal(|ui| {
+                                            ui.selectable_value(&mut self.cv_preset_id, Some(id.clone()), name);
+                                            if ui.small_button("e").on_hover_text("Edit").clicked() { do_edit = Some(*i); }
+                                            if ui.small_button("x").on_hover_text("Delete").clicked() { do_delete = Some(id.clone()); }
+                                        });
+                                    }
+                                    if let Some(i) = do_edit {
+                                        let p = &self.leaf_info_presets[i];
+                                        self.ep_idx = Some(i);
+                                        self.ep_name = p.name.clone();
+                                        self.ep_fields = p.fields.clone();
+                                        self.ep_error = None;
+                                        self.edit_preset_open = true;
+                                    }
+                                    if let Some(id) = do_delete {
+                                        self.delete_preset_confirm = Some(id);
                                     }
                                 });
-                            if ui.button("＋").on_hover_text("Create new preset").clicked() {
+                            if ui.button("+").on_hover_text("Create new preset").clicked() {
                                 self.cp_name.clear();
                                 self.cp_fields.clear();
                                 self.cp_error = None;
@@ -757,9 +839,9 @@ impl View for GanttChart {
                         for (i, level) in self.cv_levels.iter().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.label(format!("{}. {}", i + 1, level));
-                                if i > 0 && ui.small_button("▲").clicked() { swap = Some((i - 1, i)); }
-                                if i + 1 < self.cv_levels.len() && ui.small_button("▼").clicked() { swap = Some((i, i + 1)); }
-                                if ui.small_button("✕").clicked() { remove_idx = Some(i); }
+                                if i > 0 && ui.small_button("^").clicked() { swap = Some((i - 1, i)); }
+                                if i + 1 < self.cv_levels.len() && ui.small_button("v").clicked() { swap = Some((i, i + 1)); }
+                                if ui.small_button("x").clicked() { remove_idx = Some(i); }
                             });
                         }
                         if let Some(i) = remove_idx { self.cv_levels.remove(i); }
@@ -793,10 +875,10 @@ impl View for GanttChart {
                                 ui.horizontal(|ui| {
                                     ui.label("Field:");
                                     egui::ComboBox::from_id_salt("cv_filter_field")
-                                        .selected_text(if self.cv_filter_field.is_empty() { "—" } else { &self.cv_filter_field })
+                                        .selected_text(if self.cv_filter_field.is_empty() { "(select)" } else { &self.cv_filter_field })
                                         .show_ui(ui, |ui| {
                                             for (f, desc) in KNOWN_FIELDS {
-                                                ui.selectable_value(&mut self.cv_filter_field, f.to_string(), format!("{} — {}", f, desc));
+                                                ui.selectable_value(&mut self.cv_filter_field, f.to_string(), format!("{} - {}", f, desc));
                                             }
                                         });
                                 });
@@ -869,7 +951,7 @@ impl View for GanttChart {
                         ui.label("Fields to show in tooltip:");
                         for (field, desc) in KNOWN_FIELDS {
                             let mut checked = self.cp_fields.iter().any(|f| f == field);
-                            if ui.checkbox(&mut checked, format!("{} — {}", field, desc)).changed() {
+                            if ui.checkbox(&mut checked, *field).on_hover_text(*desc).changed() {
                                 if checked {
                                     self.cp_fields.push(field.to_string());
                                 } else {
@@ -903,6 +985,285 @@ impl View for GanttChart {
                     });
                 });
             if !still_open { self.create_preset_open = false; }
+        }
+
+        // ── Edit-view window ─────────────────────────────────────────────────
+        if self.edit_view_open {
+            let mut still_open = true;
+            egui::Window::new("Edit view")
+                .open(&mut still_open)
+                .resizable(true)
+                .default_width(520.0)
+                .show(ui.ctx(), |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.set_min_width(480.0);
+
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.ev_name);
+                        ui.add_space(6.0);
+
+                        ui.label("Leaf info preset:");
+                        ui.horizontal(|ui| {
+                            let selected_name = self.ev_preset_id.as_deref()
+                                .and_then(|id| self.leaf_info_presets.iter().find(|p| p.id == id))
+                                .map(|p| p.name.as_str())
+                                .unwrap_or("(none)");
+                            egui::ComboBox::from_id_salt("ev_preset")
+                                .selected_text(selected_name)
+                                .show_ui(ui, |ui| {
+                                    let snap: Vec<(usize, String, String)> = self.leaf_info_presets.iter()
+                                        .enumerate().map(|(i, p)| (i, p.id.clone(), p.name.clone())).collect();
+                                    ui.selectable_value(&mut self.ev_preset_id, None, "(none)");
+                                    let mut do_edit: Option<usize> = None;
+                                    let mut do_delete: Option<String> = None;
+                                    for (i, id, name) in &snap {
+                                        ui.horizontal(|ui| {
+                                            ui.selectable_value(&mut self.ev_preset_id, Some(id.clone()), name);
+                                            if ui.small_button("e").on_hover_text("Edit").clicked() { do_edit = Some(*i); }
+                                            if ui.small_button("x").on_hover_text("Delete").clicked() { do_delete = Some(id.clone()); }
+                                        });
+                                    }
+                                    if let Some(i) = do_edit {
+                                        let p = &self.leaf_info_presets[i];
+                                        self.ep_idx = Some(i);
+                                        self.ep_name = p.name.clone();
+                                        self.ep_fields = p.fields.clone();
+                                        self.ep_error = None;
+                                        self.edit_preset_open = true;
+                                    }
+                                    if let Some(id) = do_delete {
+                                        self.delete_preset_confirm = Some(id);
+                                    }
+                                });
+                            if ui.button("+").on_hover_text("Create new preset").clicked() {
+                                self.cp_name.clear();
+                                self.cp_fields.clear();
+                                self.cp_error = None;
+                                self.create_preset_open = true;
+                            }
+                        });
+                        ui.add_space(6.0);
+
+                        ui.label("Hierarchy levels (outermost -> leaf):");
+                        let mut remove_idx: Option<usize> = None;
+                        let mut swap: Option<(usize, usize)> = None;
+                        for (i, level) in self.ev_levels.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{}. {}", i + 1, level));
+                                if i > 0 && ui.small_button("^").clicked() { swap = Some((i - 1, i)); }
+                                if i + 1 < self.ev_levels.len() && ui.small_button("v").clicked() { swap = Some((i, i + 1)); }
+                                if ui.small_button("x").clicked() { remove_idx = Some(i); }
+                            });
+                        }
+                        if let Some(i) = remove_idx { self.ev_levels.remove(i); }
+                        if let Some((a, b)) = swap { self.ev_levels.swap(a, b); }
+
+                        ui.add_space(4.0);
+                        ui.label("Add field:");
+                        ui.horizontal_wrapped(|ui| {
+                            for (field, desc) in KNOWN_FIELDS {
+                                if self.ev_levels.iter().any(|l| l == field) { continue; }
+                                if ui.button(*field).on_hover_text(*desc).clicked() {
+                                    self.ev_levels.push(field.to_string());
+                                }
+                            }
+                        });
+                        ui.add_space(6.0);
+
+                        ui.label("Leaf label template:");
+                        ui.text_edit_singleline(&mut self.ev_template);
+                        ui.add_space(6.0);
+
+                        ui.checkbox(&mut self.ev_sort_by_label, "Sort by label");
+                        ui.add_space(6.0);
+
+                        ui.checkbox(&mut self.ev_filter_enabled, "Resource filter");
+                        if self.ev_filter_enabled {
+                            ui.indent("ev_filter", |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("Field:");
+                                    egui::ComboBox::from_id_salt("ev_filter_field")
+                                        .selected_text(if self.ev_filter_field.is_empty() { "(select)" } else { &self.ev_filter_field })
+                                        .show_ui(ui, |ui| {
+                                            for (f, desc) in KNOWN_FIELDS {
+                                                ui.selectable_value(&mut self.ev_filter_field, f.to_string(), format!("{} - {}", f, desc));
+                                            }
+                                        });
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Value:");
+                                    ui.text_edit_singleline(&mut self.ev_filter_value);
+                                });
+                                ui.checkbox(&mut self.ev_filter_exclude, "Exclude matching");
+                            });
+                        }
+                        ui.add_space(8.0);
+
+                        if let Some(err) = &self.ev_error {
+                            ui.colored_label(egui::Color32::RED, err);
+                        }
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Apply").clicked() {
+                                if self.ev_name.trim().is_empty() {
+                                    self.ev_error = Some("Name required.".into());
+                                } else if self.ev_levels.is_empty() {
+                                    self.ev_error = Some("At least one level required.".into());
+                                } else if self.ev_filter_enabled && (self.ev_filter_field.is_empty() || self.ev_filter_value.is_empty()) {
+                                    self.ev_error = Some("Filter requires field and value.".into());
+                                } else if let Some(idx) = self.ev_idx {
+                                    self.gantt_views[idx] = GanttView {
+                                        name: self.ev_name.trim().to_string(),
+                                        levels: self.ev_levels.clone(),
+                                        leaf_label_template: if self.ev_template.trim().is_empty() { None } else { Some(self.ev_template.trim().to_string()) },
+                                        leaf_infos: self.ev_preset_id.clone(),
+                                        sort_by_label: self.ev_sort_by_label,
+                                        leaf_display_name: String::new(),
+                                        leaf_hover_details: false,
+                                        filter: if self.ev_filter_enabled {
+                                            Some(types::ResourceFilter {
+                                                field: self.ev_filter_field.clone(),
+                                                value: self.ev_filter_value.clone(),
+                                                exclude: self.ev_filter_exclude,
+                                            })
+                                        } else { None },
+                                    };
+                                    // Refresh current options if editing the active view
+                                    if self.current_view_index == idx {
+                                        let v = &self.gantt_views[idx];
+                                        self.options.levels = v.levels.clone();
+                                        self.options.resource_filter = v.filter.clone();
+                                        self.options.leaf_label_template = v.leaf_label_template.clone();
+                                        self.options.sort_by_label = v.sort_by_label;
+                                        self.options.leaf_info_preset =
+                                            resolve_leaf_preset(&self.leaf_info_presets, &v.leaf_infos)
+                                                .cloned()
+                                                .or_else(|| backward_compat_preset(v));
+                                    }
+                                    save_views_config(&self.gantt_views, &self.leaf_info_presets);
+                                    self.edit_view_open = false;
+                                }
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.edit_view_open = false;
+                            }
+                        });
+                    });
+                });
+            if !still_open { self.edit_view_open = false; }
+        }
+
+        // ── Delete-view confirm ───────────────────────────────────────────────
+        if let Some(idx) = self.delete_view_confirm {
+            let name = self.gantt_views.get(idx).map(|v| v.name.clone()).unwrap_or_default();
+            egui::Window::new("Confirm delete view")
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.label(format!("Delete view '{}'?", name));
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete").clicked() {
+                            if self.current_view_index >= idx && self.current_view_index > 0 {
+                                self.current_view_index -= 1;
+                            }
+                            self.gantt_views.remove(idx);
+                            save_views_config(&self.gantt_views, &self.leaf_info_presets);
+                            self.delete_view_confirm = None;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.delete_view_confirm = None;
+                        }
+                    });
+                });
+        }
+
+        // ── Manage presets window ─────────────────────────────────────────────
+        // ── Edit-preset window ────────────────────────────────────────────────
+        if self.edit_preset_open {
+            let mut still_open = true;
+            egui::Window::new("Edit preset")
+                .open(&mut still_open)
+                .resizable(true)
+                .default_width(420.0)
+                .show(ui.ctx(), |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.set_min_width(380.0);
+
+                        ui.label("Preset name:");
+                        ui.text_edit_singleline(&mut self.ep_name);
+                        ui.add_space(6.0);
+
+                        ui.label("Fields to show in tooltip:");
+                        for (field, desc) in KNOWN_FIELDS {
+                            let mut checked = self.ep_fields.iter().any(|f| f == field);
+                            if ui.checkbox(&mut checked, *field).on_hover_text(*desc).changed() {
+                                if checked {
+                                    self.ep_fields.push(field.to_string());
+                                } else {
+                                    self.ep_fields.retain(|f| f != field);
+                                }
+                            }
+                        }
+                        ui.add_space(8.0);
+
+                        if let Some(err) = &self.ep_error {
+                            ui.colored_label(egui::Color32::RED, err);
+                        }
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Apply").clicked() {
+                                let name = self.ep_name.trim().to_string();
+                                if name.is_empty() {
+                                    self.ep_error = Some("Name required.".into());
+                                } else if let Some(idx) = self.ep_idx {
+                                    self.leaf_info_presets[idx].name = name;
+                                    self.leaf_info_presets[idx].fields = self.ep_fields.clone();
+                                    // Refresh options if the active view uses this preset
+                                    let active_preset_id = self.gantt_views
+                                        .get(self.current_view_index)
+                                        .and_then(|v| v.leaf_infos.as_deref())
+                                        .map(str::to_string);
+                                    if active_preset_id.as_deref() == self.leaf_info_presets[idx].id.as_str().into() {
+                                        self.options.leaf_info_preset = Some(self.leaf_info_presets[idx].clone());
+                                    }
+                                    save_views_config(&self.gantt_views, &self.leaf_info_presets);
+                                    self.edit_preset_open = false;
+                                }
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.edit_preset_open = false;
+                            }
+                        });
+                    });
+                });
+            if !still_open { self.edit_preset_open = false; }
+        }
+
+        // ── Delete-preset confirm ─────────────────────────────────────────────
+        if self.delete_preset_confirm.is_some() {
+            let id = self.delete_preset_confirm.clone().unwrap();
+            let name = self.leaf_info_presets.iter()
+                .find(|p| p.id == id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| id.clone());
+            egui::Window::new("Confirm delete preset")
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.label(format!("Delete preset '{}'?", name));
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete").clicked() {
+                            self.leaf_info_presets.retain(|p| p.id != id);
+                            save_views_config(&self.gantt_views, &self.leaf_info_presets);
+                            self.delete_preset_confirm = None;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.delete_preset_confirm = None;
+                        }
+                    });
+                });
         }
 
         let mut visible_range: Option<(i64, i64)> = None;

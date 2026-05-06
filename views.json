@@ -74,19 +74,6 @@
       "leaf_label_template": "{disk}",
       "sort_by_label": false,
       "leaf_infos": "disk_info"
-    },
-    {
-      "name": "today",
-      "levels": [
-        "site",
-        "host",
-        "gpu_model",
-        "chassis"
-      ],
-      "filter": null,
-      "leaf_label_template": "{site}/{host|short}",
-      "sort_by_label": false,
-      "leaf_infos": "newtry"
     }
   ],
   "leaf_info_presets": [
