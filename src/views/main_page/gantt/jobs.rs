@@ -217,9 +217,10 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
         if let Some(label) = options.current_hovered_resource_label.as_deref() {
             let trimmed = label.trim();
             if !trimmed.is_empty() {
-                let preset_fields = options.leaf_info_preset.as_ref()
-                    .map(|p| p.fields.as_slice())
-                    .unwrap_or(&[]);
+                let mut preset_fields: Vec<&str> = options.leaf_info_preset.as_ref()
+                    .map(|p| p.fields.iter().map(|s| s.as_str()).collect())
+                    .unwrap_or_default();
+                preset_fields.sort_unstable();
                 if !preset_fields.is_empty() {
                     let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("");
                     let strata = app.strata_by_resource_id.values().find(|s| {
@@ -228,8 +229,8 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
                             .as_deref() == Some(trimmed)
                     });
                     if let Some(s) = strata {
-                        for field in preset_fields {
-                            let val = if field == "cpuset" {
+                        for field in &preset_fields {
+                            let val = if *field == "cpuset" {
                                 cpuset_display_aggregate(app, leaf_field, trimmed)
                             } else {
                                 strata_field_value(s, field)
@@ -385,13 +386,8 @@ pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
         "resource_id" => s.resource_id.map(|v| v.to_string()),
         // Kavlan
         "vlan" => s.vlan.clone(),
-        // Subnet — leaf shows full CIDR; slash_ fields give opaque parent-block IDs
-        "subnet_address" => match (&s.subnet_address, s.subnet_prefix) {
-            (Some(a), Some(p)) => Some(format!("{}/{}", a, p)),
-            (Some(a), None) => Some(a.clone()),
-            _ => None,
-        },
-        "subnet_prefix" => s.subnet_prefix.map(|p| format!("/{}", p)),
+        "subnet_address" => s.subnet_address.clone(),
+        "subnet_prefix" => s.subnet_prefix.map(|p| p.to_string()),
         "slash_16" => s.slash_16.clone(),
         "slash_17" => s.slash_17.clone(),
         "slash_18" => s.slash_18.clone(),
@@ -864,7 +860,8 @@ fn draw_leaf_label(
             .map(|p| p.fields.as_slice())
             .unwrap_or(&[]);
         if !preset_fields.is_empty() {
-            let fields_snapshot: Vec<String> = preset_fields.iter().cloned().collect();
+            let mut fields_snapshot: Vec<String> = preset_fields.iter().cloned().collect();
+            fields_snapshot.sort_unstable();
             let layer_id = LayerId::new(Order::Tooltip, Id::new("gantt-label-layer"));
             egui::containers::popup::show_tooltip(
                 &info.ctx,

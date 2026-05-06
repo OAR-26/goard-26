@@ -57,7 +57,7 @@
         "slash_22"
       ],
       "filter": null,
-      "leaf_label_template": "{subnet_address}",
+      "leaf_label_template": "{subnet_address}/{subnet_prefix}",
       "sort_by_label": true,
       "leaf_infos": "subnet_info"
     },
@@ -81,15 +81,16 @@
       "id": "host_info",
       "name": "Host",
       "fields": [
-        "cluster",
         "network_address",
         "comment",
-        "nodemodel",
-        "cputype",
-        "resource_id",
-        "type",
-        "host",
-        "cpuset"
+        "cpuset",
+        "besteffort",
+        "deploy",
+        "drain",
+        "gpudevice",
+        "max_walltime",
+        "nodeset",
+        "type"
       ]
     },
     {
@@ -97,8 +98,7 @@
       "name": "VLAN",
       "fields": [
         "type",
-        "vlan",
-        "host"
+        "vlan"
       ]
     },
     {
@@ -106,8 +106,7 @@
       "name": "Subnet",
       "fields": [
         "subnet_address",
-        "ip",
-        "network_address"
+        "subnet_prefix"
       ]
     },
     {

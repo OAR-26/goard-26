@@ -736,7 +736,8 @@ impl View for GanttChart {
         }
 
         // ── Create-view panel ─────────────────────────────────────────────────
-        const KNOWN_FIELDS: &[(&str, &str)] = &[
+        fn known_fields_sorted() -> Vec<(&'static str, &'static str)> {
+            let mut v: Vec<(&str, &str)> = vec![
             // Hierarchy-level fields
             ("site",                    "Site (derived from FQDN)"),
             ("cluster",                 "Cluster"),
@@ -746,6 +747,7 @@ impl View for GanttChart {
             ("disk",                    "Disk identifier"),
             ("nodeset",                 "Nodeset"),
             ("subnet_address",          "Subnet address (full CIDR)"),
+            ("subnet_prefix",           "Subnet prefix length"),
             ("slash_16",                "Subnet /16 block"),
             ("slash_17",                "Subnet /17 block"),
             ("slash_18",                "Subnet /18 block"),
@@ -822,7 +824,11 @@ impl View for GanttChart {
             ("switch",                  "Switch identifier"),
             ("virtual",                 "Virtualization flag"),
             ("wattmeter",               "Wattmeter flag"),
-        ];
+            ];
+            v.sort_unstable_by_key(|(f, _)| *f);
+            v
+        }
+        let known_fields = known_fields_sorted();
 
         if self.create_view_open {
             let mut still_open = true;
@@ -848,7 +854,9 @@ impl View for GanttChart {
                                 .unwrap_or("(none)");
                             egui::ComboBox::from_id_salt("cv_preset")
                                 .selected_text(selected_name)
+                                .width(300.0)
                                 .show_ui(ui, |ui| {
+                                    ui.set_min_width(300.0);
                                     let snap: Vec<(usize, String, String)> = self.leaf_info_presets.iter()
                                         .enumerate().map(|(i, p)| (i, p.id.clone(), p.name.clone())).collect();
                                     ui.selectable_value(&mut self.cv_preset_id, None, "(none)");
@@ -902,7 +910,7 @@ impl View for GanttChart {
                         ui.add_space(4.0);
                         ui.label("Add field:");
                         ui.horizontal_wrapped(|ui| {
-                            for (field, desc) in KNOWN_FIELDS {
+                            for (field, desc) in &known_fields {
                                 if self.cv_levels.iter().any(|l| l == field) { continue; }
                                 if ui.button(*field).on_hover_text(*desc).clicked() {
                                     self.cv_levels.push(field.to_string());
@@ -929,7 +937,7 @@ impl View for GanttChart {
                                     egui::ComboBox::from_id_salt("cv_filter_field")
                                         .selected_text(if self.cv_filter_field.is_empty() { "(select)" } else { &self.cv_filter_field })
                                         .show_ui(ui, |ui| {
-                                            for (f, desc) in KNOWN_FIELDS {
+                                            for (f, desc) in &known_fields {
                                                 ui.selectable_value(&mut self.cv_filter_field, f.to_string(), format!("{} - {}", f, desc));
                                             }
                                         });
@@ -1001,7 +1009,7 @@ impl View for GanttChart {
                         ui.add_space(6.0);
 
                         ui.label("Fields to show in tooltip:");
-                        for (field, desc) in KNOWN_FIELDS {
+                        for (field, desc) in &known_fields {
                             let mut checked = self.cp_fields.iter().any(|f| f == field);
                             if ui.checkbox(&mut checked, *field).on_hover_text(*desc).changed() {
                                 if checked {
@@ -1062,7 +1070,9 @@ impl View for GanttChart {
                                 .unwrap_or("(none)");
                             egui::ComboBox::from_id_salt("ev_preset")
                                 .selected_text(selected_name)
+                                .width(300.0)
                                 .show_ui(ui, |ui| {
+                                    ui.set_min_width(300.0);
                                     let snap: Vec<(usize, String, String)> = self.leaf_info_presets.iter()
                                         .enumerate().map(|(i, p)| (i, p.id.clone(), p.name.clone())).collect();
                                     ui.selectable_value(&mut self.ev_preset_id, None, "(none)");
@@ -1115,7 +1125,7 @@ impl View for GanttChart {
                         ui.add_space(4.0);
                         ui.label("Add field:");
                         ui.horizontal_wrapped(|ui| {
-                            for (field, desc) in KNOWN_FIELDS {
+                            for (field, desc) in &known_fields {
                                 if self.ev_levels.iter().any(|l| l == field) { continue; }
                                 if ui.button(*field).on_hover_text(*desc).clicked() {
                                     self.ev_levels.push(field.to_string());
@@ -1139,7 +1149,7 @@ impl View for GanttChart {
                                     egui::ComboBox::from_id_salt("ev_filter_field")
                                         .selected_text(if self.ev_filter_field.is_empty() { "(select)" } else { &self.ev_filter_field })
                                         .show_ui(ui, |ui| {
-                                            for (f, desc) in KNOWN_FIELDS {
+                                            for (f, desc) in &known_fields {
                                                 ui.selectable_value(&mut self.ev_filter_field, f.to_string(), format!("{} - {}", f, desc));
                                             }
                                         });
@@ -1249,7 +1259,7 @@ impl View for GanttChart {
                         ui.add_space(6.0);
 
                         ui.label("Fields to show in tooltip:");
-                        for (field, desc) in KNOWN_FIELDS {
+                        for (field, desc) in &known_fields {
                             let mut checked = self.ep_fields.iter().any(|f| f == field);
                             if ui.checkbox(&mut checked, *field).on_hover_text(*desc).changed() {
                                 if checked {
