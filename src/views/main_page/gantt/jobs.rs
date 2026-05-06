@@ -109,8 +109,11 @@ fn cpuset_display(s: &Strata) -> Option<String> {
             }
             serde_json::Value::String(raw) => {
                 let mut ints = extract_ints_from_str(raw);
-                if ints.len() > 1 {
+                if !ints.is_empty() {
                     return format_cpuset_grid5000(&mut ints);
+                }
+                if !raw.trim().is_empty() {
+                    return Some(raw.clone());
                 }
             }
             serde_json::Value::Number(n) => {
@@ -125,6 +128,58 @@ fn cpuset_display(s: &Strata) -> Option<String> {
     }
     let count = s.core_count.or(s.thread_count).unwrap_or(0);
     if count <= 0 { None } else { Some(format!("0-{}", count - 1)) }
+}
+
+/// Collect cpuset values from ALL strata entries matching `key` at `leaf_field`,
+/// then format the combined range. Works correctly for per-core data (hosts).
+fn cpuset_display_aggregate(
+    app: &ApplicationContext,
+    leaf_field: &str,
+    key: &str,
+) -> Option<String> {
+    let mut all_ints: Vec<i32> = Vec::new();
+    for s in app.strata_by_resource_id.values() {
+        if strata_field_value(s, leaf_field)
+            .map(|v| v.trim().to_string())
+            .as_deref()
+            != Some(key.trim())
+        {
+            continue;
+        }
+        if let Some(v) = &s.cpuset {
+            match v {
+                serde_json::Value::Array(arr) => {
+                    for x in arr {
+                        match x {
+                            serde_json::Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    if (0..=i32::MAX as i64).contains(&i) {
+                                        all_ints.push(i as i32);
+                                    }
+                                }
+                            }
+                            serde_json::Value::String(st) => {
+                                all_ints.extend(extract_ints_from_str(st));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                serde_json::Value::String(raw) => {
+                    all_ints.extend(extract_ints_from_str(raw));
+                }
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        if (0..=i32::MAX as i64).contains(&i) {
+                            all_ints.push(i as i32);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    format_cpuset_grid5000(&mut all_ints)
 }
 
 // ---------------------------------------------------------------------------
@@ -175,8 +230,7 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
                     if let Some(s) = strata {
                         for field in preset_fields {
                             let val = if field == "cpuset" {
-                                cpuset_display(s)
-                                    .map(|v| v.trim().to_string())
+                                cpuset_display_aggregate(app, leaf_field, trimmed)
                             } else {
                                 strata_field_value(s, field)
                                     .map(|v| v.trim().to_string())
@@ -827,8 +881,7 @@ fn draw_leaf_label(
                     if let Some(s) = strata_label {
                         for field in &fields_snapshot {
                             let val = if field == "cpuset" {
-                                cpuset_display(s)
-                                    .map(|v| v.trim().to_string())
+                                cpuset_display_aggregate(app, leaf_field, trimmed)
                             } else {
                                 strata_field_value(s, field)
                                     .map(|v| v.trim().to_string())

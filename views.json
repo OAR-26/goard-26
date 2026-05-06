@@ -88,7 +88,8 @@
         "cputype",
         "resource_id",
         "type",
-        "host"
+        "host",
+        "cpuset"
       ]
     },
     {
@@ -119,7 +120,10 @@
         "disk",
         "drain",
         "network_address",
-        "type"
+        "type",
+        "cpuset",
+        "diskpath",
+        "disktype"
       ]
     },
     {
