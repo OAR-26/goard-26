@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Strata {
@@ -101,4 +102,8 @@ pub struct Strata {
     pub disk: Option<String>,
     #[serde(default)]
     pub nodeset: Option<String>,
+
+    /// Catches any data.json field not explicitly named above.
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 }

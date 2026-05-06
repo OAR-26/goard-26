@@ -372,6 +372,7 @@ impl GanttChart {
             .unwrap_or("View");
         let is_admin = app.is_admin();
         ui.menu_button(format!("View: {}", current_view_name), |ui| {
+            ui.set_min_width(220.0);
             for i in 0..self.gantt_views.len() {
                 let is_active = self.current_view_index == i;
                 let name = self.gantt_views[i].name.clone();
@@ -389,26 +390,28 @@ impl GanttChart {
                         ui.close_menu();
                     }
                     if is_admin {
-                        if ui.small_button("e").on_hover_text("Edit view").clicked() {
-                            let v = &self.gantt_views[i];
-                            self.ev_idx = Some(i);
-                            self.ev_name = v.name.clone();
-                            self.ev_levels = v.levels.clone();
-                            self.ev_template = v.leaf_label_template.clone().unwrap_or_default();
-                            self.ev_preset_id = v.leaf_infos.clone();
-                            self.ev_sort_by_label = v.sort_by_label;
-                            self.ev_filter_enabled = v.filter.is_some();
-                            self.ev_filter_field = v.filter.as_ref().map(|f| f.field.clone()).unwrap_or_default();
-                            self.ev_filter_value = v.filter.as_ref().map(|f| f.value.clone()).unwrap_or_default();
-                            self.ev_filter_exclude = v.filter.as_ref().map(|f| f.exclude).unwrap_or(false);
-                            self.ev_error = None;
-                            self.edit_view_open = true;
-                            ui.close_menu();
-                        }
-                        if ui.small_button("x").on_hover_text("Delete view").clicked() {
-                            self.delete_view_confirm = Some(i);
-                            ui.close_menu();
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("🗑").on_hover_text("Delete view").clicked() {
+                                self.delete_view_confirm = Some(i);
+                                ui.close_menu();
+                            }
+                            if ui.small_button("✏").on_hover_text("Edit view").clicked() {
+                                let v = &self.gantt_views[i];
+                                self.ev_idx = Some(i);
+                                self.ev_name = v.name.clone();
+                                self.ev_levels = v.levels.clone();
+                                self.ev_template = v.leaf_label_template.clone().unwrap_or_default();
+                                self.ev_preset_id = v.leaf_infos.clone();
+                                self.ev_sort_by_label = v.sort_by_label;
+                                self.ev_filter_enabled = v.filter.is_some();
+                                self.ev_filter_field = v.filter.as_ref().map(|f| f.field.clone()).unwrap_or_default();
+                                self.ev_filter_value = v.filter.as_ref().map(|f| f.value.clone()).unwrap_or_default();
+                                self.ev_filter_exclude = v.filter.as_ref().map(|f| f.exclude).unwrap_or(false);
+                                self.ev_error = None;
+                                self.edit_view_open = true;
+                                ui.close_menu();
+                            }
+                        });
                     }
                 });
             }
@@ -772,6 +775,53 @@ impl View for GanttChart {
             ("deploy",                  "Deploy flag"),
             ("drain",                   "Drain flag"),
             ("desktop_computing",       "Desktop computing flag"),
+            // Additional Strata named fields
+            ("state_num",               "OAR state number"),
+            ("rconsole",                "Remote console"),
+            ("cluster_priority",        "Cluster priority"),
+            ("core",                    "Core index"),
+            ("suspended_jobs",          "Suspended jobs"),
+            ("eth_rate",                "Ethernet rate (Gbps)"),
+            ("gpudevice",               "GPU device info"),
+            ("cpuset",                  "CPU core set (ranges)"),
+            // Extra data.json fields (via catch-all)
+            ("available_upto",          "Available up to (timestamp)"),
+            ("chunks",                  "OAR chunks"),
+            ("cpu",                     "CPU ID"),
+            ("cpu_count",               "CPU count"),
+            ("cpuarch",                 "CPU architecture"),
+            ("cpucore",                 "Cores per CPU"),
+            ("disk_reservation_count",  "Disk reservation count"),
+            ("diskpath",                "Disk path"),
+            ("disktype",                "Disk type"),
+            ("eth_count",               "Ethernet interface count"),
+            ("eth_kavlan_count",        "Kavlan ethernet count"),
+            ("exotic",                  "Exotic resource flag"),
+            ("expiry_date",             "Expiry date"),
+            ("finaud_decision",         "Finaud decision"),
+            ("gpu",                     "GPU ID"),
+            ("gpu_compute_capability_major", "GPU compute capability (major)"),
+            ("gpu_count",               "GPU count"),
+            ("gpu_mem",                 "GPU memory (MB)"),
+            ("grub",                    "Grub flag"),
+            ("ib",                      "InfiniBand flag"),
+            ("ib_count",                "InfiniBand interface count"),
+            ("ib_rate",                 "InfiniBand rate (Gbps)"),
+            ("last_available_upto",     "Last available up to (timestamp)"),
+            ("last_job_date",           "Last job date"),
+            ("maintenance",             "Maintenance flag"),
+            ("max_walltime",            "Max walltime (s)"),
+            ("mic",                     "MIC (Xeon Phi) flag"),
+            ("myri",                    "Myrinet flag"),
+            ("myri_count",              "Myrinet interface count"),
+            ("myri_rate",               "Myrinet rate (Gbps)"),
+            ("next_finaud_decision",    "Next finaud decision"),
+            ("opa_count",               "OmniPath interface count"),
+            ("opa_rate",                "OmniPath rate (Gbps)"),
+            ("scheduler_priority",      "Scheduler priority"),
+            ("switch",                  "Switch identifier"),
+            ("virtual",                 "Virtualization flag"),
+            ("wattmeter",               "Wattmeter flag"),
         ];
 
         if self.create_view_open {
@@ -807,8 +857,10 @@ impl View for GanttChart {
                                     for (i, id, name) in &snap {
                                         ui.horizontal(|ui| {
                                             ui.selectable_value(&mut self.cv_preset_id, Some(id.clone()), name);
-                                            if ui.small_button("e").on_hover_text("Edit").clicked() { do_edit = Some(*i); }
-                                            if ui.small_button("x").on_hover_text("Delete").clicked() { do_delete = Some(id.clone()); }
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if ui.small_button("🗑").on_hover_text("Delete").clicked() { do_delete = Some(id.clone()); }
+                                                if ui.small_button("✏").on_hover_text("Edit").clicked() { do_edit = Some(*i); }
+                                            });
                                         });
                                     }
                                     if let Some(i) = do_edit {
@@ -839,9 +891,9 @@ impl View for GanttChart {
                         for (i, level) in self.cv_levels.iter().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.label(format!("{}. {}", i + 1, level));
-                                if i > 0 && ui.small_button("^").clicked() { swap = Some((i - 1, i)); }
-                                if i + 1 < self.cv_levels.len() && ui.small_button("v").clicked() { swap = Some((i, i + 1)); }
-                                if ui.small_button("x").clicked() { remove_idx = Some(i); }
+                                if i > 0 && ui.small_button("⬆").clicked() { swap = Some((i - 1, i)); }
+                                if i + 1 < self.cv_levels.len() && ui.small_button("⬇").clicked() { swap = Some((i, i + 1)); }
+                                if ui.small_button("🗑").clicked() { remove_idx = Some(i); }
                             });
                         }
                         if let Some(i) = remove_idx { self.cv_levels.remove(i); }
@@ -1019,8 +1071,10 @@ impl View for GanttChart {
                                     for (i, id, name) in &snap {
                                         ui.horizontal(|ui| {
                                             ui.selectable_value(&mut self.ev_preset_id, Some(id.clone()), name);
-                                            if ui.small_button("e").on_hover_text("Edit").clicked() { do_edit = Some(*i); }
-                                            if ui.small_button("x").on_hover_text("Delete").clicked() { do_delete = Some(id.clone()); }
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if ui.small_button("🗑").on_hover_text("Delete").clicked() { do_delete = Some(id.clone()); }
+                                                if ui.small_button("✏").on_hover_text("Edit").clicked() { do_edit = Some(*i); }
+                                            });
                                         });
                                     }
                                     if let Some(i) = do_edit {
@@ -1050,9 +1104,9 @@ impl View for GanttChart {
                         for (i, level) in self.ev_levels.iter().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.label(format!("{}. {}", i + 1, level));
-                                if i > 0 && ui.small_button("^").clicked() { swap = Some((i - 1, i)); }
-                                if i + 1 < self.ev_levels.len() && ui.small_button("v").clicked() { swap = Some((i, i + 1)); }
-                                if ui.small_button("x").clicked() { remove_idx = Some(i); }
+                                if i > 0 && ui.small_button("⬆").clicked() { swap = Some((i - 1, i)); }
+                                if i + 1 < self.ev_levels.len() && ui.small_button("⬇").clicked() { swap = Some((i, i + 1)); }
+                                if ui.small_button("🗑").clicked() { remove_idx = Some(i); }
                             });
                         }
                         if let Some(i) = remove_idx { self.ev_levels.remove(i); }

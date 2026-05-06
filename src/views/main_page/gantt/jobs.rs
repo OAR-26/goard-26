@@ -1,4 +1,3 @@
-use super::labels::short_host_label;
 use super::theme::get_theme_colors;
 use super::types::{gutter_stripes_total_w, Info, Options, STRIPE_W};
 use crate::models::data_structure::application_context::ApplicationContext;
@@ -163,32 +162,26 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
         if let Some(label) = options.current_hovered_resource_label.as_deref() {
             let trimmed = label.trim();
             if !trimmed.is_empty() {
-                tooltip_text.push_str(&format!("{}: {}\n", kind_label.to_lowercase(), trimmed));
                 let preset_fields = options.leaf_info_preset.as_ref()
                     .map(|p| p.fields.as_slice())
                     .unwrap_or(&[]);
                 if !preset_fields.is_empty() {
-                    let keys = [
-                        trimmed.to_string(),
-                        trimmed.split('.').next().unwrap_or(trimmed).to_string(),
-                    ];
-                    for key in &keys {
-                        if let Some(s) = app.strata_by_host.get(key) {
-                            for field in preset_fields {
-                                let val = if field == "cpuset" {
-                                    cpuset_display(s)
-                                        .map(|v| v.trim().to_string())
-                                        .filter(|v| !v.is_empty())
-                                } else {
-                                    strata_field_value(s, field)
-                                        .map(|v| v.trim().to_string())
-                                        .filter(|v| !v.is_empty())
-                                };
-                                if let Some(v) = val {
-                                    tooltip_text.push_str(&format!("{}: {}\n", field, v));
-                                }
-                            }
-                            break;
+                    let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("");
+                    let strata = app.strata_by_resource_id.values().find(|s| {
+                        strata_field_value(s, leaf_field)
+                            .map(|v| v.trim().to_string())
+                            .as_deref() == Some(trimmed)
+                    });
+                    if let Some(s) = strata {
+                        for field in preset_fields {
+                            let val = if field == "cpuset" {
+                                cpuset_display(s)
+                                    .map(|v| v.trim().to_string())
+                            } else {
+                                strata_field_value(s, field)
+                                    .map(|v| v.trim().to_string())
+                            };
+                            tooltip_text.push_str(&format!("{}: {}\n", field, val.as_deref().unwrap_or("")));
                         }
                     }
                 }
@@ -355,7 +348,22 @@ pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
         // Disk
         "disk" => s.disk.clone(),
         "nodeset" => s.nodeset.clone(),
-        _ => None,
+        // Named Strata fields not yet exposed
+        "state_num" => s.state_num.map(|v| v.to_string()),
+        "rconsole" => s.rconsole.clone(),
+        "cluster_priority" => s.cluster_priority.map(|v| v.to_string()),
+        "core" => s.core.map(|v| v.to_string()),
+        "suspended_jobs" => s.suspended_jobs.clone(),
+        "eth_rate" => s.eth_rate.map(|v| v.to_string()),
+        "gpudevice" => s.gpudevice.as_ref().map(|v| v.to_string()),
+        // Fall back to the catch-all extra map for any other data.json field
+        field => s.extra.get(field).map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            serde_json::Value::Null => String::new(),
+            other => other.to_string(),
+        }),
     }
 }
 
@@ -802,9 +810,6 @@ fn draw_leaf_label(
             .map(|p| p.fields.as_slice())
             .unwrap_or(&[]);
         if !preset_fields.is_empty() {
-            let kind_label = options.leaf_info_preset.as_ref()
-                .map(|p| p.name.as_str())
-                .unwrap_or("Resource");
             let fields_snapshot: Vec<String> = preset_fields.iter().cloned().collect();
             let layer_id = LayerId::new(Order::Tooltip, Id::new("gantt-label-layer"));
             egui::containers::popup::show_tooltip(
@@ -812,22 +817,23 @@ fn draw_leaf_label(
                 layer_id,
                 Id::new(format!("gantt-leaf-label-{}", key)),
                 |ui: &mut egui::Ui| {
-                    ui.label(format!("{}: {}", kind_label.to_lowercase(), key));
-                    let key_short = short_host_label(key);
-                    if let Some(s) = app.strata_by_host.get(key).or_else(|| app.strata_by_host.get(&key_short)) {
+                    let trimmed = key.trim();
+                    let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("");
+                    let strata_label = app.strata_by_resource_id.values().find(|s| {
+                        strata_field_value(s, leaf_field)
+                            .map(|v| v.trim().to_string())
+                            .as_deref() == Some(trimmed)
+                    });
+                    if let Some(s) = strata_label {
                         for field in &fields_snapshot {
                             let val = if field == "cpuset" {
                                 cpuset_display(s)
                                     .map(|v| v.trim().to_string())
-                                    .filter(|v| !v.is_empty())
                             } else {
                                 strata_field_value(s, field)
                                     .map(|v| v.trim().to_string())
-                                    .filter(|v| !v.is_empty())
                             };
-                            if let Some(v) = val {
-                                ui.label(format!("{}: {}", field, v));
-                            }
+                            ui.label(format!("{}: {}", field, val.as_deref().unwrap_or("")));
                         }
                     }
                 },

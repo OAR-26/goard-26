@@ -86,23 +86,41 @@
         "comment",
         "nodemodel",
         "cputype",
-        "resource_id"
+        "resource_id",
+        "type",
+        "host"
       ]
     },
     {
       "id": "vlan_info",
       "name": "VLAN",
-      "fields": []
+      "fields": [
+        "type",
+        "vlan",
+        "host"
+      ]
     },
     {
       "id": "subnet_info",
       "name": "Subnet",
-      "fields": []
+      "fields": [
+        "subnet_address",
+        "ip",
+        "network_address"
+      ]
     },
     {
       "id": "disk_info",
       "name": "Disk",
-      "fields": []
+      "fields": [
+        "besteffort",
+        "comment",
+        "deploy",
+        "disk",
+        "drain",
+        "network_address",
+        "type"
+      ]
     },
     {
       "id": "newtry",
