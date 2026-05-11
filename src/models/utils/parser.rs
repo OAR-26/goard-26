@@ -242,5 +242,14 @@ fn from_json_value(json: &Value) -> Job {
         clusters: Vec::new(),
         hosts: Vec::new(),
         main_resource_state: ResourceState::Unknown,
+        job_type: json["type"].as_str().unwrap_or("").to_string(),
+        job_types: json["types"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        name: json["name"].as_str().map(|s| s.to_string()),
+        project: json["project"].as_str().unwrap_or("").to_string(),
     }
 }

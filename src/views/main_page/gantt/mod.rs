@@ -580,6 +580,10 @@ impl View for GanttChart {
                 exit_code: None,
                 gantt_color: egui::Color32::TRANSPARENT,
                 main_resource_state: ResourceState::Unknown,
+                job_type: String::new(),
+                job_types: Vec::new(),
+                name: None,
+                project: String::new(),
             });
         }
 

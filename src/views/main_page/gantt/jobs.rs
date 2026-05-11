@@ -187,18 +187,31 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
     let mut tooltip_text = String::new();
 
     if let Some(job) = &options.current_hovered_job {
+        let stop_str = if job.stop_time == 0 { "Running".to_string() } else { format_timestamp(job.stop_time) };
+        let types_str = if job.job_types.is_empty() { "-".to_string() } else { job.job_types.join(", ") };
+        let name_str = job.name.as_deref().unwrap_or("-");
+        let resources_str = format!("{} resources", job.assigned_resources.len());
+        let machines_str = job.hosts.len().to_string();
+        let h = job.walltime / 3600;
+        let m = (job.walltime % 3600) / 60;
+        let s = job.walltime % 60;
+        let walltime_str = format!("{}h {:02}m {:02}s", h, m, s);
         tooltip_text.push_str(&format!(
-            "{}: {}\n{}: {:?}\n{}: {}\n{}: {}\n{}: {} seconds",
-            t!("app.details.tooltip.job_id"),
+            "Job: {}\nUser: {}\nKind: {}\nQueue: {}\nTypes: {}\nName: {}\nProject: {}\nWalltime: {}\nResources: {}\nMachines: {}\nSubmission: {}\nStart: {}\nStop: {}\nState: {}",
             job.id,
-            t!("app.details.tooltip.owner"),
             job.owner,
-            t!("app.details.tooltip.state"),
-            job.state.get_label(),
-            t!("app.details.tooltip.start_time"),
+            job.job_type,
+            job.queue,
+            types_str,
+            name_str,
+            job.project,
+            walltime_str,
+            resources_str,
+            machines_str,
+            format_timestamp(job.submission_time),
             format_timestamp(job.scheduled_start),
-            t!("app.details.tooltip.walltime"),
-            job.walltime
+            stop_str,
+            job.state.get_label(),
         ));
     }
 
@@ -243,6 +256,30 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
         tooltip_text.push_str(&format!("{} State: {:?}", kind_label, resource_state));
         options.current_hovered_resource_state = None;
         options.current_hovered_resource_label = None;
+    }
+
+    if let Some(iv) = options.current_hovered_dead_interval.take() {
+        let state_label = match iv.state {
+            ResourceState::Dead => "Dead",
+            ResourceState::Absent => "Absent",
+            ResourceState::Suspected => "Suspected",
+            _ => "Unknown",
+        };
+        let until_str = if iv.end_s == 0 {
+            "Indefinite".to_string()
+        } else {
+            format_timestamp(iv.end_s)
+        };
+        let interval_text = format!(
+            "{}\nSince: {}\nUntil: {}",
+            state_label,
+            format_timestamp(iv.start_s),
+            until_str,
+        );
+        if !tooltip_text.is_empty() {
+            tooltip_text.push('\n');
+        }
+        tooltip_text.push_str(&interval_text);
     }
 
     if !tooltip_text.is_empty() {
@@ -913,7 +950,7 @@ fn resource_ids_for_leaf(
 
 fn draw_dead_intervals_for_row(
     info: &Info,
-    options: &Options,
+    options: &mut Options,
     top_y: f32,
     height: f32,
     intervals: &[DeadInterval],
@@ -921,7 +958,6 @@ fn draw_dead_intervals_for_row(
     if intervals.is_empty() {
         return;
     }
-    let theme_colors = get_theme_colors(&info.ctx.style());
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
         pos2(info.canvas.max.x, info.canvas.max.y),
@@ -930,10 +966,10 @@ fn draw_dead_intervals_for_row(
     let hachure_spacing = 10.0;
 
     for iv in intervals {
-        let color = match iv.state {
-            ResourceState::Dead => Color32::from_rgba_premultiplied(255, 0, 0, 150),
-            ResourceState::Absent => theme_colors.hatch,
-            ResourceState::Suspected => Color32::from_rgba_premultiplied(255, 140, 0, 150),
+        let base_color = match iv.state {
+            ResourceState::Dead => Color32::from_rgba_premultiplied(120, 120, 120, 150),
+            ResourceState::Absent => Color32::from_rgba_premultiplied(30, 100, 220, 150),
+            ResourceState::Suspected => Color32::from_rgba_premultiplied(220, 30, 30, 150),
             _ => continue,
         };
         let start_x = info.point_from_s(options, iv.start_s);
@@ -942,6 +978,17 @@ fn draw_dead_intervals_for_row(
         } else {
             info.point_from_s(options, iv.end_s)
         };
+
+        let hover_rect = Rect::from_min_max(
+            pos2(start_x.max(info.canvas.min.x + info.gutter_width), top_y),
+            pos2(end_x.min(info.canvas.max.x), top_y + height),
+        );
+        let is_hovered = info.response.hover_pos().map_or(false, |m| hover_rect.contains(m));
+        if is_hovered && options.current_hovered_dead_interval.is_none() {
+            options.current_hovered_dead_interval = Some(iv.clone());
+        }
+        let color = if is_hovered { base_color.gamma_multiply(1.5) } else { base_color };
+
         let mut x = start_x.max(info.canvas.min.x);
         let mut shapes = Vec::new();
         while x < end_x.min(info.canvas.max.x) {
@@ -1076,6 +1123,7 @@ pub(super) fn draw_level_n<'a>(
                     }
                 }
                 draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals);
+
 
                 // Collect rows for job-ID label painting.
                 let mut sorted_jobs: Vec<&&Job> = jobs.iter().collect();

@@ -1026,6 +1026,10 @@ impl ApplicationContext {
             exit_code: None,
             gantt_color: egui::Color32::TRANSPARENT,
             main_resource_state: ResourceState::Unknown,
+            job_type: String::new(),
+            job_types: Vec::new(),
+            name: None,
+            project: String::new(),
         });
         
         // Create a unique name for this data source
@@ -1264,6 +1268,10 @@ impl ApplicationContext {
             exit_code: None,
             gantt_color: crate::models::utils::utils::convert_id_to_color(id),
             main_resource_state: ResourceState::Alive,
+            job_type: String::new(),
+            job_types: Vec::new(),
+            name: None,
+            project: String::new(),
         })
     }
     

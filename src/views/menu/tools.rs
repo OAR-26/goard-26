@@ -101,6 +101,10 @@ impl Tools {
                         exit_code: None,
                         gantt_color: Color32::TRANSPARENT,
                         main_resource_state: ResourceState::Unknown,
+                        job_type: String::new(),
+                        job_types: Vec::new(),
+                        name: None,
+                        project: String::new(),
                     });
                 }
             }

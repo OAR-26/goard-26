@@ -140,6 +140,10 @@ pub struct Job {
     pub clusters: Vec<String>,
     pub hosts: Vec<String>,
     pub main_resource_state: ResourceState,
+    pub job_type: String,
+    pub job_types: Vec<String>,
+    pub name: Option<String>,
+    pub project: String,
 }
 
 impl JobSortable for Job {
