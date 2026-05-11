@@ -3,18 +3,15 @@ use super::types::{gutter_stripes_total_w, Info, Options, STRIPE_W};
 use crate::models::data_structure::application_context::ApplicationContext;
 use crate::models::data_structure::cluster::Cluster;
 use crate::models::data_structure::job::Job;
-use crate::models::data_structure::resource::ResourceState;
+use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::data_structure::strata::Strata;
 use crate::models::utils::date_converter::format_timestamp;
-use crate::models::utils::utils::{
-    compare_string_with_number, get_cluster_state_from_name, get_host_state_from_name,
-    get_tree_structure_for_job,
-};
+use crate::models::utils::utils::{compare_string_with_number, get_tree_structure_for_job};
 use crate::views::components::job_details::JobDetailsWindow;
 use egui::{
     pos2, Align2, Color32, CursorIcon, FontId, Id, LayerId, Order, Rect, Shape, Stroke,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 // ---------------------------------------------------------------------------
 // Tooltip helpers (cpuset / strata field display)
@@ -896,12 +893,65 @@ fn draw_leaf_label(
 // Resource-state lookup for any field
 // ---------------------------------------------------------------------------
 
-fn resource_state_for_key(key: &str, field: &str, all_clusters: &Vec<Cluster>) -> ResourceState {
-    let owned = key.to_string();
-    match field {
-        "host" => get_host_state_from_name(all_clusters, &owned),
-        "cluster" => get_cluster_state_from_name(all_clusters, &owned),
-        _ => ResourceState::Alive,
+fn resource_ids_for_leaf(
+    field: &str,
+    key: &str,
+    path_context: &[(String, String)],
+    strata_by_resource_id: &HashMap<u32, Strata>,
+) -> Vec<u32> {
+    strata_by_resource_id
+        .values()
+        .filter(|s| {
+            strata_field_value(s, field).as_deref() == Some(key)
+                && path_context
+                    .iter()
+                    .all(|(f, v)| strata_field_value(s, f).as_deref() == Some(v.as_str()))
+        })
+        .filter_map(|s| s.resource_id)
+        .collect()
+}
+
+fn draw_dead_intervals_for_row(
+    info: &Info,
+    options: &Options,
+    top_y: f32,
+    height: f32,
+    intervals: &[DeadInterval],
+) {
+    if intervals.is_empty() {
+        return;
+    }
+    let theme_colors = get_theme_colors(&info.ctx.style());
+    let chart_clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
+        pos2(info.canvas.max.x, info.canvas.max.y),
+    );
+    let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
+    let hachure_spacing = 10.0;
+
+    for iv in intervals {
+        let color = match iv.state {
+            ResourceState::Dead => Color32::from_rgba_premultiplied(255, 0, 0, 150),
+            ResourceState::Absent => theme_colors.hatch,
+            ResourceState::Suspected => Color32::from_rgba_premultiplied(255, 140, 0, 150),
+            _ => continue,
+        };
+        let start_x = info.point_from_s(options, iv.start_s);
+        let end_x = if iv.end_s == 0 {
+            info.canvas.max.x
+        } else {
+            info.point_from_s(options, iv.end_s)
+        };
+        let mut x = start_x.max(info.canvas.min.x);
+        let mut shapes = Vec::new();
+        while x < end_x.min(info.canvas.max.x) {
+            shapes.push(Shape::line_segment(
+                [pos2(x, top_y), pos2(x + hachure_spacing, top_y + height)],
+                Stroke::new(2.0, color),
+            ));
+            x += hachure_spacing;
+        }
+        chart_painter.extend(shapes);
     }
 }
 
@@ -977,8 +1027,6 @@ pub(super) fn draw_level_n<'a>(
         match group {
             // ── n == 1: leaf ─────────────────────────────────────────────────
             ResourceGroup::Leaf { jobs, label } => {
-                let state = resource_state_for_key(key, field, all_clusters);
-
                 draw_leaf_label(info, key, label.as_deref(), cursor_y, label_x_end, row_height, app, options, path_context);
 
                 let job_row_y = cursor_y;
@@ -1010,10 +1058,24 @@ pub(super) fn draw_level_n<'a>(
                         job_row_y,
                         details_window,
                         all_clusters,
-                        state,
                         Some(key.as_str()),
                     );
                 }
+
+                // Draw dead/absent/suspected intervals for this row from dead_resources.
+                let resource_ids = resource_ids_for_leaf(field, key, path_context, &app.strata_by_resource_id);
+                let mut seen: HashSet<DeadInterval> = HashSet::new();
+                let mut intervals: Vec<DeadInterval> = Vec::new();
+                for id in &resource_ids {
+                    if let Some(ivs) = app.dead_intervals.get(id) {
+                        for iv in ivs {
+                            if seen.insert(iv.clone()) {
+                                intervals.push(iv.clone());
+                            }
+                        }
+                    }
+                }
+                draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals);
 
                 // Collect rows for job-ID label painting.
                 let mut sorted_jobs: Vec<&&Job> = jobs.iter().collect();
@@ -1171,10 +1233,8 @@ fn paint_job(
     top_y: f32,
     details_window: &mut Vec<JobDetailsWindow>,
     all_cluster: &Vec<Cluster>,
-    state: ResourceState,
     resource_label_for_state_tooltip: Option<&str>,
 ) -> PaintResult {
-    let theme_colors = get_theme_colors(&info.ctx.style());
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
         pos2(info.canvas.max.x, info.canvas.max.y),
@@ -1246,46 +1306,6 @@ fn paint_job(
         let hover_stroke = Stroke::new(3.0, Color32::from_gray(80));
         chart_painter.rect_filled(visible_rect, rounding, hover_fill);
         chart_painter.rect_stroke(visible_rect.expand(1.0), rounding, hover_stroke);
-    }
-
-    if state == ResourceState::Dead || state == ResourceState::Absent {
-        let hachure_color = match state {
-            ResourceState::Dead => Color32::from_rgba_premultiplied(255, 0, 0, 150),
-            ResourceState::Absent => theme_colors.hatch,
-            _ => Color32::TRANSPARENT,
-        };
-        let hachure_spacing = 10.0;
-        let mut shapes = Vec::new();
-        let mut x = info.canvas.min.x;
-        let current_time_x = info.point_from_s(options, chrono::Utc::now().timestamp());
-        let hatch_y = top_y;
-
-        let hover_rect = match state {
-            ResourceState::Dead => Rect::from_min_max(
-                pos2(info.canvas.min.x, hatch_y),
-                pos2(info.canvas.max.x, hatch_y + height),
-            ),
-            ResourceState::Absent => Rect::from_min_max(
-                pos2(info.canvas.min.x, hatch_y),
-                pos2(current_time_x, hatch_y + height),
-            ),
-            _ => Rect::from_min_max(pos2(0.0, 0.0), pos2(0.0, 0.0)),
-        };
-        let hover_rect = hover_rect.intersect(chart_clip_rect);
-        let is_hachure_hovered = info.response.hover_pos().map_or(false, |m| hover_rect.contains(m));
-        let final_color = if is_hachure_hovered { hachure_color.gamma_multiply(1.5) } else { hachure_color };
-
-        while x < info.canvas.max.x {
-            if state == ResourceState::Absent && x >= current_time_x {
-                break;
-            }
-            shapes.push(Shape::line_segment(
-                [pos2(x, hatch_y), pos2(x + hachure_spacing, hatch_y + height)],
-                Stroke::new(2.0, final_color),
-            ));
-            x += hachure_spacing;
-        }
-        chart_painter.extend(shapes);
     }
 
     PaintResult::Painted

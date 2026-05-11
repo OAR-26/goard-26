@@ -1,10 +1,11 @@
 use std::fmt::Display;
-#[derive(Debug, PartialEq, Copy)]
 
+#[derive(Debug, PartialEq, Eq, Hash, Copy)]
 pub enum ResourceState {
     Dead,
     Alive,
     Absent,
+    Suspected,
     Unknown,
 }
 
@@ -14,6 +15,7 @@ impl Clone for ResourceState {
             ResourceState::Dead => ResourceState::Dead,
             ResourceState::Alive => ResourceState::Alive,
             ResourceState::Absent => ResourceState::Absent,
+            ResourceState::Suspected => ResourceState::Suspected,
             ResourceState::Unknown => ResourceState::Unknown,
         }
     }
@@ -32,7 +34,15 @@ impl Display for ResourceState {
             ResourceState::Dead => write!(f, "Dead"),
             ResourceState::Alive => write!(f, "Alive"),
             ResourceState::Absent => write!(f, "Absent"),
+            ResourceState::Suspected => write!(f, "Suspected"),
             ResourceState::Unknown => write!(f, "Unknown"),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DeadInterval {
+    pub start_s: i64,
+    pub end_s: i64,
+    pub state: ResourceState,
 }

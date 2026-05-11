@@ -71,9 +71,21 @@
         "disk"
       ],
       "filter": null,
-      "leaf_label_template": "{disk}",
+      "leaf_label_template": "{host|short}/{disk|short}",
       "sort_by_label": false,
       "leaf_infos": "disk_info"
+    },
+    {
+      "name": "test",
+      "levels": [
+        "site",
+        "type",
+        "cpu"
+      ],
+      "filter": null,
+      "leaf_label_template": null,
+      "sort_by_label": false,
+      "leaf_infos": "host_info"
     }
   ],
   "leaf_info_presets": [
