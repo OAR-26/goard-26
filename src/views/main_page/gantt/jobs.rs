@@ -960,10 +960,13 @@ fn draw_dead_intervals_for_row(
     top_y: f32,
     height: f32,
     intervals: &[DeadInterval],
+    app: &ApplicationContext,
 ) {
     if intervals.is_empty() {
         return;
     }
+    let sc = &app.gantt_config.state_colors;
+    let min_dur = app.gantt_config.min_state_duration_s;
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
         pos2(info.canvas.max.x, info.canvas.max.y),
@@ -972,11 +975,16 @@ fn draw_dead_intervals_for_row(
     let hachure_spacing = 10.0;
 
     for iv in intervals {
+        // Skip intervals shorter than min_state_duration_s (closed intervals only).
+        if iv.end_s != 0 && min_dur > 0 && (iv.end_s - iv.start_s) < min_dur {
+            continue;
+        }
+        let mk = |r: u8, g: u8, b: u8| Color32::from_rgba_premultiplied(r, g, b, 150);
         let base_color = match iv.state {
-            ResourceState::Dead => Color32::from_rgba_premultiplied(120, 120, 120, 150),
-            ResourceState::Absent => Color32::from_rgba_premultiplied(30, 100, 220, 150),
-            ResourceState::Suspected => Color32::from_rgba_premultiplied(220, 30, 30, 150),
-            ResourceState::Standby => Color32::from_rgb(0x88, 0xff, 0xff).gamma_multiply(0.7),
+            ResourceState::Dead     => mk(sc.dead.0,     sc.dead.1,     sc.dead.2),
+            ResourceState::Absent   => mk(sc.absent.0,   sc.absent.1,   sc.absent.2),
+            ResourceState::Suspected => mk(sc.suspected.0, sc.suspected.1, sc.suspected.2),
+            ResourceState::Standby  => Color32::from_rgb(sc.standby.0, sc.standby.1, sc.standby.2).gamma_multiply(0.7),
             _ => continue,
         };
         let start_x = info.point_from_s(options, iv.start_s);
@@ -1113,6 +1121,7 @@ pub(super) fn draw_level_n<'a>(
                         details_window,
                         all_clusters,
                         Some(key.as_str()),
+                        app.gantt_config.besteffort_truncate_to_now,
                     );
                 }
 
@@ -1137,14 +1146,14 @@ pub(super) fn draw_level_n<'a>(
                     for iv in intervals.iter_mut() {
                         if iv.state == ResourceState::Absent && iv.end_s == 0 {
                             iv.state = ResourceState::Standby;
-                            if app.standby_truncate_to_now {
+                            if app.gantt_config.standby_truncate_to_now {
                                 iv.end_s = now_s;
                             }
                         }
                     }
                 }
 
-                draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals);
+                draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals, app);
 
 
                 // Collect rows for job-ID label painting.
@@ -1304,6 +1313,7 @@ fn paint_job(
     details_window: &mut Vec<JobDetailsWindow>,
     all_cluster: &Vec<Cluster>,
     resource_label_for_state_tooltip: Option<&str>,
+    besteffort_truncate_to_now: bool,
 ) -> PaintResult {
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
@@ -1311,7 +1321,15 @@ fn paint_job(
     );
     let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
     let start_x = info.point_from_s(options, job.scheduled_start);
-    let stop_time = if job.stop_time > 0 { job.stop_time } else { job.scheduled_start + job.walltime };
+    let raw_stop = if job.stop_time > 0 { job.stop_time } else { job.scheduled_start + job.walltime };
+    let stop_time = if besteffort_truncate_to_now
+        && job.job_types.iter().any(|t| t == "besteffort")
+        && raw_stop > chrono::Utc::now().timestamp()
+    {
+        chrono::Utc::now().timestamp()
+    } else {
+        raw_stop
+    };
     let end_x = info.point_from_s(options, stop_time);
     let width = end_x - start_x;
 

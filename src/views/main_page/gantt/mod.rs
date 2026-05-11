@@ -238,7 +238,9 @@ pub struct GanttChart {
 impl Default for GanttChart {
     fn default() -> Self {
         let config = load_views_config();
+        let gantt_cfg = crate::models::data_structure::gantt_config::GanttConfig::load();
         let mut options = Options::default();
+        options.canvas_width_s = gantt_cfg.default_timespan_s as f32;
         if let Some(first) = config.views.first() {
             options.levels = first.levels.clone();
             options.resource_filter = first.filter.clone();

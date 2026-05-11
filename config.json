@@ -1,3 +1,12 @@
 {
-  "standby_truncate_state_to_now": true
+  "standby_truncate_state_to_now": true,
+  "besteffort_truncate_job_to_now": true,
+  "min_state_duration": 2,
+  "default_timespan": 21600,
+  "state_colors": {
+    "Absent": "#1e64dc",
+    "Suspected": "#dc1e1e",
+    "Dead": "#787878",
+    "Standby": "#88ffff"
+  }
 }

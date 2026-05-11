@@ -5,6 +5,7 @@ use super::resource::Resource;
 use super::strata::Strata;
 use crate::models::data_structure::cpu::Cpu;
 use crate::models::data_structure::host::Host;
+use crate::models::data_structure::gantt_config::GanttConfig;
 use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::utils::parser::get_dead_intervals_from_json;
 use crate::models::utils::utils::{get_clusters_for_job, get_hosts_for_job};
@@ -70,8 +71,8 @@ pub struct ApplicationContext {
     pub dead_intervals: HashMap<u32, Vec<DeadInterval>>,
     // Maps resource_id → available_upto timestamp for Absent resources that have a future availability date.
     pub standby_upto: HashMap<u32, i64>,
-    // From config.json: when true, Absent hatch is truncated to now before Standby hatch begins.
-    pub standby_truncate_to_now: bool,
+    // Loaded from config.json at startup.
+    pub gantt_config: GanttConfig,
 
     pub font_size: i32,
     pub see_all_jobs: bool,
@@ -83,20 +84,6 @@ pub struct ApplicationContext {
     pub imported_data_sources: Vec<ImportedDataSource>,
     pub current_data_source_index: usize, // 0 = live data, 1+ = imported files
     pub request_file_import: bool,
-}
-
-fn load_standby_truncate_to_now() -> bool {
-    #[cfg(target_arch = "wasm32")]
-    let content = include_str!("../../../../config.json").to_string();
-    #[cfg(not(target_arch = "wasm32"))]
-    let content = match std::fs::read_to_string("config.json") {
-        Ok(c) => c,
-        Err(_) => return true,
-    };
-    serde_json::from_str::<serde_json::Value>(&content)
-        .ok()
-        .and_then(|v| v.get("standby_truncate_state_to_now").and_then(|b| b.as_bool()))
-        .unwrap_or(true)
 }
 
 impl ApplicationContext {
@@ -1354,7 +1341,7 @@ impl Default for ApplicationContext {
             strata_by_resource_id: HashMap::new(),
             dead_intervals: HashMap::new(),
             standby_upto: HashMap::new(),
-            standby_truncate_to_now: load_standby_truncate_to_now(),
+            gantt_config: GanttConfig::load(),
 
             filtered_jobs: Vec::new(),
             filters: JobFilters::default(),
