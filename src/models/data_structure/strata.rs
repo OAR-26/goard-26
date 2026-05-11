@@ -103,6 +103,10 @@ pub struct Strata {
     #[serde(default)]
     pub nodeset: Option<String>,
 
+    /// Unix timestamp until which the resource is reserved/unavailable (0 = not set).
+    #[serde(default)]
+    pub available_upto: Option<i64>,
+
     /// Catches any data.json field not explicitly named above.
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,

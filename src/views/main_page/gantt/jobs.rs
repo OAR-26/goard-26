@@ -263,17 +263,23 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
             ResourceState::Dead => "Dead",
             ResourceState::Absent => "Absent",
             ResourceState::Suspected => "Suspected",
+            ResourceState::Standby => "Standby",
             _ => "Unknown",
         };
-        let until_str = if iv.end_s == 0 {
+        const OAR_INDEFINITE: i64 = 2_147_483_646;
+        let until_str = if iv.end_s == 0 || iv.end_s >= OAR_INDEFINITE {
             "Indefinite".to_string()
         } else {
             format_timestamp(iv.end_s)
         };
+        let since_label = if iv.state == ResourceState::Standby { "Since (now)" } else { "Since" };
+        let until_label = "Until";
         let interval_text = format!(
-            "{}\nSince: {}\nUntil: {}",
+            "{}\n{}: {}\n{}: {}",
             state_label,
+            since_label,
             format_timestamp(iv.start_s),
+            until_label,
             until_str,
         );
         if !tooltip_text.is_empty() {
@@ -970,6 +976,7 @@ fn draw_dead_intervals_for_row(
             ResourceState::Dead => Color32::from_rgba_premultiplied(120, 120, 120, 150),
             ResourceState::Absent => Color32::from_rgba_premultiplied(30, 100, 220, 150),
             ResourceState::Suspected => Color32::from_rgba_premultiplied(220, 30, 30, 150),
+            ResourceState::Standby => Color32::from_rgb(0x88, 0xff, 0xff).gamma_multiply(0.7),
             _ => continue,
         };
         let start_x = info.point_from_s(options, iv.start_s);
@@ -1109,7 +1116,7 @@ pub(super) fn draw_level_n<'a>(
                     );
                 }
 
-                // Draw dead/absent/suspected intervals for this row from dead_resources.
+                // Draw dead/absent/suspected/standby intervals for this row.
                 let resource_ids = resource_ids_for_leaf(field, key, path_context, &app.strata_by_resource_id);
                 let mut seen: HashSet<DeadInterval> = HashSet::new();
                 let mut intervals: Vec<DeadInterval> = Vec::new();
@@ -1122,6 +1129,21 @@ pub(super) fn draw_level_n<'a>(
                         }
                     }
                 }
+
+                // Standby: mutate open-ended Absent intervals in place if resource has future available_upto.
+                let now_s = chrono::Utc::now().timestamp();
+                let has_standby = resource_ids.iter().any(|id| app.standby_upto.contains_key(id));
+                if has_standby {
+                    for iv in intervals.iter_mut() {
+                        if iv.state == ResourceState::Absent && iv.end_s == 0 {
+                            iv.state = ResourceState::Standby;
+                            if app.standby_truncate_to_now {
+                                iv.end_s = now_s;
+                            }
+                        }
+                    }
+                }
+
                 draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals);
 
 

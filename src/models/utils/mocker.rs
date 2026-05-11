@@ -149,6 +149,10 @@ fn mock_job(id: u32) -> Job {
         clusters,
         hosts,
         main_resource_state,
+        job_type: String::new(),
+        job_types: Vec::new(),
+        name: None,
+        project: String::new(),
     }
 }
 
@@ -253,6 +257,8 @@ fn mock_strata(id: u32) -> Strata {
         slash_22: None,
         disk: None,
         nodeset: None,
+        available_upto: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 

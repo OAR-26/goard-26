@@ -68,6 +68,10 @@ pub struct ApplicationContext {
     pub strata_by_resource_id: HashMap<u32, Strata>,
     // Dead/Absent/Suspected intervals per resource ID, from dead_resources in data.json.
     pub dead_intervals: HashMap<u32, Vec<DeadInterval>>,
+    // Maps resource_id → available_upto timestamp for Absent resources that have a future availability date.
+    pub standby_upto: HashMap<u32, i64>,
+    // From config.json: when true, Absent hatch is truncated to now before Standby hatch begins.
+    pub standby_truncate_to_now: bool,
 
     pub font_size: i32,
     pub see_all_jobs: bool,
@@ -79,6 +83,20 @@ pub struct ApplicationContext {
     pub imported_data_sources: Vec<ImportedDataSource>,
     pub current_data_source_index: usize, // 0 = live data, 1+ = imported files
     pub request_file_import: bool,
+}
+
+fn load_standby_truncate_to_now() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    let content = include_str!("../../../../config.json").to_string();
+    #[cfg(not(target_arch = "wasm32"))]
+    let content = match std::fs::read_to_string("config.json") {
+        Ok(c) => c,
+        Err(_) => return true,
+    };
+    serde_json::from_str::<serde_json::Value>(&content)
+        .ok()
+        .and_then(|v| v.get("standby_truncate_state_to_now").and_then(|b| b.as_bool()))
+        .unwrap_or(true)
 }
 
 impl ApplicationContext {
@@ -164,6 +182,19 @@ impl ApplicationContext {
             for r in new_resources.iter() {
                 if let Some(rid) = r.resource_id {
                     self.strata_by_resource_id.insert(rid, r.clone());
+                }
+            }
+
+            // Build standby map: Absent resources with a future available_upto.
+            let now = chrono::Utc::now().timestamp();
+            self.standby_upto.clear();
+            for r in new_resources.iter() {
+                if r.state.as_deref() == Some("Absent") {
+                    if let (Some(rid), Some(upto)) = (r.resource_id, r.available_upto) {
+                        if upto > now && upto > 0 {
+                            self.standby_upto.insert(rid, upto);
+                        }
+                    }
                 }
             }
 
@@ -1322,6 +1353,8 @@ impl Default for ApplicationContext {
             strata_by_host: HashMap::new(),
             strata_by_resource_id: HashMap::new(),
             dead_intervals: HashMap::new(),
+            standby_upto: HashMap::new(),
+            standby_truncate_to_now: load_standby_truncate_to_now(),
 
             filtered_jobs: Vec::new(),
             filters: JobFilters::default(),
