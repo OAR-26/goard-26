@@ -1,0 +1,156 @@
+{
+  "views": [
+    {
+      "name": "Nodes",
+      "levels": [
+        "site",
+        "cluster",
+        "host"
+      ],
+      "filter": {
+        "field": "production",
+        "value": "YES",
+        "exclude": true
+      },
+      "leaf_label_template": "{host|short}",
+      "sort_by_label": false,
+      "leaf_infos": "host_info"
+    },
+    {
+      "name": "Nodes (production)",
+      "levels": [
+        "site",
+        "cluster",
+        "host"
+      ],
+      "filter": {
+        "field": "production",
+        "value": "YES",
+        "exclude": false
+      },
+      "leaf_label_template": "{host|short}",
+      "sort_by_label": false,
+      "leaf_infos": "host_info"
+    },
+    {
+      "name": "vlans",
+      "levels": [
+        "site",
+        "type",
+        "vlan"
+      ],
+      "filter": null,
+      "leaf_label_template": "{type}/{vlan}",
+      "sort_by_label": false,
+      "leaf_infos": "vlan_info"
+    },
+    {
+      "name": "Subnets",
+      "levels": [
+        "site",
+        "slash_16",
+        "slash_17",
+        "slash_18",
+        "slash_19",
+        "slash_20",
+        "slash_21",
+        "slash_22"
+      ],
+      "filter": null,
+      "leaf_label_template": "{subnet_address}/{subnet_prefix}",
+      "sort_by_label": true,
+      "leaf_infos": "subnet_info"
+    },
+    {
+      "name": "Disks",
+      "levels": [
+        "site",
+        "cluster",
+        "host",
+        "type",
+        "disk"
+      ],
+      "filter": null,
+      "leaf_label_template": "{host|short}/{disk|short}",
+      "sort_by_label": false,
+      "leaf_infos": "disk_info"
+    },
+    {
+      "name": "test",
+      "levels": [
+        "site",
+        "type",
+        "cpu"
+      ],
+      "filter": null,
+      "leaf_label_template": null,
+      "sort_by_label": false,
+      "leaf_infos": "host_info"
+    }
+  ],
+  "leaf_info_presets": [
+    {
+      "id": "host_info",
+      "name": "Host",
+      "fields": [
+        "network_address",
+        "comment",
+        "cpuset",
+        "besteffort",
+        "deploy",
+        "drain",
+        "gpudevice",
+        "max_walltime",
+        "nodeset",
+        "type"
+      ]
+    },
+    {
+      "id": "vlan_info",
+      "name": "VLAN",
+      "fields": [
+        "type",
+        "vlan"
+      ]
+    },
+    {
+      "id": "subnet_info",
+      "name": "Subnet",
+      "fields": [
+        "subnet_address",
+        "subnet_prefix"
+      ]
+    },
+    {
+      "id": "disk_info",
+      "name": "Disk",
+      "fields": [
+        "besteffort",
+        "comment",
+        "deploy",
+        "disk",
+        "drain",
+        "network_address",
+        "type",
+        "cpuset",
+        "diskpath",
+        "disktype"
+      ]
+    },
+    {
+      "id": "newtry",
+      "name": "newTry",
+      "fields": [
+        "slash_16",
+        "type",
+        "host",
+        "slash_22",
+        "ip",
+        "cputype",
+        "gpu_model",
+        "desktop_computing",
+        "site"
+      ]
+    }
+  ]
+}

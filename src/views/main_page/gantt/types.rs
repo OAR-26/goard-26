@@ -1,17 +1,15 @@
 use crate::models::data_structure::job::Job;
 use crate::models::data_structure::resource::ResourceState;
-use crate::views::components::gantt_aggregate_by::AggregateBy;
 use crate::views::components::gantt_job_color::JobColor;
 use egui::{FontId, Rect, Response};
 
 pub(super) const GUTTER_WIDTH: f32 = 200.0;
 
-pub(super) const GUTTER_G5K_SITE_W: f32 = 12.0;
-pub(super) const GUTTER_G5K_CLUSTER_W: f32 = 12.0;
-pub(super) const GUTTER_G5K_HOST_W: f32 = 12.0;
+/// Width of each stripe column in the gutter (one per hierarchy level).
+pub(super) const STRIPE_W: f32 = 12.0;
 
-pub(super) fn gutter_g5k_total_w() -> f32 {
-    GUTTER_G5K_SITE_W + GUTTER_G5K_CLUSTER_W + GUTTER_G5K_HOST_W
+pub(super) fn gutter_stripes_total_w(n_levels: usize) -> f32 {
+    n_levels as f32 * STRIPE_W
 }
 
 pub(super) struct Info {
@@ -39,6 +37,28 @@ impl Info {
     }
 }
 
+/// Optional equality filter applied to every resource before grouping.
+/// `exclude = false` → keep only resources where field == value.
+/// `exclude = true`  → keep only resources where field != value.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+pub(super) struct ResourceFilter {
+    pub field: String,
+    pub value: String,
+    #[serde(default)]
+    pub exclude: bool,
+}
+
+/// A reusable preset that defines how a leaf resource is described in tooltips.
+/// `name` is shown as the label prefix (e.g. "host: node1.cluster");
+/// `fields` lists strata fields to display below it.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+pub struct LeafInfoPreset {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub fields: Vec<String>,
+}
+
 pub struct Options {
     pub canvas_width_s: f32,
     pub sideways_pan_in_points: f32,
@@ -47,15 +67,29 @@ pub struct Options {
     pub rect_height: f32,
     pub spacing: f32,
     pub rounding: f32,
-    pub aggregate_by: AggregateBy,
+    /// Ordered list of resource field names that define the hierarchy levels,
+    /// outermost first (e.g. ["cluster", "host"]).
+    pub levels: Vec<String>,
     pub job_color: JobColor,
     pub current_hovered_job: Option<Job>,
     pub previous_hovered_job: Option<Job>,
     pub current_hovered_resource_state: Option<ResourceState>,
     pub current_hovered_resource_label: Option<String>,
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub hovered_grid5000_host: Option<String>,
+    /// Label of the leaf-level item currently under the mouse (used to highlight
+    /// matching stripes when hovering a job bar).
+    pub hovered_leaf_label: Option<String>,
     pub compact_rows: bool,
+    pub resource_filter: Option<ResourceFilter>,
+    /// Optional template for the leaf-row label.  `{field}` placeholders are
+    /// replaced by the corresponding value from the ancestor path context or
+    /// the leaf key itself.  Example: `"{type}/{vlan}"`.
+    pub leaf_label_template: Option<String>,
+    /// When true, groups at every level are sorted by their minimum pre-computed
+    /// leaf label rather than by the raw grouping key.  Use when grouping keys
+    /// are opaque IDs (e.g. slash_* subnet blocks) that don't sort meaningfully.
+    pub sort_by_label: bool,
+    /// Resolved preset for the current view — drives tooltip label and field list.
+    pub leaf_info_preset: Option<LeafInfoPreset>,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub zoom_to_relative_s_range: Option<(f64, (f64, f64))>,
 }
@@ -70,15 +104,19 @@ impl Default for Options {
             rect_height: 20.0,
             spacing: 0.0,
             rounding: 4.0,
-            aggregate_by: Default::default(),
+            levels: vec!["site".to_string(), "cluster".to_string(), "host".to_string()],
             job_color: Default::default(),
             zoom_to_relative_s_range: None,
             current_hovered_job: None,
             previous_hovered_job: None,
             current_hovered_resource_state: None,
             current_hovered_resource_label: None,
-            hovered_grid5000_host: None,
+            hovered_leaf_label: None,
             compact_rows: true,
+            resource_filter: None,
+            leaf_label_template: None,
+            sort_by_label: false,
+            leaf_info_preset: None,
         }
     }
 }

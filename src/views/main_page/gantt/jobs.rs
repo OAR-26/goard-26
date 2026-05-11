@@ -1,26 +1,21 @@
-use super::labels::{
-    build_label_meta_level1, build_label_meta_level2, short_host_label, site_for_cluster_name,
-    LabelMeta,
-};
 use super::theme::get_theme_colors;
-use super::types::{
-    gutter_g5k_total_w, Info, Options, GUTTER_G5K_CLUSTER_W, GUTTER_G5K_HOST_W, GUTTER_G5K_SITE_W,
-};
+use super::types::{gutter_stripes_total_w, Info, Options, STRIPE_W};
+use crate::models::data_structure::application_context::ApplicationContext;
 use crate::models::data_structure::cluster::Cluster;
 use crate::models::data_structure::job::Job;
-use crate::models::data_structure::resource::ResourceState;
-use crate::models::data_structure::application_context::ApplicationContext;
+use crate::models::data_structure::resource::{DeadInterval, ResourceState};
+use crate::models::data_structure::strata::Strata;
 use crate::models::utils::date_converter::format_timestamp;
-use crate::models::utils::utils::{
-    compare_string_with_number, get_cluster_state_from_name, get_host_state_from_name,
-    get_tree_structure_for_job,
-};
-use crate::views::components::gantt_aggregate_by::{AggregateByLevel1Enum, AggregateByLevel2Enum};
+use crate::models::utils::utils::{compare_string_with_number, get_tree_structure_for_job};
 use crate::views::components::job_details::JobDetailsWindow;
 use egui::{
-    pos2, Align2, Color32, CursorIcon, FontId, Id, LayerId, Order, Pos2, Rect, Shape, Stroke,
+    pos2, Align2, Color32, CursorIcon, FontId, Id, LayerId, Order, Rect, Shape, Stroke,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+// ---------------------------------------------------------------------------
+// Tooltip helpers (cpuset / strata field display)
+// ---------------------------------------------------------------------------
 
 fn json_value_to_inline(v: &serde_json::Value) -> Option<String> {
     match v {
@@ -29,20 +24,13 @@ fn json_value_to_inline(v: &serde_json::Value) -> Option<String> {
         serde_json::Value::Number(n) => Some(n.to_string()),
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Array(arr) => {
-            let mut parts: Vec<String> = Vec::new();
-            for x in arr {
-                if let Some(s) = json_value_to_inline(x) {
-                    let t = s.trim();
-                    if !t.is_empty() {
-                        parts.push(t.to_string());
-                    }
-                }
-            }
-            if parts.is_empty() {
-                None
-            } else {
-                Some(parts.join(", "))
-            }
+            let parts: Vec<String> = arr
+                .iter()
+                .filter_map(json_value_to_inline)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if parts.is_empty() { None } else { Some(parts.join(", ")) }
         }
         serde_json::Value::Object(_) => Some(v.to_string()),
     }
@@ -50,34 +38,26 @@ fn json_value_to_inline(v: &serde_json::Value) -> Option<String> {
 
 fn format_cpuset_grid5000(values: &mut Vec<i32>) -> Option<String> {
     use range_set_blaze::RangeSetBlaze;
-    
     if values.is_empty() {
         return None;
     }
-    
     values.sort_unstable();
     values.dedup();
-    
     let mut range_set = RangeSetBlaze::<i32>::new();
     for &val in values.iter() {
         range_set.insert(val);
     }
-    
-    let mut result_parts: Vec<String> = Vec::new();
-    
-    for range in range_set.ranges() {
-        if range.start() == range.end() {
-            result_parts.push(range.start().to_string());
-        } else {
-            result_parts.push(format!("{}-{}", range.start(), range.end()));
-        }
-    }
-    
-    if result_parts.is_empty() {
-        return None;
-    }
-    
-    Some(result_parts.join(", "))
+    let parts: Vec<String> = range_set
+        .ranges()
+        .map(|r| {
+            if r.start() == r.end() {
+                r.start().to_string()
+            } else {
+                format!("{}-{}", r.start(), r.end())
+            }
+        })
+        .collect();
+    if parts.is_empty() { None } else { Some(parts.join(", ")) }
 }
 
 fn extract_ints_from_str(s: &str) -> Vec<i32> {
@@ -102,39 +82,35 @@ fn extract_ints_from_str(s: &str) -> Vec<i32> {
     out
 }
 
-fn cpuset_like_grid5000(s: &crate::models::data_structure::strata::Strata) -> Option<String> {
-
+fn cpuset_display(s: &Strata) -> Option<String> {
     if let Some(v) = s.cpuset.as_ref() {
         match v {
             serde_json::Value::Array(arr) => {
-                let mut ints: Vec<i32> = Vec::new();
+                let mut flat: Vec<i32> = Vec::new();
                 for x in arr {
                     match x {
                         serde_json::Value::Number(n) => {
                             if let Some(i) = n.as_i64() {
                                 if (0..=i32::MAX as i64).contains(&i) {
-                                    ints.push(i as i32);
+                                    flat.push(i as i32);
                                 }
                             }
                         }
-                        serde_json::Value::String(s) => {
-                            for i in extract_ints_from_str(s) {
-                                ints.push(i);
-                            }
+                        serde_json::Value::String(st) => {
+                            flat.extend(extract_ints_from_str(st));
                         }
                         _ => {}
                     }
                 }
-                if let Some(s) = format_cpuset_grid5000(&mut ints) {
-                    return Some(s);
-                }
+                return format_cpuset_grid5000(&mut flat);
             }
             serde_json::Value::String(raw) => {
                 let mut ints = extract_ints_from_str(raw);
-                if ints.len() > 1 {
-                    if let Some(s) = format_cpuset_grid5000(&mut ints) {
-                        return Some(s);
-                    }
+                if !ints.is_empty() {
+                    return format_cpuset_grid5000(&mut ints);
+                }
+                if !raw.trim().is_empty() {
+                    return Some(raw.clone());
                 }
             }
             serde_json::Value::Number(n) => {
@@ -147,13 +123,65 @@ fn cpuset_like_grid5000(s: &crate::models::data_structure::strata::Strata) -> Op
             _ => {}
         }
     }
-
     let count = s.core_count.or(s.thread_count).unwrap_or(0);
-    if count <= 0 {
-        return None;
-    }
-    Some(format!("0-{}", count - 1))
+    if count <= 0 { None } else { Some(format!("0-{}", count - 1)) }
 }
+
+/// Collect cpuset values from ALL strata entries matching `key` at `leaf_field`,
+/// then format the combined range. Works correctly for per-core data (hosts).
+fn cpuset_display_aggregate(
+    app: &ApplicationContext,
+    leaf_field: &str,
+    key: &str,
+) -> Option<String> {
+    let mut all_ints: Vec<i32> = Vec::new();
+    for s in app.strata_by_resource_id.values() {
+        if strata_field_value(s, leaf_field)
+            .map(|v| v.trim().to_string())
+            .as_deref()
+            != Some(key.trim())
+        {
+            continue;
+        }
+        if let Some(v) = &s.cpuset {
+            match v {
+                serde_json::Value::Array(arr) => {
+                    for x in arr {
+                        match x {
+                            serde_json::Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    if (0..=i32::MAX as i64).contains(&i) {
+                                        all_ints.push(i as i32);
+                                    }
+                                }
+                            }
+                            serde_json::Value::String(st) => {
+                                all_ints.extend(extract_ints_from_str(st));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                serde_json::Value::String(raw) => {
+                    all_ints.extend(extract_ints_from_str(raw));
+                }
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        if (0..=i32::MAX as i64).contains(&i) {
+                            all_ints.push(i as i32);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    format_cpuset_grid5000(&mut all_ints)
+}
+
+// ---------------------------------------------------------------------------
+// Tooltip
+// ---------------------------------------------------------------------------
 
 pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &ApplicationContext) {
     let mut tooltip_text = String::new();
@@ -176,78 +204,49 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
 
     if let Some(resource_state) = &options.current_hovered_resource_state {
         if !tooltip_text.is_empty() {
-            tooltip_text.push_str("\n");
+            tooltip_text.push('\n');
         }
 
-        let kind_label = if (options.aggregate_by.level_2 == AggregateByLevel2Enum::None
-            && options.aggregate_by.level_1 == AggregateByLevel1Enum::Host)
-            || options.aggregate_by.level_2 == AggregateByLevel2Enum::Host
-        {
-            "Host"
-        } else if options.aggregate_by.level_2 == AggregateByLevel2Enum::None
-            && options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
-        {
-            "Cluster"
-        } else {
-            "Resource"
-        };
+        let kind_label = options.leaf_info_preset.as_ref()
+            .map(|p| p.name.as_str())
+            .unwrap_or("Resource");
 
         if let Some(label) = options.current_hovered_resource_label.as_deref() {
             let trimmed = label.trim();
             if !trimmed.is_empty() {
-                tooltip_text.push_str(&format!("{}: {}\n", kind_label.to_lowercase(), trimmed));
-
-                let mut keys_to_try: Vec<String> = Vec::new();
-                keys_to_try.push(trimmed.to_string());
-                keys_to_try.push(trimmed.split('.').next().unwrap_or(trimmed).to_string());
-                for key in keys_to_try {
-                    if let Some(s) = app.strata_by_host.get(&key) {
-                        if let Some(cluster) = s.cluster.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            tooltip_text.push_str(&format!("cluster: {}\n", cluster));
+                let mut preset_fields: Vec<&str> = options.leaf_info_preset.as_ref()
+                    .map(|p| p.fields.iter().map(|s| s.as_str()).collect())
+                    .unwrap_or_default();
+                preset_fields.sort_unstable();
+                if !preset_fields.is_empty() {
+                    let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("");
+                    let strata = app.strata_by_resource_id.values().find(|s| {
+                        strata_field_value(s, leaf_field)
+                            .map(|v| v.trim().to_string())
+                            .as_deref() == Some(trimmed)
+                    });
+                    if let Some(s) = strata {
+                        for field in &preset_fields {
+                            let val = if *field == "cpuset" {
+                                cpuset_display_aggregate(app, leaf_field, trimmed)
+                            } else {
+                                strata_field_value(s, field)
+                                    .map(|v| v.trim().to_string())
+                            };
+                            tooltip_text.push_str(&format!("{}: {}\n", field, val.as_deref().unwrap_or("")));
                         }
-                        if let Some(net) = s
-                            .network_address
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                        {
-                            tooltip_text.push_str(&format!("network_address: {}\n", net));
-                        }
-                        if let Some(comment) = s.comment.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            tooltip_text.push_str(&format!("comment: {}\n", comment));
-                        }
-                        if let Some(cpuset) = cpuset_like_grid5000(s) {
-                            let cpuset = cpuset.trim();
-                            if !cpuset.is_empty() {
-                                tooltip_text.push_str(&format!("cpuset: {}\n", cpuset));
-                            }
-                        }
-                        if let Some(model) = s.nodemodel.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            tooltip_text.push_str(&format!("nodemodel: {}\n", model));
-                        }
-                        if let Some(cpu) = s.cputype.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            tooltip_text.push_str(&format!("cputype: {}\n", cpu));
-                        }
-                        if let Some(rid) = s.resource_id {
-                            tooltip_text.push_str(&format!("resource_id: {}\n", rid));
-                        }
-                        break;
                     }
                 }
             }
         }
 
-        tooltip_text.push_str(&format!(
-            "{} State: {:?}",
-            kind_label,
-            resource_state
-        ));
+        tooltip_text.push_str(&format!("{} State: {:?}", kind_label, resource_state));
         options.current_hovered_resource_state = None;
         options.current_hovered_resource_label = None;
     }
 
     if !tooltip_text.is_empty() {
-        if let Some(_pointer_pos) = info.response.hover_pos() {
+        if let Some(_) = info.response.hover_pos() {
             egui::show_tooltip_at_pointer(
                 &info.ctx,
                 info.response.layer_id,
@@ -261,20 +260,17 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
     }
 }
 
-/// A single painted job row entry, collected during the row-paint loop and
-/// later used to derive cross-row label blocks.
+// ---------------------------------------------------------------------------
+// PaintedJobRow — collected for cross-row label placement
+// ---------------------------------------------------------------------------
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PaintedJobRow {
-    job_id:  u32,
-    /// Canonical time interval — used as the grouping key so two rows that
-    /// both carry the same job id with identical start/stop are one block.
+    job_id: u32,
     start_s: i64,
-    stop_s:  i64,
-    /// Top-left Y of the bar rectangle for this row.
-    row_y:   f32,
-    /// Row-level label used for contiguous grouping (hosts in the current mode).
+    stop_s: i64,
+    row_y: f32,
     row_label: String,
-    /// Original painted row index in the visible order.
     row_index: usize,
 }
 
@@ -287,882 +283,948 @@ struct JobBlock<'a> {
 
 fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow], rect_height: f32) -> Vec<JobBlock<'a>> {
     use std::collections::HashMap;
-    
-    // First group by job_id, start_s, stop_s
     let mut group_map: HashMap<(u32, i64, i64), Vec<&PaintedJobRow>> = HashMap::new();
-    
     for row in rows.iter() {
-        let key = (row.job_id, row.start_s, row.stop_s);
-        group_map.entry(key).or_default().push(row);
+        group_map.entry((row.job_id, row.start_s, row.stop_s)).or_default().push(row);
     }
-    
-    // Then create contiguity blocks within each group
     let mut blocks = Vec::new();
-    for ((job_id, start_s, stop_s), group_rows) in group_map {
-        // Sort rows by row_y to maintain the order they appear in the left panel
-        let mut sorted_group: Vec<&PaintedJobRow> = group_rows;
-        sorted_group.sort_by(|a, b| a.row_y.partial_cmp(&b.row_y).unwrap_or(std::cmp::Ordering::Equal));
-        
-        // Break into contiguous sub-blocks based on host order
+    for ((job_id, start_s, stop_s), mut group_rows) in group_map {
+        group_rows.sort_by(|a, b| a.row_y.partial_cmp(&b.row_y).unwrap_or(std::cmp::Ordering::Equal));
         let mut i = 0;
-        while i < sorted_group.len() {
-            let first = sorted_group[i];
+        while i < group_rows.len() {
             let mut j = i + 1;
-            
-            // Continue while hosts are contiguous (adjacent in sorted order)
-            while j < sorted_group.len() {
-                // Check if next host is adjacent to the current one in the sorted order
-                // This creates smaller blocks of contiguous hosts
-                if j < sorted_group.len() {
-                    let current_row = sorted_group[j - 1];
-                    let next_row = sorted_group[j];
-                    
-                    // Use pixel-based contiguity check using rectangle tops and bottoms
-                    // Check if rectangles are touching or very close
-                    let current_bottom = current_row.row_y + rect_height;
-                    let next_top = next_row.row_y;
-                    let vertical_gap = next_top - current_bottom;
-                    
-                    // If there's a gap larger than a small threshold, don't group them
-                    // This creates individual blocks for each host while keeping job ID printing
-                    if vertical_gap > 2.0 { // Small threshold for touching/overlapping rectangles
-                        break;
-                    }
+            while j < group_rows.len() {
+                let gap = group_rows[j].row_y - (group_rows[j - 1].row_y + rect_height);
+                if gap > 2.0 {
+                    break;
                 }
                 j += 1;
             }
-            
-            // Create a sub-block for this contiguous group
-            blocks.push(JobBlock {
-                job_id,
-                start_s,
-                stop_s,
-                rows: sorted_group[i..j].to_vec(),
-            });
-            
+            blocks.push(JobBlock { job_id, start_s, stop_s, rows: group_rows[i..j].to_vec() });
             i = j;
         }
     }
-    
     blocks
 }
 
-fn debug_print_job_blocks(blocks: &[JobBlock<'_>]) {
-    static PRINT_ONCE: std::sync::Once = std::sync::Once::new();
-    PRINT_ONCE.call_once(|| {
-        if blocks.is_empty() {
-            return;
-        }
-
-        // Calculate statistics for testing
-        let total_rectangles: usize = blocks.iter().map(|b| b.rows.len()).sum();
-        let total_ids: usize = blocks.len();
-        let total_blocks: usize = blocks.len();
-        
-        println!("=== DEBUG: Total rectangles={}, Total IDs={}, Total blocks={}", 
-                 total_rectangles, total_ids, total_blocks);
-        
-        // println!("=== START DRAWN JOB BLOCKS ===");
-        for block in blocks {
-            let host_names: Vec<String> = block.rows.iter().map(|r| r.row_label.clone()).collect();
-            // println!(
-            //     "drawn-label-block jobId={} start={} stop={} rows={} count={}",
-            //     block.job_id,
-            //     block.start_s,
-            //     block.stop_s,
-            //     host_names.join(", "),
-            //     block.rows.len()
-            // );
-        }
-        // println!("=== END DRAWN JOB BLOCKS ===");
-    });
-}
-
-/// Paint job-ID labels, one per contiguous vertical job block.
-/// Host splits are preserved in debug output, but the actual ID label is painted
-/// once for the contiguous same job-id block.
-///
-/// `rows` must be in top-to-bottom order (the order they were appended during
-/// the row-paint loop).
-pub(super) fn paint_job_id_labels(
-    info:    &Info,
-    options: &Options,
-    rows:    &[PaintedJobRow],
-) {
+pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[PaintedJobRow]) {
     if rows.is_empty() {
         return;
     }
-
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
         pos2(info.canvas.max.x, info.canvas.max.y),
     );
-
     let height = options.rect_height.max(info.text_height);
-    let font   = FontId::proportional(12.0);
-
+    let font = FontId::proportional(12.0);
     let blocks = collect_contiguous_job_blocks(rows, height);
-    debug_print_job_blocks(&blocks);
 
     for block in blocks {
         let start_x = info.point_from_s(options, block.start_s);
         let end_x = info.point_from_s(options, block.stop_s);
         let block_width = end_x - start_x;
-
+        if block_width <= 30.0 {
+            continue;
+        }
         let block_top = block.rows.first().unwrap().row_y;
         let block_bottom = block.rows.last().unwrap().row_y + height;
-
-        if block_width > 30.0 {
-            let center_x = (start_x + end_x) / 2.0;
-            let center_y = (block_top + block_bottom) / 2.0;
-
-            let block_rect = Rect::from_min_max(
-                pos2(start_x, block_top),
-                pos2(end_x,   block_bottom),
-            )
+        let block_rect = Rect::from_min_max(pos2(start_x, block_top), pos2(end_x, block_bottom))
             .intersect(chart_clip_rect);
-
-            if !block_rect.is_negative() {
-                // Center the job ID within the visible portion of the rectangle
-                let visible_center_x = block_rect.center().x;
-                let visible_center_y = block_rect.center().y;
-                
-                info.painter
-                    .with_clip_rect(block_rect)
-                    .text(
-                        pos2(visible_center_x, visible_center_y),
-                        Align2::CENTER_CENTER,
-                        format!("{}", block.job_id),
-                        font.clone(),
-                        Color32::BLACK,
-                    );
-            }
+        if !block_rect.is_negative() {
+            info.painter
+                .with_clip_rect(block_rect)
+                .text(
+                    block_rect.center(),
+                    Align2::CENTER_CENTER,
+                    format!("{}", block.job_id),
+                    font.clone(),
+                    Color32::BLACK,
+                );
         }
     }
 }
 
-pub(super) fn paint_aggregated_jobs_level_1<'a>(
+// ---------------------------------------------------------------------------
+// Job-field extraction  (path-based: one path per host, higher fields derived
+// from strata so a job never appears under the wrong cluster/group)
+// ---------------------------------------------------------------------------
+
+pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
+    match field {
+        "cluster" => s.cluster.clone(),
+        "host" => s.network_address.clone().or_else(|| s.host.clone()),
+        "network_address" => s.network_address.clone(),
+        "ip" => s.ip.clone(),
+        "site" => {
+            let fqdn = s.network_address.as_deref().or(s.host.as_deref()).unwrap_or("");
+            let site = fqdn.split('.').nth(1).unwrap_or("").trim();
+            if site.is_empty() { None } else { Some(site.to_string()) }
+        }
+        "state" => s.state.clone(),
+        "next_state" => s.next_state.clone(),
+        "cputype" => s.cputype.clone(),
+        "nodemodel" => s.nodemodel.clone(),
+        "chassis" => s.chassis.clone(),
+        "gpu_model" | "gpumodel" => s.gpu_model.clone(),
+        "gpu_compute_capability" => s.gpu_compute_capability.clone(),
+        "type" => s.r#type.clone(),
+        "comment" => s.comment.clone(),
+        "production" => s.production.clone(),
+        "besteffort" => s.besteffort.clone(),
+        "deploy" => s.deploy.clone(),
+        "drain" => s.drain.clone(),
+        "desktop_computing" => s.desktop_computing.clone(),
+        "cpufreq" => s.cpufreq.clone(),
+        "memnode" => s.memnode.map(|v| format!("{} MB", v / 1024)),
+        "memcore" => s.memcore.map(|v| v.to_string()),
+        "memcpu" => s.memcpu.map(|v| format!("{} MB", v / 1024)),
+        "core_count" => s.core_count.map(|v| v.to_string()),
+        "thread_count" => s.thread_count.map(|v| v.to_string()),
+        "resource_id" => s.resource_id.map(|v| v.to_string()),
+        // Kavlan
+        "vlan" => s.vlan.clone(),
+        "subnet_address" => s.subnet_address.clone(),
+        "subnet_prefix" => s.subnet_prefix.map(|p| p.to_string()),
+        "slash_16" => s.slash_16.clone(),
+        "slash_17" => s.slash_17.clone(),
+        "slash_18" => s.slash_18.clone(),
+        "slash_19" => s.slash_19.clone(),
+        "slash_20" => s.slash_20.clone(),
+        "slash_21" => s.slash_21.clone(),
+        "slash_22" => s.slash_22.clone(),
+        // Disk
+        "disk" => s.disk.clone(),
+        "nodeset" => s.nodeset.clone(),
+        // Named Strata fields not yet exposed
+        "state_num" => s.state_num.map(|v| v.to_string()),
+        "rconsole" => s.rconsole.clone(),
+        "cluster_priority" => s.cluster_priority.map(|v| v.to_string()),
+        "core" => s.core.map(|v| v.to_string()),
+        "suspended_jobs" => s.suspended_jobs.clone(),
+        "eth_rate" => s.eth_rate.map(|v| v.to_string()),
+        "gpudevice" => s.gpudevice.as_ref().map(|v| v.to_string()),
+        // Fall back to the catch-all extra map for any other data.json field
+        field => s.extra.get(field).map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            serde_json::Value::Null => String::new(),
+            other => other.to_string(),
+        }),
+    }
+}
+
+fn strata_field_string(strata: &Strata, field: &str) -> String {
+    strata_field_value(strata, field)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| format!("(no {})", field))
+}
+
+// ---------------------------------------------------------------------------
+// ResourceGroup — resource-first recursive hierarchy node
+// ---------------------------------------------------------------------------
+
+pub(super) enum ResourceGroup<'a> {
+    /// `label` is pre-computed from the view's `leaf_label_template` at build
+    /// time (when strata fields are available).  `None` → render the raw key.
+    Leaf { jobs: Vec<&'a Job>, label: Option<String> },
+    Inner(BTreeMap<String, ResourceGroup<'a>>),
+}
+
+// Each assignment carries: path, jobs, pre-computed leaf label.
+fn group_resource_paths<'a>(
+    assignments: Vec<(Vec<String>, Vec<&'a Job>, Option<String>)>,
+    n_levels: usize,
+) -> BTreeMap<String, ResourceGroup<'a>> {
+    let mut by_key: BTreeMap<String, Vec<(Vec<String>, Vec<&'a Job>, Option<String>)>> = BTreeMap::new();
+    for (path, jobs, label) in assignments {
+        let key = path[0].clone();
+        by_key.entry(key).or_default().push((path[1..].to_vec(), jobs, label));
+    }
+    by_key.into_iter().map(|(k, sub)| {
+        let group = if n_levels == 1 {
+            // All entries at this leaf share the same pre-computed label (first wins).
+            let label = sub.iter().find_map(|(_, _, l)| l.clone());
+            let mut all_jobs: Vec<&'a Job> = sub.into_iter().flat_map(|(_, j, _)| j).collect();
+            all_jobs.sort_by_key(|j| j.id);
+            all_jobs.dedup_by_key(|j| j.id);
+            ResourceGroup::Leaf { jobs: all_jobs, label }
+        } else {
+            ResourceGroup::Inner(group_resource_paths(sub, n_levels - 1))
+        };
+        (k, group)
+    }).collect()
+}
+
+fn min_leaf_label<'a>(group: &'a ResourceGroup<'_>) -> Option<&'a str> {
+    match group {
+        ResourceGroup::Leaf { label, .. } => label.as_deref(),
+        ResourceGroup::Inner(sub) => sub.values().find_map(min_leaf_label),
+    }
+}
+
+/// Resolve a single field value for a resource, with sibling-lookup enrichment.
+///
+/// Non-compute resource types (disks, kavlan, …) often lack `cluster`, `site`,
+/// or even `host` as direct fields.  For those we find the sibling compute node
+/// in `strata_by_host` (linked via `network_address`, `host`, or `nodeset`) and
+/// copy the missing value from there.
+pub(super) fn resolve_field(
+    strata: &Strata,
+    field: &str,
+    strata_by_host: &std::collections::HashMap<String, Strata>,
+) -> String {
+    // Find the sibling compute-node strata via any host-linking field on the resource.
+    let sibling = || -> Option<&Strata> {
+        for key in [
+            strata.network_address.as_deref(),
+            strata.host.as_deref(),
+            strata.nodeset.as_deref(),
+        ].iter().flatten() {
+            let key = key.trim();
+            if key.is_empty() { continue; }
+            if let Some(h) = strata_by_host.get(key)
+                .or_else(|| strata_by_host.get(key.split('.').next().unwrap_or(key)))
+            {
+                return Some(h);
+            }
+        }
+        None
+    };
+
+    match field {
+        "host" | "network_address" => {
+            // Own fields first, then sibling's network_address for normalization.
+            strata.network_address.as_deref()
+                .or(strata.host.as_deref())
+                .or(strata.nodeset.as_deref())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| sibling()?.network_address.as_deref()
+                    .map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+                .unwrap_or_else(|| format!("(no {})", field))
+        }
+
+        "cluster" => {
+            // Own field → sibling compute node's cluster.
+            strata.cluster.as_deref().map(str::trim).filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| sibling()?.cluster.as_deref()
+                    .map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+                .unwrap_or_else(|| "(no cluster)".to_string())
+        }
+
+        "site" => {
+            // Derive from own FQDN first, then from sibling's FQDN.
+            let site_from = |fqdn: &str| -> Option<String> {
+                let s = fqdn.split('.').nth(1).unwrap_or("").trim();
+                if s.is_empty() { None } else { Some(s.to_string()) }
+            };
+            let own_fqdn = strata.network_address.as_deref()
+                .or(strata.host.as_deref())
+                .or(strata.nodeset.as_deref())
+                .unwrap_or("");
+            site_from(own_fqdn)
+                .or_else(|| {
+                    let sib = sibling()?;
+                    let fqdn = sib.network_address.as_deref()
+                        .or(sib.host.as_deref())
+                        .unwrap_or("");
+                    site_from(fqdn)
+                })
+                .or_else(|| {
+                    // kavlan/subnet resources have no FQDN at all; pick from any
+                    // compute node since OAR data is always single-site.
+                    strata_by_host.values().find_map(|s| {
+                        let fqdn = s.network_address.as_deref()
+                            .or(s.host.as_deref())
+                            .unwrap_or("");
+                        site_from(fqdn)
+                    })
+                })
+                .unwrap_or_else(|| "(no site)".to_string())
+        }
+
+        _ => strata_field_string(strata, field),
+    }
+}
+
+/// Returns the longest leaf label string that will be rendered for the current view.
+/// Used by `compute_gutter_width` so the gutter fits its content exactly.
+pub(super) fn max_leaf_label(
+    app: &ApplicationContext,
+    levels: &[String],
+    template: Option<&str>,
+) -> String {
+    let leaf_field = match levels.last() {
+        Some(f) => f.as_str(),
+        None => return String::new(),
+    };
+    let ancestor_fields = &levels[..levels.len().saturating_sub(1)];
+    let mut longest = String::new();
+    for strata in app.strata_by_resource_id.values() {
+        let raw = resolve_field(strata, leaf_field, &app.strata_by_host);
+        if raw.starts_with("(no ") {
+            continue;
+        }
+        let label = if let Some(tmpl) = template {
+            let path_context: Vec<(String, String)> = ancestor_fields
+                .iter()
+                .map(|f| (f.clone(), resolve_field(strata, f, &app.strata_by_host)))
+                .collect();
+            resolve_label_with_strata(tmpl, &path_context, leaf_field, &raw, strata)
+        } else {
+            raw
+        };
+        if label.len() > longest.len() {
+            longest = label;
+        }
+    }
+    longest
+}
+
+/// Build a resource-first group tree.
+/// Every resource in `strata_by_resource_id` whose LEAF-level field is present
+/// is included as a row, even with zero jobs.  Missing intermediate fields are
+/// derived where possible (e.g. cluster inferred from host lookup).
+/// Jobs are overlaid as a reverse lookup: resource_id → jobs.
+pub(super) fn build_resource_groups<'a>(
+    app: &'a ApplicationContext,
+    levels: &[String],
+    jobs: &[&'a Job],
+    filter: Option<&super::types::ResourceFilter>,
+    template: Option<&str>,
+) -> BTreeMap<String, ResourceGroup<'a>> {
+    use std::collections::{HashMap, HashSet};
+    assert!(!levels.is_empty(), "levels must not be empty");
+
+    let mut jobs_by_resource: HashMap<u32, Vec<&'a Job>> = HashMap::new();
+    for &job in jobs {
+        for &rid in &job.assigned_resources {
+            jobs_by_resource.entry(rid).or_default().push(job);
+        }
+    }
+
+    let job_by_id: HashMap<u32, &'a Job> = jobs.iter().map(|&j| (j.id, j)).collect();
+
+    // path -> (job id set, representative strata for label resolution)
+    let mut leaf_data: BTreeMap<Vec<String>, (HashSet<u32>, &Strata)> = BTreeMap::new();
+
+    for (&rid, strata) in &app.strata_by_resource_id {
+        let path: Vec<String> = levels.iter()
+            .map(|f| resolve_field(strata, f, &app.strata_by_host))
+            .collect();
+        if path.last().map_or(true, |v| v.starts_with("(no ")) {
+            continue;
+        }
+        if let Some(f) = filter {
+            let actual = strata_field_value(strata, &f.field).unwrap_or_default();
+            let matches = actual.trim() == f.value.trim();
+            if f.exclude == matches {
+                continue;
+            }
+        }
+        let entry = leaf_data.entry(path).or_insert_with(|| (HashSet::new(), strata));
+        if let Some(resource_jobs) = jobs_by_resource.get(&rid) {
+            for job in resource_jobs {
+                entry.0.insert(job.id);
+            }
+        }
+    }
+
+    let assignments: Vec<(Vec<String>, Vec<&'a Job>, Option<String>)> = leaf_data
+        .into_iter()
+        .map(|(path, (job_ids, rep_strata))| {
+            let mut job_list: Vec<&'a Job> = job_ids.iter()
+                .filter_map(|id| job_by_id.get(id).copied())
+                .collect();
+            job_list.sort_by_key(|j| j.id);
+
+            let label = template.map(|tmpl| {
+                // Build context: ancestor levels + all strata fields as fallback.
+                let path_context: Vec<(String, String)> = levels[..levels.len() - 1]
+                    .iter()
+                    .zip(path.iter())
+                    .map(|(f, v)| (f.clone(), v.clone()))
+                    .collect();
+                let leaf_field = levels.last().map(|s| s.as_str()).unwrap_or("");
+                let leaf_key = path.last().map(|s| s.as_str()).unwrap_or("");
+                // resolve_label: path_context first, then raw strata field.
+                resolve_label_with_strata(tmpl, &path_context, leaf_field, leaf_key, rep_strata)
+            });
+
+            (path, job_list, label)
+        })
+        .collect();
+
+    group_resource_paths(assignments, levels.len())
+}
+
+/// Like `apply_label_template` but falls back to `strata_field_value` for
+/// placeholders not found in path_context or the leaf key.
+fn resolve_label_with_strata(
+    template: &str,
+    path_context: &[(String, String)],
+    leaf_field: &str,
+    leaf_key: &str,
+    strata: &Strata,
+) -> String {
+    let lookup = |field: &str| -> String {
+        if field == leaf_field { return leaf_key.to_string(); }
+        if let Some((_, v)) = path_context.iter().find(|(f, _)| f == field) {
+            return v.clone();
+        }
+        strata_field_value(strata, field).unwrap_or_default()
+    };
+
+    let mut result = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        result.push_str(&rest[..open]);
+        rest = &rest[open + 1..];
+        if let Some(close) = rest.find('}') {
+            let inner = &rest[..close];
+            rest = &rest[close + 1..];
+            let rendered = if let Some(pipe) = inner.find('|') {
+                let field = &inner[..pipe];
+                let modifier = &inner[pipe + 1..];
+                let raw = lookup(field);
+                match modifier {
+                    "short" => raw.split('.').next().unwrap_or(&raw).to_string(),
+                    _ => raw,
+                }
+            } else {
+                lookup(inner)
+            };
+            result.push_str(&rendered);
+        } else {
+            result.push('{');
+            result.push_str(rest);
+            break;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Stripe colour per depth (outermost = index 0 = lightest)
+// ---------------------------------------------------------------------------
+
+fn stripe_color(depth: usize) -> Color32 {
+    const PALETTE: [(u8, u8, u8); 3] = [
+        (252, 238, 170), // outermost – lightest yellow
+        (245, 227, 113), // middle
+        (235, 215, 110), // innermost – darkest yellow
+    ];
+    let (r, g, b) = PALETTE[depth % PALETTE.len()];
+    Color32::from_rgb(r, g, b)
+}
+
+// ---------------------------------------------------------------------------
+// Leaf-level label (drawn to the LEFT of the stripe)
+// ---------------------------------------------------------------------------
+
+/// Resolve a `{field}` / `{field|modifier}` template.
+///
+/// Supported modifiers:
+/// - `short` — take the first segment before `.` (strips domain from FQDNs)
+///
+/// Unknown `{placeholders}` are left unchanged.
+fn apply_label_template(
+    template: &str,
+    path_context: &[(String, String)],
+    leaf_field: &str,
+    leaf_key: &str,
+) -> String {
+    let lookup = |field: &str| -> String {
+        if field == leaf_field {
+            return leaf_key.to_string();
+        }
+        path_context.iter()
+            .find(|(f, _)| f == field)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+
+    let mut result = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        result.push_str(&rest[..open]);
+        rest = &rest[open + 1..];
+        if let Some(close) = rest.find('}') {
+            let inner = &rest[..close];
+            rest = &rest[close + 1..];
+            let rendered = if let Some(pipe) = inner.find('|') {
+                let field = &inner[..pipe];
+                let modifier = &inner[pipe + 1..];
+                let raw = lookup(field);
+                match modifier {
+                    "short" => raw.split('.').next().unwrap_or(&raw).to_string(),
+                    _ => raw,
+                }
+            } else {
+                lookup(inner)
+            };
+            result.push_str(&rendered);
+        } else {
+            result.push('{');
+            result.push_str(rest);
+            break;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+fn draw_leaf_label(
+    info: &Info,
+    key: &str,
+    precomputed_label: Option<&str>,
+    row_y: f32,
+    label_x_end: f32,
+    row_height: f32,
+    app: &ApplicationContext,
+    options: &Options,
+    path_context: &[(String, String)],
+) {
+    let theme_colors = get_theme_colors(&info.ctx.style());
+    let visuals = info.ctx.style().visuals.clone();
+
+    let label_text = precomputed_label.unwrap_or(key).to_string();
+
+    let indent = 2.0;
+    let left = info.canvas.min.x + indent;
+    let total_width = (label_x_end - indent).max(40.0);
+    let rect = Rect::from_min_max(
+        pos2(left, row_y),
+        pos2(left + total_width, row_y + row_height),
+    );
+
+    let is_hovered = info.response.hover_pos().map_or(false, |m| rect.contains(m));
+
+    let clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x, row_y),
+        pos2(info.canvas.min.x + label_x_end, row_y + row_height),
+    );
+    let gutter_painter = info.painter.with_clip_rect(clip_rect);
+
+    let (label_bg, label_border, label_text_color) = if visuals.dark_mode {
+        (
+            Color32::from_gray(40),
+            Stroke::new(1.0, Color32::from_gray(110)),
+            Color32::from_gray(245),
+        )
+    } else {
+        (
+            Color32::from_rgb(240, 238, 210),
+            Stroke::new(1.0, Color32::from_gray(80)),
+            Color32::from_gray(20),
+        )
+    };
+
+    gutter_painter.rect_filled(rect, 0.0, label_bg);
+    let border = if is_hovered {
+        Stroke::new(2.0, visuals.selection.stroke.color)
+    } else {
+        label_border
+    };
+    gutter_painter.rect(rect, 0.0, label_bg, border);
+
+    if is_hovered {
+        let hover_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 140);
+        gutter_painter.rect_filled(
+            Rect::from_min_max(pos2(info.canvas.min.x, row_y), pos2(info.canvas.min.x + 4.0, row_y + row_height)),
+            0.0,
+            hover_fill,
+        );
+    }
+
+    let label_font = FontId::proportional((info.font_id.size - 1.0).max(11.0));
+    gutter_painter.text(
+        pos2(left + 6.0, row_y + row_height * 0.5),
+        Align2::LEFT_CENTER,
+        &label_text,
+        label_font.clone(),
+        if is_hovered { theme_colors.text } else { label_text_color },
+    );
+
+    if is_hovered {
+        info.ctx.set_cursor_icon(CursorIcon::PointingHand);
+        let preset_fields = options.leaf_info_preset.as_ref()
+            .map(|p| p.fields.as_slice())
+            .unwrap_or(&[]);
+        if !preset_fields.is_empty() {
+            let mut fields_snapshot: Vec<String> = preset_fields.iter().cloned().collect();
+            fields_snapshot.sort_unstable();
+            let layer_id = LayerId::new(Order::Tooltip, Id::new("gantt-label-layer"));
+            egui::containers::popup::show_tooltip(
+                &info.ctx,
+                layer_id,
+                Id::new(format!("gantt-leaf-label-{}", key)),
+                |ui: &mut egui::Ui| {
+                    let trimmed = key.trim();
+                    let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("");
+                    let strata_label = app.strata_by_resource_id.values().find(|s| {
+                        strata_field_value(s, leaf_field)
+                            .map(|v| v.trim().to_string())
+                            .as_deref() == Some(trimmed)
+                    });
+                    if let Some(s) = strata_label {
+                        for field in &fields_snapshot {
+                            let val = if field == "cpuset" {
+                                cpuset_display_aggregate(app, leaf_field, trimmed)
+                            } else {
+                                strata_field_value(s, field)
+                                    .map(|v| v.trim().to_string())
+                            };
+                            ui.label(format!("{}: {}", field, val.as_deref().unwrap_or("")));
+                        }
+                    }
+                },
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resource-state lookup for any field
+// ---------------------------------------------------------------------------
+
+fn resource_ids_for_leaf(
+    field: &str,
+    key: &str,
+    path_context: &[(String, String)],
+    strata_by_resource_id: &HashMap<u32, Strata>,
+) -> Vec<u32> {
+    strata_by_resource_id
+        .values()
+        .filter(|s| {
+            strata_field_value(s, field).as_deref() == Some(key)
+                && path_context
+                    .iter()
+                    .all(|(f, v)| strata_field_value(s, f).as_deref() == Some(v.as_str()))
+        })
+        .filter_map(|s| s.resource_id)
+        .collect()
+}
+
+fn draw_dead_intervals_for_row(
+    info: &Info,
+    options: &Options,
+    top_y: f32,
+    height: f32,
+    intervals: &[DeadInterval],
+) {
+    if intervals.is_empty() {
+        return;
+    }
+    let theme_colors = get_theme_colors(&info.ctx.style());
+    let chart_clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
+        pos2(info.canvas.max.x, info.canvas.max.y),
+    );
+    let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
+    let hachure_spacing = 10.0;
+
+    for iv in intervals {
+        let color = match iv.state {
+            ResourceState::Dead => Color32::from_rgba_premultiplied(255, 0, 0, 150),
+            ResourceState::Absent => theme_colors.hatch,
+            ResourceState::Suspected => Color32::from_rgba_premultiplied(255, 140, 0, 150),
+            _ => continue,
+        };
+        let start_x = info.point_from_s(options, iv.start_s);
+        let end_x = if iv.end_s == 0 {
+            info.canvas.max.x
+        } else {
+            info.point_from_s(options, iv.end_s)
+        };
+        let mut x = start_x.max(info.canvas.min.x);
+        let mut shapes = Vec::new();
+        while x < end_x.min(info.canvas.max.x) {
+            shapes.push(Shape::line_segment(
+                [pos2(x, top_y), pos2(x + hachure_spacing, top_y + height)],
+                Stroke::new(2.0, color),
+            ));
+            x += hachure_spacing;
+        }
+        chart_painter.extend(shapes);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Recursive draw_level_n
+// ---------------------------------------------------------------------------
+
+/// Draw `n` hierarchy levels recursively.
+///
+/// * **n == 1** (leaf): draws a coloured panel separated by a line; the item
+///   label is rendered to the LEFT of the panel.
+/// * **n > 1** (inner): draws the current panel (yellow band + dividing line,
+///   no label) then recurses with `n − 1`.
+///
+/// Returns the updated `cursor_y` after all rows have been painted.
+pub(super) fn draw_level_n<'a>(
     info: &Info,
     options: &mut Options,
-    jobs: BTreeMap<String, Vec<&'a Job>>,
+    groups: &BTreeMap<String, ResourceGroup<'a>>,
+    levels: &[String],
+    depth: usize,
+    n_total: usize,
+    stripe_x: f32,
+    label_x_end: f32,
+    gutter_width: f32,
     mut cursor_y: f32,
     details_window: &mut Vec<JobDetailsWindow>,
-    collapsed_jobs_level_1: &mut BTreeMap<String, bool>,
-    font_size: i32,
-    all_cluster: &Vec<Cluster>,
-    aggregate_by_level_1: AggregateByLevel1Enum,
-    gutter_width: f32,
     app: &ApplicationContext,
-) -> (f32, Vec<PaintedJobRow>) {
+    all_clusters: &Vec<Cluster>,
+    painted_rows: &mut Vec<PaintedJobRow>,
+    // Accumulated (field, value) pairs from ancestor levels, used for stripe tooltip.
+    path_context: &[(String, String)],
+) -> f32 {
     let theme_colors = get_theme_colors(&info.ctx.style());
-
-    let compact = options.compact_rows;
-    let row_height = options.rect_height.max(info.text_height);
-
-    let spacing_between_level_1 = 0.0;
-    let spacing_between_jobs = 0.0;
-    let offset_level_1 = 0.0;
-    let aggregate_by = &options.aggregate_by;
-
-    cursor_y += spacing_between_level_1;
-    let mut painted_rows: Vec<PaintedJobRow> = Vec::new();
-
-    let mut sorted_level_1: Vec<String> = jobs.keys().cloned().collect();
-    sorted_level_1.sort_by(|a, b| compare_string_with_number(a, b));
-
-    let aggregation_height = font_size as f32 + 5.0 + offset_level_1;
-
     let chart_x0 = info.canvas.min.x + gutter_width;
+    let row_height = options.rect_height.max(info.text_height);
+    let s_color = stripe_color(depth);
+    let stripe_border = Stroke::new(1.0, Color32::BLACK);
+    let field = &levels[0];
 
-    for level_1 in sorted_level_1 {
-        let job_list = jobs.get(&level_1).unwrap();
+    // Outer-level dividers are thicker and lighter; inner ones thinner.
+    let line_stroke = if depth == 0 {
+        Stroke::new(1.5, Color32::from(theme_colors.aggregated_line_level_1))
+    } else {
+        Stroke::new(0.5, Color32::from(theme_colors.aggregated_line_level_2))
+    };
 
+    let mut sorted_keys: Vec<&String> = groups.keys().collect();
+    if options.sort_by_label {
+        sorted_keys.sort_by(|a, b| {
+            let la = min_leaf_label(groups.get(*a).unwrap())
+                .map(str::to_string)
+                .unwrap_or_else(|| (*a).clone());
+            let lb = min_leaf_label(groups.get(*b).unwrap())
+                .map(str::to_string)
+                .unwrap_or_else(|| (*b).clone());
+            compare_string_with_number(&la, &lb)
+        });
+    } else {
+        sorted_keys.sort_by(|a, b| compare_string_with_number(a, b));
+    }
+
+    for key in sorted_keys {
+        let group = groups.get(key).unwrap();
+        let span_top = cursor_y;
+
+        // Horizontal dividing line across the chart area.
         info.painter.line_segment(
-            [
-                pos2(chart_x0, cursor_y),
-                pos2(info.canvas.max.x, cursor_y),
-            ],
-            Stroke::new(1.5, theme_colors.aggregated_line_level_1),
+            [pos2(chart_x0, cursor_y), pos2(info.canvas.max.x, cursor_y)],
+            line_stroke,
         );
 
-        cursor_y += offset_level_1;
+        match group {
+            // ── n == 1: leaf ─────────────────────────────────────────────────
+            ResourceGroup::Leaf { jobs, label } => {
+                draw_leaf_label(info, key, label.as_deref(), cursor_y, label_x_end, row_height, app, options, path_context);
 
-        let text_pos = pos2(info.canvas.min.x + 6.0, cursor_y + info.text_height * 0.5);
+                let job_row_y = cursor_y;
 
-        let is_collapsed = collapsed_jobs_level_1.entry(level_1.clone()).or_insert(false);
-        *is_collapsed = false;
-        let label_meta = build_label_meta_level1(&level_1, aggregate_by_level_1, all_cluster);
+                // Check if hovering over the entire row and draw vertical dash
+                let row_rect = Rect::from_min_max(
+                    pos2(info.canvas.min.x, job_row_y),
+                    pos2(info.canvas.max.x, job_row_y + row_height),
+                );
+                let is_row_hovered = info.response.hover_pos()
+                    .map_or(false, |m| row_rect.contains(m));
+                if is_row_hovered {
+                    let hover_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 140);
+                    info.painter.rect_filled(
+                        Rect::from_min_max(
+                            pos2(info.canvas.min.x, job_row_y),
+                            pos2(info.canvas.min.x + 4.0, job_row_y + row_height),
+                        ),
+                        0.0,
+                        hover_fill,
+                    );
+                }
 
-        paint_job_info(
-            info,
-            &level_1,
-            text_pos,
-            is_collapsed,
-            1,
-            gutter_width,
-            options.rect_height,
-            compact,
-            label_meta,
-            app,
-        );
+                for job in jobs.iter() {
+                    paint_job(
+                        info,
+                        options,
+                        job,
+                        job_row_y,
+                        details_window,
+                        all_clusters,
+                        Some(key.as_str()),
+                    );
+                }
 
-        cursor_y += spacing_between_level_1;
+                // Draw dead/absent/suspected intervals for this row from dead_resources.
+                let resource_ids = resource_ids_for_leaf(field, key, path_context, &app.strata_by_resource_id);
+                let mut seen: HashSet<DeadInterval> = HashSet::new();
+                let mut intervals: Vec<DeadInterval> = Vec::new();
+                for id in &resource_ids {
+                    if let Some(ivs) = app.dead_intervals.get(id) {
+                        for iv in ivs {
+                            if seen.insert(iv.clone()) {
+                                intervals.push(iv.clone());
+                            }
+                        }
+                    }
+                }
+                draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals);
 
-        let state = if aggregate_by_level_1 == AggregateByLevel1Enum::Owner {
-            ResourceState::Alive
-        } else if aggregate_by_level_1 == AggregateByLevel1Enum::Host {
-            get_host_state_from_name(all_cluster, &level_1)
-        } else {
-            get_cluster_state_from_name(all_cluster, &level_1)
-        };
+                // Collect rows for job-ID label painting.
+                let mut sorted_jobs: Vec<&&Job> = jobs.iter().collect();
+                sorted_jobs.sort_by_key(|j| (j.scheduled_start, j.stop_time));
+                for job in sorted_jobs {
+                    let stop_s = if job.stop_time > 0 {
+                        job.stop_time
+                    } else {
+                        job.scheduled_start + job.walltime
+                    };
+                    painted_rows.push(PaintedJobRow {
+                        job_id: job.id,
+                        start_s: job.scheduled_start,
+                        stop_s,
+                        row_y: job_row_y,
+                        row_label: key.clone(),
+                        row_index: painted_rows.len(),
+                    });
+                }
 
-        let resource_label_for_state_tooltip = match aggregate_by_level_1 {
-            AggregateByLevel1Enum::Host | AggregateByLevel1Enum::Cluster => Some(level_1.as_str()),
-            AggregateByLevel1Enum::Owner => None,
-        };
+                cursor_y += row_height;
+            }
 
-        if !*is_collapsed {
-            let job_row_y = cursor_y;
+            // ── n > 1: inner ─────────────────────────────────────────────────
+            ResourceGroup::Inner(sub_groups) => {
+                let mut child_context = path_context.to_vec();
+                child_context.push((field.clone(), key.clone()));
 
-            for job in job_list {
-                paint_job(
+                cursor_y = draw_level_n(
                     info,
                     options,
-                    job,
-                    job_row_y,
+                    sub_groups,
+                    &levels[1..],
+                    depth + 1,
+                    n_total,
+                    stripe_x + STRIPE_W,
+                    label_x_end,
+                    gutter_width,
+                    cursor_y,
                     details_window,
-                    all_cluster,
-                    state,
-                    aggregation_height,
-                    resource_label_for_state_tooltip,
+                    app,
+                    all_clusters,
+                    painted_rows,
+                    &child_context,
                 );
             }
-
-            if !job_list.is_empty() {
-                cursor_y += row_height + spacing_between_jobs;
-            }
-            cursor_y += spacing_between_level_1;
         }
-        cursor_y += spacing_between_level_1;
-    }
 
-    (cursor_y, painted_rows)
-}
+        let span_bottom = cursor_y;
 
-pub(super) fn paint_aggregated_jobs_level_2<'a>(
-    info: &Info,
-    options: &mut Options,
-    jobs: BTreeMap<String, BTreeMap<String, Vec<&'a Job>>>,
-    mut cursor_y: f32,
-    details_window: &mut Vec<JobDetailsWindow>,
-    collapsed_jobs_level_1: &mut BTreeMap<String, bool>,
-    collapsed_jobs_level_2: &mut BTreeMap<(String, String), bool>,
-    font_size: i32,
-    all_cluster: &Vec<Cluster>,
-    aggregate_by_level_1: AggregateByLevel1Enum,
-    aggregate_by_level_2: AggregateByLevel2Enum,
-    gutter_width: f32,
-    app: &ApplicationContext,
-) -> (f32, Vec<PaintedJobRow>) {
-    let theme_colors = get_theme_colors(&info.ctx.style());
-
-    let compact = options.compact_rows;
-
-    let extra_row_pad = if compact
-        && aggregate_by_level_1 == AggregateByLevel1Enum::Host
-        && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
-    {
-        1.0
-    } else {
-        0.0
-    };
-    let row_height = options.rect_height.max(info.text_height + extra_row_pad);
-
-    let hide_level_1_headers = aggregate_by_level_1 == AggregateByLevel1Enum::Cluster
-        && aggregate_by_level_2 == AggregateByLevel2Enum::Host;
-
-    #[derive(Clone)]
-    struct GanttGutterHostRow {
-        host_short: String,
-        host_full: String,
-        cluster: String,
-        site: String,
-        row_rect: Rect,
-    }
-
-    #[derive(Clone)]
-    struct GanttGutterSpan {
-        top: f32,
-        bottom: f32,
-    }
-
-    let mut grid5000_host_rows: Vec<GanttGutterHostRow> = Vec::new();
-    // Collect one entry per (row, job) in top-to-bottom order for cross-row label grouping.
-    let mut painted_rows: Vec<PaintedJobRow> = Vec::new();
-
-
-    let mut grid5000_cluster_spans: Vec<GanttGutterSpan> = Vec::new();
-    let mut grid5000_site_spans: Vec<GanttGutterSpan> = Vec::new();
-    let mut current_site: Option<(String, f32, f32)> = None;
-
-    let spacing_between_level_1 = 0.0;
-    let spacing_between_level_2 = 0.0;
-    let spacing_between_jobs = 0.0;
-    let offset_level_1 = 0.0;
-    let is_grid5000 = aggregate_by_level_1 == AggregateByLevel1Enum::Cluster
-        && aggregate_by_level_2 == AggregateByLevel2Enum::Host;
-
-    cursor_y += spacing_between_level_1;
-
-    let mut sorted_level_1: Vec<String> = jobs.keys().cloned().collect();
-    sorted_level_1.sort_by(|a, b| compare_string_with_number(a, b));
-
-    let chart_x0 = info.canvas.min.x + gutter_width;
-    let font_host = FontId::proportional((info.font_id.size).max(11.0));
-    let label_w = (gutter_width - gutter_g5k_total_w()).max(1.0);
-    let c_text = theme_colors.text;
-    let c_site = Color32::from_rgb(252, 238, 170);
-    let c_cluster = Color32::from_rgb(245, 227, 113);
-    let c_host = Color32::from_rgb(235, 215, 110);
-    let gutter_painter = info.painter.clone();
-
-    for level_1 in sorted_level_1 {
-        let level_1_section_top = cursor_y;
-        let level_2_map = jobs.get(&level_1).unwrap();
-        let level_1_key = level_1.clone();
-
-        let cluster_site = if hide_level_1_headers {
-            site_for_cluster_name(&level_1, all_cluster).unwrap_or_default()
-        } else {
-            String::new()
-        };
-
-        let mut cluster_top: Option<f32> = None;
-        let mut cluster_bottom: Option<f32> = None;
-
-        if !hide_level_1_headers {
-            info.painter.line_segment(
-                [
-                    pos2(chart_x0, cursor_y),
-                    pos2(info.canvas.max.x, cursor_y),
-                ],
-                Stroke::new(1.5, theme_colors.aggregated_line_level_1),
+        // Draw this level's coloured stripe spanning the full group extent.
+        if span_bottom > span_top {
+            let stripe_rect = Rect::from_min_max(
+                pos2(stripe_x, span_top),
+                pos2(stripe_x + STRIPE_W, span_bottom),
             );
 
-            cursor_y += offset_level_1;
+            let is_hovered = info.response.hover_pos()
+                .map_or(false, |m| stripe_rect.contains(m));
 
-            let header_height = if compact {
-                options.rect_height.max(info.text_height + 2.0)
+            let fill = if is_hovered {
+                Color32::from_rgba_unmultiplied(100, 149, 237, 180) // cornflower-blue highlight
             } else {
-                info.text_height
+                s_color
             };
-            let header_center_y = cursor_y + header_height * 0.5;
+            info.painter.rect_filled(stripe_rect, 0.0, fill);
 
-            let text_pos = pos2(info.canvas.min.x + 6.0, header_center_y);
-
-            let is_collapsed_level_1 = collapsed_jobs_level_1
-                .entry(level_1.clone())
-                .or_insert(false);
-            *is_collapsed_level_1 = false;
-            let label_meta_level_1 =
-                build_label_meta_level1(&level_1, aggregate_by_level_1, all_cluster);
-
-            paint_job_info(
-                info,
-                &level_1,
-                text_pos,
-                is_collapsed_level_1,
-                1,
-                gutter_width,
-                options.rect_height,
-                compact,
-                label_meta_level_1,
-                app,
-            );
-
-            if compact {
-                cursor_y += header_height;
+            // Stripe hover tooltip — shows the full path from root to this level.
+            if is_hovered {
+                let mut tooltip_lines: Vec<String> = path_context
+                    .iter()
+                    .map(|(f, v)| format!("{}: {}", f, v))
+                    .collect();
+                tooltip_lines.push(format!("{}: {}", field, key));
+                let tooltip_text = tooltip_lines.join("\n");
+                egui::show_tooltip_at_pointer(
+                    &info.ctx,
+                    info.response.layer_id,
+                    egui::Id::new(("stripe_tip", depth, key.as_str())),
+                    |ui| { ui.label(tooltip_text); },
+                );
             }
 
-            cursor_y += spacing_between_level_1;
-        } else {
-            cursor_y += spacing_between_level_1;
-        }
-
-        let is_collapsed_level_1 = collapsed_jobs_level_1
-            .entry(level_1.clone())
-            .or_insert(false);
-        *is_collapsed_level_1 = false;
-
-        if !*is_collapsed_level_1 {
-            let mut sorted_level_2: Vec<_> = level_2_map.keys().collect();
-            sorted_level_2.sort_by(|a, b| compare_string_with_number(a, b));
-
-            for level_2 in sorted_level_2 {
-                if let Some(job_list) = level_2_map.get(level_2) {
-                    info.painter.line_segment(
-                        [
-                            pos2(chart_x0, cursor_y),
-                            pos2(info.canvas.max.x, cursor_y),
-                        ],
-                        Stroke::new(0.5, theme_colors.aggregated_line_level_2),
-                    );
-
-                    cursor_y += spacing_between_level_2;
-
-                    let row_center_y = if compact {
-                        cursor_y + row_height * 0.5
-                    } else {
-                        cursor_y + spacing_between_level_2
-                    };
-
-                    let indent_x = if aggregate_by_level_1 == AggregateByLevel1Enum::Host {
-                        32.0
-                    } else {
-                        20.0
-                    };
-                    let text_pos = pos2(info.canvas.min.x + indent_x, row_center_y);
-
-                    let is_collapsed_level_2 = collapsed_jobs_level_2
-                        .entry((level_1_key.to_string(), level_2.to_string()))
-                        .or_insert(false);
-                    *is_collapsed_level_2 = false;
-                    let label_meta_level_2 = build_label_meta_level2(
-                        &level_1,
-                        level_2,
-                        aggregate_by_level_1,
-                        aggregate_by_level_2,
-                        all_cluster,
-                    );
-
-                    if hide_level_1_headers {
-                        let extra_pad = 0.0;
-                        let row_height = options.rect_height.max(info.text_height + extra_pad);
-                        let row_rect = Rect::from_min_max(
-                            pos2(info.canvas.min.x, row_center_y - row_height * 0.5),
-                            pos2(
-                                info.canvas.min.x + gutter_width,
-                                row_center_y + row_height * 0.5,
-                            ),
-                        );
-
-                        let host_short = short_host_label(&level_2.to_string());
-                        grid5000_host_rows.push(GanttGutterHostRow {
-                            host_short,
-                            host_full: level_2.to_string(),
-                            cluster: level_1.clone(),
-                            site: cluster_site.clone(),
-                            row_rect,
-                        });
-
-                        cluster_top = Some(cluster_top.unwrap_or(row_rect.min.y).min(row_rect.min.y));
-                        cluster_bottom =
-                            Some(cluster_bottom.unwrap_or(row_rect.max.y).max(row_rect.max.y));
-                    } else {
-                        paint_job_info(
-                            info,
-                            &level_2.to_string(),
-                            text_pos,
-                            is_collapsed_level_2,
-                            2,
-                            gutter_width,
-                            options.rect_height,
-                            compact,
-                            label_meta_level_2,
-                            app,
-                        );
-                    }
-
-                    cursor_y += spacing_between_level_2;
-
-                    let state = if aggregate_by_level_2 == AggregateByLevel2Enum::Host {
-                        get_host_state_from_name(all_cluster, level_2)
-                    } else if aggregate_by_level_2 == AggregateByLevel2Enum::None {
-                        if aggregate_by_level_1 == AggregateByLevel1Enum::Host {
-                            get_host_state_from_name(all_cluster, &level_1)
-                        } else if aggregate_by_level_1 == AggregateByLevel1Enum::Cluster {
-                            get_cluster_state_from_name(all_cluster, &level_1)
-                        } else {
-                            ResourceState::Alive
-                        }
-                    } else {
-                        ResourceState::Alive
-                    };
-
-                    if !*is_collapsed_level_2 {
-                        let aligned_y = if compact {
-                            cursor_y
-                        } else {
-                            cursor_y - options.rect_height.max(info.text_height) * 0.5
-                        };
-                        let job_row_y = aligned_y;
-
-                        let adjusted_aggregation_height = spacing_between_level_2 * 2.0;
-
-                        for job in job_list.iter() {
-                            paint_job(
-                                info,
-                                options,
-                                job,
-                                job_row_y,
-                                details_window,
-                                all_cluster,
-                                state,
-                                adjusted_aggregation_height,
-                                if aggregate_by_level_2 == AggregateByLevel2Enum::Host {
-                                    Some(level_2.as_str())
-                                } else if aggregate_by_level_2 == AggregateByLevel2Enum::None {
-                                    if aggregate_by_level_1 == AggregateByLevel1Enum::Host
-                                        || aggregate_by_level_1 == AggregateByLevel1Enum::Cluster
-                                    {
-                                        Some(level_1.as_str())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                },
-                            );
-                        }
-
-                        // Collect each job on this row for cross-row label grouping.
-                        let mut row_jobs: Vec<&Job> = job_list.iter().map(|j| *j).collect();
-                        row_jobs.sort_by_key(|j| (j.scheduled_start, j.stop_time));
-                        let row_label = if aggregate_by_level_2 == AggregateByLevel2Enum::Host {
-                            level_2.clone()
-                        } else {
-                            level_1.clone()
-                        };
-                        for job in &row_jobs {
-                            let stop_s = if job.stop_time > 0 { job.stop_time } else { job.scheduled_start + job.walltime };
-                            painted_rows.push(PaintedJobRow {
-                                job_id: job.id,
-                                start_s: job.scheduled_start,
-                                stop_s,
-                                row_y: job_row_y,
-                                row_label: row_label.clone(),
-                                row_index: painted_rows.len(),
-                            });
-                        }
-
-                        if !job_list.is_empty() {
-                            cursor_y += row_height + spacing_between_jobs;
-                        }
-                    }
-                    cursor_y += spacing_between_level_2;
-                }
+            // Horizontal separator at the bottom of each group within the stripe.
+            if span_bottom < info.canvas.max.y {
+                info.painter.line_segment(
+                    [pos2(stripe_x, span_bottom), pos2(stripe_x + STRIPE_W, span_bottom)],
+                    stripe_border,
+                );
             }
         }
-        cursor_y += spacing_between_level_1;
-
-        if aggregate_by_level_1 == AggregateByLevel1Enum::Host
-            && aggregate_by_level_2 == AggregateByLevel2Enum::Owner
-        {
-            let section_bottom = cursor_y;
-            if let Some(mouse) = info.response.hover_pos() {
-                if mouse.y >= level_1_section_top
-                    && mouse.y <= section_bottom
-                    && mouse.x >= info.canvas.min.x
-                    && mouse.x <= info.canvas.max.x
-                {
-                    let alpha_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 110);
-
-                    let gutter_clip = Rect::from_min_max(
-                        info.canvas.min,
-                        pos2(info.canvas.min.x + gutter_width, info.canvas.max.y),
-                    );
-                    let gutter_painter = info.painter.with_clip_rect(gutter_clip);
-
-                    let marker_rect = Rect::from_min_max(
-                        pos2(info.canvas.min.x, level_1_section_top),
-                        pos2(info.canvas.min.x + 4.0, section_bottom),
-                    );
-                    gutter_painter.rect_filled(marker_rect, 0.0, alpha_fill);
-
-                }
-            }
-        }
-
-        if hide_level_1_headers {
-            if let (Some(top), Some(bottom)) = (cluster_top, cluster_bottom) {
-                grid5000_cluster_spans.push(GanttGutterSpan {
-                    top,
-                    bottom,
-                });
-
-                if let Some((label, s_top, s_bottom)) = current_site.as_mut() {
-                    if *label == cluster_site {
-                        *s_bottom = (*s_bottom).max(bottom);
-                    } else {
-                        grid5000_site_spans.push(GanttGutterSpan {
-                            top: *s_top,
-                            bottom: *s_bottom,
-                        });
-                        *label = cluster_site.clone();
-                        *s_top = top;
-                        *s_bottom = bottom;
-                    }
-                } else {
-                    current_site = Some((cluster_site.clone(), top, bottom));
-                }
-            }
-        }
-
     }
 
-    // Paint Grid5000 gutter stripes and host labels
-    if is_grid5000 && !grid5000_host_rows.is_empty() {
-        let stripes_top = grid5000_host_rows
-            .first()
-            .map(|r| r.row_rect.min.y)
-            .unwrap_or(info.canvas.min.y);
-        let stripes_bottom = grid5000_host_rows
-            .last()
-            .map(|r| r.row_rect.max.y)
-            .unwrap_or(info.canvas.max.y);
-
-        let border = Stroke::new(1.0, Color32::BLACK);
-        let inset = 0.5; 
-
-        let site_x0 = info.canvas.min.x + label_w;
-        let site_x1 = site_x0 + GUTTER_G5K_SITE_W;
-        let cluster_x0 = site_x1;
-        let cluster_x1 = cluster_x0 + GUTTER_G5K_CLUSTER_W;
-        let host_x0 = cluster_x1;
-        let host_x1 = host_x0 + GUTTER_G5K_HOST_W;
-
-        for span in &grid5000_site_spans {
-            if (span.bottom - span.top) <= 0.0 {
-                continue;
-            }
-            let rect = Rect::from_min_max(
-                pos2(site_x0, span.top),
-                pos2(site_x1, span.bottom),
-            );
-            gutter_painter.rect_filled(rect, 0.0, c_site);
-        }
-
-        for span in &grid5000_cluster_spans {
-            if (span.bottom - span.top) <= 0.0 {
-                continue;
-            }
-            let rect = Rect::from_min_max(
-                pos2(cluster_x0, span.top),
-                pos2(cluster_x1, span.bottom),
-            );
-            gutter_painter.rect_filled(rect, 0.0, c_cluster);
-        }
-
-        for row in &grid5000_host_rows {
-            if row.host_short.trim().is_empty() || row.row_rect.height() <= 0.0 {
-                continue;
-            }
-                let host_rect = row.row_rect;
-                let is_hovered = info
-                    .response
-                    .hover_pos()
-                    .map_or(false, |mouse_pos| host_rect.contains(mouse_pos));
-                let is_job_host_hovered = options
-                    .hovered_grid5000_host
-                    .as_deref()
-                    .map_or(false, |h| h == row.host_full.trim());
-
-                let show_hover_marker = is_hovered || is_job_host_hovered;
-
-                // Host stripe per row
-                let stripe_rect = Rect::from_min_max(
-                    pos2(host_x0, host_rect.min.y),
-                    pos2(host_x1, host_rect.max.y),
-                );
-                gutter_painter.rect_filled(stripe_rect, 0.0, c_host);
-
-                if show_hover_marker {
-                    let hover_grey_fill = Color32::from_rgba_unmultiplied(70, 70, 70, 210);
-                    let marker_rect = Rect::from_min_max(
-                        pos2(info.canvas.min.x, host_rect.min.y),
-                        pos2(info.canvas.min.x + 6.0, host_rect.max.y),
-                    );
-                    gutter_painter.rect_filled(marker_rect, 0.0, hover_grey_fill);
-                }
-
-                let label_rect = Rect::from_min_max(
-                    host_rect.min,
-                    pos2(info.canvas.min.x + label_w, host_rect.max.y),
-                );
-                let clip = gutter_painter.with_clip_rect(label_rect);
-                clip.text(
-                    pos2(host_rect.min.x + 4.0, host_rect.center().y),
-                    Align2::LEFT_CENTER,
-                    &row.host_short,
-                    font_host.clone(),
-                    c_text,
-                );
-
-                if is_hovered {
-                    info.ctx.set_cursor_icon(CursorIcon::PointingHand);
-                    let layer_id = egui::LayerId::new(
-                        egui::Order::Tooltip,
-                        egui::Id::new("gantt-grid5000-host-tooltip-layer"),
-                    );
-                    egui::containers::popup::show_tooltip_at_pointer(
-                        &info.ctx,
-                        layer_id,
-                        egui::Id::new(format!("gantt-grid5000-host-tooltip:{}", row.host_full)),
-                        |ui| {
-                            ui.label(format!("host: {}", row.host_full));
-                            if !row.cluster.trim().is_empty() {
-                                ui.label(format!("cluster: {}", row.cluster));
-                            }
-                            if !row.site.trim().is_empty() {
-                                ui.label(format!("site: {}", row.site));
-                            }
-
-                            let key_full = row.host_full.trim();
-                            let key_short = short_host_label(key_full);
-                            if let Some(s) = app
-                                .strata_by_host
-                                .get(key_full)
-                                .or_else(|| app.strata_by_host.get(&key_short))
-                            {
-                                if let Some(b) = s
-                                    .besteffort
-                                    .as_deref()
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty())
-                                {
-                                    ui.label(format!("besteffort: {}", b));
-                                }
-                                if let Some(comment) = s
-                                    .comment
-                                    .as_deref()
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty())
-                                {
-                                    ui.label(format!("comment: {}", comment));
-                                }
-                                if let Some(cpuset) = cpuset_like_grid5000(s) {
-                                    let cpuset = cpuset.trim();
-                                    if !cpuset.is_empty() {
-                                        ui.label(format!("cpuset: {}", cpuset));
-                                    }
-                                }
-                                if let Some(dep) = s
-                                    .deploy
-                                    .as_deref()
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty())
-                                {
-                                    ui.label(format!("deploy: {}", dep));
-                                }
-                                if let Some(dr) = s
-                                    .drain
-                                    .as_deref()
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty())
-                                {
-                                    ui.label(format!("drain: {}", dr));
-                                }
-                                if let Some(g) = s.gpudevice.as_ref().and_then(json_value_to_inline)
-                                {
-                                    let g = g.trim();
-                                    if !g.is_empty() {
-                                        ui.label(format!("gpudevice: {}", g));
-                                    }
-                                }
-                                if let Some(net) = s
-                                    .network_address
-                                    .as_deref()
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty())
-                                {
-                                    ui.label(format!("network_address: {}", net));
-                                }
-                                if let Some(t) = s
-                                    .r#type
-                                    .as_deref()
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty())
-                                {
-                                    ui.label(format!("type: {}", t));
-                                }
-                                if let Some(cpu) = s
-                                    .cputype
-                                    .as_deref()
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty())
-                                {
-                                    ui.label(format!("cputype: {}", cpu));
-                                }
-                                if let Some(model) = s
-                                    .nodemodel
-                                    .as_deref()
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty())
-                                {
-                                    ui.label(format!("nodemodel: {}", model));
-                                }
-                            }
-                        },
-                    );
-                }
-        }
-
-        let stripes_rect = Rect::from_min_max(
-            pos2(site_x0 + inset, stripes_top + inset),
-            pos2(host_x1 - inset, stripes_bottom - inset),
-        );
-        gutter_painter.rect_stroke(stripes_rect, 0.0, border);
-
-        gutter_painter.line_segment(
-            [
-                pos2(site_x1, stripes_top + inset),
-                pos2(site_x1, stripes_bottom - inset),
-            ],
-            border,
-        );
-        gutter_painter.line_segment(
-            [
-                pos2(cluster_x1, stripes_top + inset),
-                pos2(cluster_x1, stripes_bottom - inset),
-            ],
-            border,
-        );
-
-        for span in &grid5000_cluster_spans {
-            let y = span.bottom;
-            if y > stripes_top + inset && y < stripes_bottom - inset {
-                gutter_painter.line_segment(
-                    [pos2(cluster_x0 + inset, y), pos2(cluster_x1 - inset, y)],
-                    border,
-                );
-            }
-        }
-
-        for row in &grid5000_host_rows {
-            let y = row.row_rect.max.y;
-            if y > stripes_top + inset && y < stripes_bottom - inset {
-                gutter_painter.line_segment(
-                    [pos2(host_x0 + inset, y), pos2(host_x1 - inset, y)],
-                    border,
-                );
-            }
-        }
-
-        let right_border = Stroke::new(2.0, Color32::BLACK);
-        let right_x = host_x1 - 1.0; 
-        gutter_painter.line_segment(
-            [
-                pos2(right_x, stripes_top + inset),
-                pos2(right_x, stripes_bottom - inset),
-            ],
-            right_border,
-        );
-    }
-
-    // Note: paint_job_id_labels is called once at the end in canvas.rs to avoid duplicates
-    (cursor_y, painted_rows)
+    cursor_y
 }
 
+/// Draw the outer border rect and vertical dividers between stripe columns.
+/// Called once from `canvas.rs` after `draw_level_n` finishes.
+pub(super) fn draw_stripe_borders(
+    info: &Info,
+    n_total: usize,
+    gutter_width: f32,
+    y_top: f32,
+    y_bottom: f32,
+) {
+    if n_total == 0 || y_bottom <= y_top {
+        return;
+    }
+    let inset = 0.5;
+    let border = Stroke::new(1.0, Color32::BLACK);
+    let stripes_x0 = info.canvas.min.x + gutter_width - gutter_stripes_total_w(n_total);
+    let stripes_x1 = info.canvas.min.x + gutter_width;
+
+    // Outer rect
+    info.painter.rect_stroke(
+        Rect::from_min_max(
+            pos2(stripes_x0 + inset, y_top + inset),
+            pos2(stripes_x1 - inset, y_bottom - inset),
+        ),
+        0.0,
+        border,
+    );
+
+    // Vertical dividers between stripes
+    for i in 1..n_total {
+        let x = stripes_x0 + i as f32 * STRIPE_W;
+        info.painter.line_segment(
+            [pos2(x, y_top + inset), pos2(x, y_bottom - inset)],
+            border,
+        );
+    }
+
+    // Thick right border (matching Grid5000 style)
+    let right_border = Stroke::new(2.0, Color32::BLACK);
+    info.painter.line_segment(
+        [pos2(stripes_x1 - 1.0, y_top + inset), pos2(stripes_x1 - 1.0, y_bottom - inset)],
+        right_border,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// paint_job — unchanged from original
+// ---------------------------------------------------------------------------
+
+#[derive(PartialEq)]
+enum PaintResult {
+    Culled,
+    Painted,
+}
 
 fn paint_job(
     info: &Info,
@@ -1171,22 +1233,15 @@ fn paint_job(
     top_y: f32,
     details_window: &mut Vec<JobDetailsWindow>,
     all_cluster: &Vec<Cluster>,
-    state: ResourceState,
-    _aggregation_height: f32,
     resource_label_for_state_tooltip: Option<&str>,
 ) -> PaintResult {
-    let theme_colors = get_theme_colors(&info.ctx.style());
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
         pos2(info.canvas.max.x, info.canvas.max.y),
     );
     let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
     let start_x = info.point_from_s(options, job.scheduled_start);
-    let stop_time = if job.stop_time > 0 {
-        job.stop_time
-    } else {
-        job.scheduled_start + job.walltime
-    };
+    let stop_time = if job.stop_time > 0 { job.stop_time } else { job.scheduled_start + job.walltime };
     let end_x = info.point_from_s(options, stop_time);
     let width = end_x - start_x;
 
@@ -1196,42 +1251,27 @@ fn paint_job(
 
     let height = options.rect_height.max(info.text_height);
     let rounding = options.rounding;
-
     let rect = Rect::from_min_size(pos2(start_x, top_y), egui::vec2(width.max(options.min_width), height));
-
     let visible_rect = rect.intersect(chart_clip_rect);
     if visible_rect.is_negative() {
         return PaintResult::Culled;
     }
 
-    let is_job_trully_hovered = info
-        .response
-        .hover_pos()
-        .map_or(false, |mouse_pos| visible_rect.contains(mouse_pos));
+    let is_job_trully_hovered = info.response.hover_pos().map_or(false, |m| visible_rect.contains(m));
 
-    let is_grid5000 = options.aggregate_by.level_1 == AggregateByLevel1Enum::Cluster
-        && options.aggregate_by.level_2 == AggregateByLevel2Enum::Host;
-    if is_grid5000 && is_job_trully_hovered {
+    // Update hovered leaf label for cross-highlighting.
+    if is_job_trully_hovered {
         if let Some(label) = resource_label_for_state_tooltip {
             let trimmed = label.trim();
             if !trimmed.is_empty() {
-                options.hovered_grid5000_host = Some(trimmed.to_string());
+                options.hovered_leaf_label = Some(trimmed.to_string());
             }
         }
     }
 
-    let is_job_hovered = info
-        .response
-        .hover_pos()
-        .map_or(false, |mouse_pos| visible_rect.contains(mouse_pos))
-        || options
-            .current_hovered_job
-            .as_ref()
-            .map_or(false, |j| j.id == job.id)
-        || options
-            .previous_hovered_job
-            .as_ref()
-            .map_or(false, |j| j.id == job.id);
+    let is_job_hovered = is_job_trully_hovered
+        || options.current_hovered_job.as_ref().map_or(false, |j| j.id == job.id)
+        || options.previous_hovered_job.as_ref().map_or(false, |j| j.id == job.id);
 
     if is_job_trully_hovered && options.current_hovered_job.is_none() {
         options.current_hovered_job = Some(job.clone());
@@ -1245,19 +1285,11 @@ fn paint_job(
     }
 
     if is_job_trully_hovered && info.response.clicked() && !info.response.double_clicked() {
-        let job_duration_s = job.walltime as f64;
         let job_start_s = job.scheduled_start as f64;
-        let job_end_s = if job.stop_time > 0 {
-            job.stop_time as f64
-        } else {
-            job_start_s + job_duration_s
-        };
+        let job_end_s = if job.stop_time > 0 { job.stop_time as f64 } else { job_start_s + job.walltime as f64 };
         options.zoom_to_relative_s_range = Some((
             info.ctx.input(|i| i.time),
-            (
-                job_start_s - info.start_s as f64,
-                job_end_s - info.start_s as f64,
-            ),
+            (job_start_s - info.start_s as f64, job_end_s - info.start_s as f64),
         ));
     }
 
@@ -1266,9 +1298,7 @@ fn paint_job(
     } else {
         job.state.get_color()
     };
-
     let fill_color = if is_job_hovered { hovered_color } else { normal_color };
-
     chart_painter.rect_filled(visible_rect, rounding, fill_color);
 
     if is_job_hovered {
@@ -1278,304 +1308,5 @@ fn paint_job(
         chart_painter.rect_stroke(visible_rect.expand(1.0), rounding, hover_stroke);
     }
 
-    if state == ResourceState::Dead || state == ResourceState::Absent {
-        let hachure_color = match state {
-            ResourceState::Dead => Color32::from_rgba_premultiplied(255, 0, 0, 150),
-            ResourceState::Absent => theme_colors.hatch,
-            _ => Color32::TRANSPARENT,
-        };
-
-        let hachure_spacing = 10.0;
-        let mut shapes = Vec::new();
-        let mut x = info.canvas.min.x;
-        let current_time_x = info.point_from_s(options, chrono::Utc::now().timestamp());
-
-        let hatch_y = top_y;
-
-        let hover_rect = match state {
-            ResourceState::Dead => Rect::from_min_max(
-                pos2(info.canvas.min.x, hatch_y),
-                pos2(info.canvas.max.x, hatch_y + height),
-            ),
-            ResourceState::Absent => Rect::from_min_max(
-                pos2(info.canvas.min.x, hatch_y),
-                pos2(current_time_x, hatch_y + height),
-            ),
-            _ => Rect::from_min_max(pos2(0.0, 0.0), pos2(0.0, 0.0)),
-        };
-
-        let hover_rect = hover_rect.intersect(chart_clip_rect);
-
-        let is_hachure_hovered = info
-            .response
-            .hover_pos()
-            .map_or(false, |mouse_pos| hover_rect.contains(mouse_pos));
-
-        let final_hachure_color = if is_hachure_hovered {
-            hachure_color.gamma_multiply(1.5)
-        } else {
-            hachure_color
-        };
-
-        while x < info.canvas.max.x {
-            if state == ResourceState::Absent && x >= current_time_x {
-                break;
-            }
-            shapes.push(Shape::line_segment(
-                [pos2(x, hatch_y), pos2(x + hachure_spacing, hatch_y + height)],
-                Stroke::new(2.0, final_hachure_color),
-            ));
-            x += hachure_spacing;
-        }
-
-        chart_painter.extend(shapes);
-    }
-
     PaintResult::Painted
-}
-
-#[derive(PartialEq)]
-enum PaintResult {
-    Culled,
-    Painted,
-    Hovered,
-}
-
-fn paint_job_info(
-    info: &Info,
-    info_label: &str,
-    pos: Pos2,
-    collapsed: &mut bool,
-    level: u8,
-    gutter_width: f32,
-    bar_height_hint: f32,
-    compact: bool,
-    label_meta: Option<LabelMeta>,
-    app: &ApplicationContext,
-) {
-    let theme_colors = get_theme_colors(&info.ctx.style());
-    let gutter_painter = info.painter.clone();
-
-    let visuals = info.ctx.style().visuals.clone();
-    let selection_stroke = visuals.selection.stroke.color;
-    let _selection_fill = visuals.selection.bg_fill;
-
-    *collapsed = false;
-
-    if let Some(meta) = label_meta {
-        let host_full = match meta.host.as_deref() {
-            Some(h) if !h.trim().is_empty() => h,
-            _ => return,
-        };
-
-        let indent = if level == 1 { 0.0 } else { 8.0 };
-        let extra_pad = 0.0;
-        let bar_height = bar_height_hint.max(info.text_height + extra_pad);
-        let top = pos.y - bar_height * 0.5;
-        let left = info.canvas.min.x + 2.0 + indent;
-        let total_width = (gutter_width - 4.0 - indent).max(60.0);
-        let rect = Rect::from_min_max(pos2(left, top), pos2(left + total_width, top + bar_height));
-
-        let is_hovered = info
-            .response
-            .hover_pos()
-            .map_or(false, |mouse_pos| rect.contains(mouse_pos));
-
-        let clip_rect = Rect::from_min_max(
-            pos2(info.canvas.min.x, rect.min.y),
-            pos2(info.canvas.min.x + gutter_width, rect.max.y),
-        );
-        let gutter_painter = gutter_painter.with_clip_rect(clip_rect);
-
-        let (label_bg, label_border, label_text_color) = if visuals.dark_mode {
-            (
-                Color32::from_gray(40),
-                Stroke::new(1.0, Color32::from_gray(110)),
-                Color32::from_gray(245),
-            )
-        } else {
-            (
-                Color32::from_rgb(240, 238, 210),
-                Stroke::new(1.0, Color32::from_gray(80)),
-                Color32::from_gray(20),
-            )
-        };
-
-        gutter_painter.rect_filled(rect, 0.0, label_bg);
-        let border = if is_hovered {
-            Stroke::new(2.0, selection_stroke)
-        } else {
-            label_border
-        };
-        gutter_painter.rect(rect, 0.0, label_bg, border);
-
-        let label_text = short_host_label(host_full);
-
-        let label_x = left + 6.0;
-        let label_font = FontId::proportional((info.font_id.size - 1.0).max(11.0));
-        let label_pos = pos2(label_x, rect.center().y);
-        gutter_painter.text(
-            label_pos,
-            Align2::LEFT_CENTER,
-            label_text,
-            label_font,
-            if is_hovered {
-                theme_colors.text
-            } else {
-                label_text_color
-            },
-        );
-
-        if is_hovered {
-            let hover_grey_fill = Color32::from_rgba_unmultiplied(120, 120, 120, 140);
-            let marker_rect = Rect::from_min_max(
-                pos2(info.canvas.min.x, rect.min.y),
-                pos2(info.canvas.min.x + 4.0, rect.max.y),
-            );
-            gutter_painter.rect_filled(marker_rect, 0.0, hover_grey_fill);
-        }
-
-        if is_hovered {
-            info.ctx.set_cursor_icon(CursorIcon::PointingHand);
-            let layer_id = LayerId::new(Order::Tooltip, Id::new("gantt-label-layer"));
-            egui::containers::popup::show_tooltip(
-                &info.ctx,
-                layer_id,
-                Id::new(format!("gantt-label-host-{}-{}", info_label, level)),
-                |ui: &mut egui::Ui| {
-                    ui.label(format!("host: {}", host_full));
-
-                    let key_full = host_full.trim();
-                    let key_short = short_host_label(key_full);
-                    let strata = app
-                        .strata_by_host
-                        .get(key_full)
-                        .or_else(|| app.strata_by_host.get(&key_short));
-
-                    let derived_cluster = key_short.split('-').next().unwrap_or("").trim();
-                    let cluster_line = strata
-                        .and_then(|s| s.cluster.as_deref())
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .or_else(|| if !derived_cluster.is_empty() { Some(derived_cluster) } else { None });
-                    if let Some(cluster) = cluster_line {
-                        ui.label(format!("cluster: {}", cluster));
-                    }
-
-                    let site_from_host = host_full.split('.').nth(1).unwrap_or("").trim();
-                    let site_from_net = strata
-                        .and_then(|s| s.network_address.as_deref())
-                        .and_then(|net| net.split('.').nth(1))
-                        .unwrap_or("")
-                        .trim();
-                    let site = if !site_from_host.is_empty() {
-                        site_from_host
-                    } else {
-                        site_from_net
-                    };
-                    if !site.is_empty() {
-                        ui.label(format!("site: {}", site));
-                    }
-
-                    if let Some(s) = strata {
-                        if let Some(b) =
-                            s.besteffort.as_deref().map(str::trim).filter(|v| !v.is_empty())
-                        {
-                            ui.label(format!("besteffort: {}", b));
-                        }
-                        if let Some(net) = s
-                            .network_address
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                        {
-                            ui.label(format!("network_address: {}", net));
-                        }
-                        if let Some(comment) =
-                            s.comment.as_deref().map(str::trim).filter(|v| !v.is_empty())
-                        {
-                            ui.label(format!("comment: {}", comment));
-                        }
-                        if let Some(cpuset) = cpuset_like_grid5000(s) {
-                            let cpuset = cpuset.trim();
-                            if !cpuset.is_empty() {
-                                ui.label(format!("cpuset: {}", cpuset));
-                            }
-                        }
-                        if let Some(dep) =
-                            s.deploy.as_deref().map(str::trim).filter(|v| !v.is_empty())
-                        {
-                            ui.label(format!("deploy: {}", dep));
-                        }
-                        if let Some(dr) = s.drain.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            ui.label(format!("drain: {}", dr));
-                        }
-                        if let Some(g) = s.gpudevice.as_ref().and_then(json_value_to_inline) {
-                            let g = g.trim();
-                            if !g.is_empty() {
-                                ui.label(format!("gpudevice: {}", g));
-                            }
-                        }
-                        if let Some(t) =
-                            s.r#type.as_deref().map(str::trim).filter(|v| !v.is_empty())
-                        {
-                            ui.label(format!("type: {}", t));
-                        }
-                        if let Some(cpu) =
-                            s.cputype.as_deref().map(str::trim).filter(|v| !v.is_empty())
-                        {
-                            ui.label(format!("cputype: {}", cpu));
-                        }
-                        if let Some(model) =
-                            s.nodemodel.as_deref().map(str::trim).filter(|v| !v.is_empty())
-                        {
-                            ui.label(format!("nodemodel: {}", model));
-                        }
-                    }
-                },
-            );
-        }
-
-        return;
-    }
-
-    let label = info_label.to_string();
-
-    let galley = info
-        .ctx
-        .fonts(|f| f.layout_no_wrap(label, info.font_id.clone(), theme_colors.text_dim));
-
-    let x = pos.x.max(info.canvas.min.x + 6.0);
-
-    let top_left = pos2(x, pos.y - galley.size().y * 0.5);
-    let rect = Rect::from_min_size(top_left, galley.size());
-
-    let is_hovered = info
-        .response
-        .hover_pos()
-        .map_or(false, |mouse_pos| rect.contains(mouse_pos));
-
-    let text_color = if is_hovered {
-        theme_colors.text
-    } else {
-        theme_colors.text_dim
-    };
-
-    let clip_rect = Rect::from_min_max(
-        pos2(info.canvas.min.x, rect.min.y - 2.0),
-        pos2(info.canvas.min.x + gutter_width, rect.max.y + 2.0),
-    );
-    let gutter_painter = gutter_painter.with_clip_rect(clip_rect);
-
-    let (bg, rounding) = if level == 2 {
-        (theme_colors.background_timeline, 2.0)
-    } else {
-        (theme_colors.background, 0.0)
-    };
-    let badge = rect.expand(1.0);
-    gutter_painter.rect_filled(badge, rounding, bg);
-    if level == 2 {
-        gutter_painter.rect(badge, rounding, bg, Stroke::new(1.0, theme_colors.line));
-    }
-    gutter_painter.galley(rect.min, galley, text_color);
 }

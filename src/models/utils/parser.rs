@@ -1,8 +1,9 @@
 use crate::models::data_structure::job::{Job, JobState};
-use crate::models::data_structure::resource::ResourceState;
+use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::data_structure::strata::Strata;
 use crate::models::utils::utils::convert_id_to_color;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::process::Command;
@@ -142,6 +143,54 @@ pub fn get_resources_from_json(file_path: &str) -> Vec<Strata> {
     }
 
     resources
+}
+
+pub fn get_dead_intervals_from_json(file_path: &str) -> HashMap<u32, Vec<DeadInterval>> {
+    let mut file = match File::open(file_path) {
+        Ok(f) => f,
+        Err(_) => return HashMap::new(),
+    };
+    let mut data = String::new();
+    if file.read_to_string(&mut data).is_err() {
+        return HashMap::new();
+    }
+    let json: Value = match serde_json::from_str(&data) {
+        Ok(v) => v,
+        Err(_) => return HashMap::new(),
+    };
+    let mut result: HashMap<u32, Vec<DeadInterval>> = HashMap::new();
+    if let Some(dead) = json.get("dead_resources").and_then(|v| v.as_object()) {
+        for (id_str, intervals) in dead {
+            let id: u32 = match id_str.parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let mut ivs = Vec::new();
+            if let Some(arr) = intervals.as_array() {
+                for iv in arr {
+                    if let Some(iv_arr) = iv.as_array() {
+                        if iv_arr.len() >= 3 {
+                            let start_s = iv_arr[0].as_i64().unwrap_or(0);
+                            let end_s = iv_arr[1].as_i64().unwrap_or(0);
+                            let state = match iv_arr[2].as_str().unwrap_or("") {
+                                "Dead" => ResourceState::Dead,
+                                "Absent" => ResourceState::Absent,
+                                "Suspected" => ResourceState::Suspected,
+                                _ => ResourceState::Unknown,
+                            };
+                            if state != ResourceState::Unknown {
+                                ivs.push(DeadInterval { start_s, end_s, state });
+                            }
+                        }
+                    }
+                }
+            }
+            if !ivs.is_empty() {
+                result.insert(id, ivs);
+            }
+        }
+    }
+    result
 }
 
 pub fn parse_state_from_json(json_str: &str) -> Result<JobState, serde_json::Error> {

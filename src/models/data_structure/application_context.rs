@@ -5,7 +5,8 @@ use super::resource::Resource;
 use super::strata::Strata;
 use crate::models::data_structure::cpu::Cpu;
 use crate::models::data_structure::host::Host;
-use crate::models::data_structure::resource::ResourceState;
+use crate::models::data_structure::resource::{DeadInterval, ResourceState};
+use crate::models::utils::parser::get_dead_intervals_from_json;
 use crate::models::utils::utils::{get_clusters_for_job, get_hosts_for_job};
 use crate::views::components::dashboard_components::job_table_sorting::JobSortable;
 use crate::views::view::ViewType;
@@ -60,8 +61,13 @@ pub struct ApplicationContext {
     pub resources_receiver: Receiver<Vec<Strata>>,
     pub resources_sender: Sender<Vec<Strata>>,
 
-    // Latest resource metadata indexed by host (used for rich hover tooltips).
+    // Resource metadata indexed by host name (tooltip lookups for compute nodes).
     pub strata_by_host: HashMap<String, Strata>,
+    // Resource metadata indexed by OAR resource_id — covers all resource types
+    // (default/compute, kavlan, subnet, disk, etc.) so Gantt grouping works for any field.
+    pub strata_by_resource_id: HashMap<u32, Strata>,
+    // Dead/Absent/Suspected intervals per resource ID, from dead_resources in data.json.
+    pub dead_intervals: HashMap<u32, Vec<DeadInterval>>,
 
     pub font_size: i32,
     pub see_all_jobs: bool,
@@ -150,6 +156,14 @@ impl ApplicationContext {
                             .or_default()
                             .extend(ints);
                     }
+                }
+            }
+
+            // Index every resource by its OAR resource_id for generic field lookup.
+            self.strata_by_resource_id.clear();
+            for r in new_resources.iter() {
+                if let Some(rid) = r.resource_id {
+                    self.strata_by_resource_id.insert(rid, r.clone());
                 }
             }
 
@@ -541,6 +555,7 @@ impl ApplicationContext {
 
             self.all_jobs = self.swap_all_jobs.clone();
             self.all_clusters = self.swap_all_clusters.clone();
+            self.dead_intervals = get_dead_intervals_from_json("./data/data.json");
         }
     }
 
@@ -708,6 +723,14 @@ impl ApplicationContext {
             }
         }
         
+        // Index all imported resources by resource_id for generic Gantt field lookup.
+        self.strata_by_resource_id.clear();
+        for r in imported_resources.iter() {
+            if let Some(rid) = r.resource_id {
+                self.strata_by_resource_id.insert(rid, r.clone());
+            }
+        }
+
         // Build clusters from resource data (matching live data behavior)
         let mut imported_clusters: Vec<Cluster> = Vec::new();
         for resource in imported_resources.iter() {
@@ -1289,6 +1312,8 @@ impl Default for ApplicationContext {
             user_connected: None,
 
             strata_by_host: HashMap::new(),
+            strata_by_resource_id: HashMap::new(),
+            dead_intervals: HashMap::new(),
 
             filtered_jobs: Vec::new(),
             filters: JobFilters::default(),

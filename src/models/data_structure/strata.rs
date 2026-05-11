@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Strata {
@@ -71,4 +72,38 @@ pub struct Strata {
     pub nodemodel: Option<String>,
     #[serde(default)]
     pub cputype: Option<String>,
+
+    // Kavlan (VLAN) resources
+    #[serde(default)]
+    pub vlan: Option<String>,
+
+    // Subnet resources
+    #[serde(default)]
+    pub subnet_address: Option<String>,
+    #[serde(default)]
+    pub subnet_prefix: Option<u32>,
+    #[serde(default)]
+    pub slash_16: Option<String>,
+    #[serde(default)]
+    pub slash_17: Option<String>,
+    #[serde(default)]
+    pub slash_18: Option<String>,
+    #[serde(default)]
+    pub slash_19: Option<String>,
+    #[serde(default)]
+    pub slash_20: Option<String>,
+    #[serde(default)]
+    pub slash_21: Option<String>,
+    #[serde(default)]
+    pub slash_22: Option<String>,
+
+    // Disk resources
+    #[serde(default)]
+    pub disk: Option<String>,
+    #[serde(default)]
+    pub nodeset: Option<String>,
+
+    /// Catches any data.json field not explicitly named above.
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 }
