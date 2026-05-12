@@ -45,8 +45,9 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
         if zoom_factor != 1.0 {
             let new_width = options.canvas_width_s / zoom_factor;
 
-            let max_canvas_width = 2 * 24 * 60 * 60; 
-            if new_width <= max_canvas_width as f32 {
+            let max_canvas_width = 2 * 24 * 60 * 60;
+            const MIN_CANVAS_WIDTH: f32 = 900.0; // 5 minutes minimum
+            if new_width <= max_canvas_width as f32 && new_width >= MIN_CANVAS_WIDTH {
                 options.canvas_width_s = new_width;
 
                 // On zoome autour de la position de la souris
