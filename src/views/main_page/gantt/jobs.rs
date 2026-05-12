@@ -258,6 +258,16 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
         options.current_hovered_resource_label = None;
     }
 
+    if let Some(is_full) = options.current_hovered_drain.take() {
+        let kind = if is_full { "full" } else { "partial" };
+        let drain_text = format!(
+            "Draining\n{} draining: no new job accepted\nSince: now\nUntil: indefinite",
+            kind
+        );
+        if !tooltip_text.is_empty() { tooltip_text.push('\n'); }
+        tooltip_text.push_str(&drain_text);
+    }
+
     if let Some(iv) = options.current_hovered_dead_interval.take() {
         let state_label = match iv.state {
             ResourceState::Dead => "Dead",
@@ -272,7 +282,7 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
         } else {
             format_timestamp(iv.end_s)
         };
-        let since_label = if iv.state == ResourceState::Standby { "Since (now)" } else { "Since" };
+        let since_label = "Since";
         let until_label = "Until";
         let interval_text = format!(
             "{}\n{}: {}\n{}: {}",
@@ -436,7 +446,25 @@ pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
         "slash_21" => s.slash_21.clone(),
         "slash_22" => s.slash_22.clone(),
         // Disk
-        "disk" => s.disk.clone(),
+        // Compute resources (type=default) have no disk field but should still appear
+        // in the Disks view grouped under their host. Return "node" so they're not
+        // filtered out at the disk leaf level.
+        "disk" => s.disk.clone().or_else(|| {
+            if s.r#type.as_deref() == Some("default") { Some("node".to_string()) } else { None }
+        }),
+        // disk_id: groups compute nodes and their disks under the same host.
+        // disk resources → slot prefix of disk name ("disk1.yeti-4" → "disk1").
+        // compute resources (type=default) → "node".
+        // other types → their type value.
+        "disk_id" => {
+            if let Some(d) = &s.disk {
+                Some(d.split('.').next().unwrap_or(d).to_string())
+            } else {
+                s.r#type.as_deref().map(|t| {
+                    if t == "default" { "node".to_string() } else { t.to_string() }
+                })
+            }
+        }
         "nodeset" => s.nodeset.clone(),
         // Named Strata fields not yet exposed
         "state_num" => s.state_num.map(|v| v.to_string()),
@@ -675,6 +703,22 @@ pub(super) fn build_resource_groups<'a>(
                 entry.0.insert(job.id);
             }
         }
+    }
+
+    // When "disk" is the leaf level: synthetic "node" entries (from compute resources that
+    // have no disk) are only kept for hosts that have at least one real disk resource.
+    // This matches Monika's "nodelistByProperty" behaviour: include the compute node row
+    // only when the host actually owns disk resources.
+    if levels.last().map(|s| s.as_str()) == Some("disk") && levels.len() >= 3 {
+        let pfx_len = levels.len() - 2; // path prefix up to (but not including) type+disk
+        let qualifying: HashSet<Vec<String>> = leaf_data.keys()
+            .filter(|p| p.last().map(|v| v != "node").unwrap_or(false))
+            .map(|p| p[..pfx_len.min(p.len())].to_vec())
+            .collect();
+        leaf_data.retain(|path, _| {
+            path.last().map(|v| v != "node").unwrap_or(true)
+                || qualifying.contains(&path[..pfx_len.min(path.len())].to_vec())
+        });
     }
 
     let assignments: Vec<(Vec<String>, Vec<&'a Job>, Option<String>)> = leaf_data
@@ -1017,6 +1061,51 @@ fn draw_dead_intervals_for_row(
     }
 }
 
+fn draw_drain_overlay_for_row(
+    info: &Info,
+    options: &mut Options,
+    top_y: f32,
+    row_height: f32,
+    is_full: bool,
+    now_s: i64,
+) {
+    let now_x = info.point_from_s(options, now_s);
+    let end_x = info.canvas.max.x;
+    if now_x >= end_x {
+        return;
+    }
+    let chart_clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
+        pos2(info.canvas.max.x, info.canvas.max.y),
+    );
+    let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
+
+    let draw_h = if is_full { row_height } else { row_height * 0.5 };
+    let start_x = now_x.max(info.canvas.min.x + info.gutter_width);
+
+    let overlay_rect = Rect::from_min_max(
+        pos2(start_x, top_y),
+        pos2(end_x, top_y + draw_h),
+    );
+
+    // Semi-transparent red background
+    chart_painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_premultiplied(200, 0, 0, 70));
+
+    // White horizontal bar across center (no-entry sign bar)
+    let bar_h = (draw_h * 0.22).max(2.0);
+    let bar_y = top_y + (draw_h - bar_h) * 0.5;
+    chart_painter.rect_filled(
+        Rect::from_min_max(pos2(start_x, bar_y), pos2(end_x, bar_y + bar_h)),
+        0.0,
+        Color32::from_rgba_premultiplied(255, 255, 255, 180),
+    );
+
+    let is_hovered = info.response.hover_pos().map_or(false, |m| overlay_rect.contains(m));
+    if is_hovered && options.current_hovered_drain.is_none() {
+        options.current_hovered_drain = Some(is_full);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Recursive draw_level_n
 // ---------------------------------------------------------------------------
@@ -1112,6 +1201,49 @@ pub(super) fn draw_level_n<'a>(
                     );
                 }
 
+                // Layer order: states → drain → jobs (jobs on top)
+
+                // 1. Dead/absent/suspected/standby intervals.
+                let resource_ids = resource_ids_for_leaf(field, key, path_context, &app.strata_by_resource_id);
+                let now_s = chrono::Utc::now().timestamp();
+                let mut seen: HashSet<DeadInterval> = HashSet::new();
+                let mut intervals: Vec<DeadInterval> = Vec::new();
+                for id in &resource_ids {
+                    if let Some(ivs) = app.dead_intervals.get(id) {
+                        for iv in ivs {
+                            if seen.insert(iv.clone()) {
+                                intervals.push(iv.clone());
+                            }
+                        }
+                    }
+                }
+                let has_standby = resource_ids.iter().any(|id| app.standby_upto.contains_key(id));
+                if has_standby {
+                    for iv in intervals.iter_mut() {
+                        if iv.state == ResourceState::Absent && iv.end_s == 0 {
+                            iv.state = ResourceState::Standby;
+                            if app.gantt_config.standby_truncate_to_now {
+                                iv.end_s = now_s;
+                            }
+                        }
+                    }
+                }
+                draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals, app);
+
+                // 2. Drain overlay (from now onward).
+                let total = resource_ids.len();
+                if total > 0 {
+                    let drained = resource_ids.iter().filter(|id| {
+                        app.strata_by_resource_id.get(id)
+                            .and_then(|s| s.drain.as_deref())
+                            == Some("YES")
+                    }).count();
+                    if drained > 0 {
+                        draw_drain_overlay_for_row(info, options, job_row_y, row_height, drained == total, now_s);
+                    }
+                }
+
+                // 3. Jobs on top.
                 for job in jobs.iter() {
                     paint_job(
                         info,
@@ -1124,36 +1256,6 @@ pub(super) fn draw_level_n<'a>(
                         app.gantt_config.besteffort_truncate_to_now,
                     );
                 }
-
-                // Draw dead/absent/suspected/standby intervals for this row.
-                let resource_ids = resource_ids_for_leaf(field, key, path_context, &app.strata_by_resource_id);
-                let mut seen: HashSet<DeadInterval> = HashSet::new();
-                let mut intervals: Vec<DeadInterval> = Vec::new();
-                for id in &resource_ids {
-                    if let Some(ivs) = app.dead_intervals.get(id) {
-                        for iv in ivs {
-                            if seen.insert(iv.clone()) {
-                                intervals.push(iv.clone());
-                            }
-                        }
-                    }
-                }
-
-                // Standby: mutate open-ended Absent intervals in place if resource has future available_upto.
-                let now_s = chrono::Utc::now().timestamp();
-                let has_standby = resource_ids.iter().any(|id| app.standby_upto.contains_key(id));
-                if has_standby {
-                    for iv in intervals.iter_mut() {
-                        if iv.state == ResourceState::Absent && iv.end_s == 0 {
-                            iv.state = ResourceState::Standby;
-                            if app.gantt_config.standby_truncate_to_now {
-                                iv.end_s = now_s;
-                            }
-                        }
-                    }
-                }
-
-                draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals, app);
 
 
                 // Collect rows for job-ID label painting.

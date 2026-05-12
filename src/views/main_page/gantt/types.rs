@@ -76,6 +76,8 @@ pub struct Options {
     pub current_hovered_resource_state: Option<ResourceState>,
     pub current_hovered_resource_label: Option<String>,
     pub current_hovered_dead_interval: Option<DeadInterval>,
+    /// Some(true) = full drain, Some(false) = partial drain row hovered.
+    pub current_hovered_drain: Option<bool>,
     /// Label of the leaf-level item currently under the mouse (used to highlight
     /// matching stripes when hovering a job bar).
     pub hovered_leaf_label: Option<String>,
@@ -113,6 +115,7 @@ impl Default for Options {
             current_hovered_resource_state: None,
             current_hovered_resource_label: None,
             current_hovered_dead_interval: None,
+            current_hovered_drain: None,
             hovered_leaf_label: None,
             compact_rows: true,
             resource_filter: None,

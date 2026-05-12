@@ -754,6 +754,7 @@ impl View for GanttChart {
             ("type",                    "OAR resource type"),
             ("vlan",                    "VLAN ID"),
             ("disk",                    "Disk identifier"),
+            ("disk_id",                 "Disk slot or 'node' for compute (groups node + disks under same host)"),
             ("nodeset",                 "Nodeset"),
             ("subnet_address",          "Subnet address (full CIDR)"),
             ("subnet_prefix",           "Subnet prefix length"),

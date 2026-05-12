@@ -71,7 +71,7 @@
         "disk"
       ],
       "filter": null,
-      "leaf_label_template": "{host|short}/{disk|short}",
+      "leaf_label_template": "{host|short}/{disk|short}/",
       "sort_by_label": false,
       "leaf_infos": "disk_info"
     },
