@@ -186,33 +186,34 @@ impl Tools {
             // Gantt-only: compact data summary line just below the tool bar.
             if has_gantt {
                 use std::collections::HashSet;
-
-                let total_clusters = app.get_current_clusters().len();
-                let total_hosts: usize = app.get_current_clusters().iter().map(|c| c.hosts.len()).sum();
-
-                let mut displayed_clusters: HashSet<String> = HashSet::new();
-                let mut displayed_hosts: HashSet<String> = HashSet::new();
-                for job in app.filtered_jobs.iter() {
-                    for c in job.clusters.iter() {
-                        if !c.trim().is_empty() {
-                            displayed_clusters.insert(c.clone());
-                        }
-                    }
-                    for h in job.hosts.iter() {
-                        if !h.trim().is_empty() {
-                            displayed_hosts.insert(h.clone());
-                        }
-                    }
-                }
+                use crate::views::main_page::gantt::jobs::strata_field_value;
 
                 let refreshing = *app.is_refreshing.lock().unwrap_or_else(|p| p.into_inner());
-                let status = if refreshing {
-                    "refreshing"
-                } else if app.is_loading {
-                    "loading"
+                let status = if refreshing { "refreshing" } else if app.is_loading { "loading" } else { "ready" };
+
+                let view_name = app.current_gantt_view_name.clone();
+                let levels = app.current_gantt_view_levels.clone();
+                let summary_fields: Vec<String> = if app.current_gantt_view_summary_fields.is_empty() {
+                    levels.last().cloned().into_iter().collect()
                 } else {
-                    "ready"
+                    app.current_gantt_view_summary_fields.clone()
                 };
+
+                let fields_part: String = summary_fields.iter().map(|field| {
+                    let total: HashSet<String> = app.strata_by_resource_id.values()
+                        .filter_map(|s| strata_field_value(s, field))
+                        .filter(|v: &String| !v.starts_with("(no "))
+                        .collect();
+                    let displayed: HashSet<String> = app.filtered_jobs.iter()
+                        .flat_map(|j| j.assigned_resources.iter())
+                        .filter_map(|rid| app.strata_by_resource_id.get(rid))
+                        .filter_map(|s| strata_field_value(s, field))
+                        .filter(|v: &String| !v.starts_with("(no "))
+                        .collect();
+                    format!("{} {}/{}", field, displayed.len(), total.len())
+                }).collect::<Vec<_>>().join(" | ");
+
+                let view_part = if view_name.is_empty() { String::new() } else { format!("[{}] ", view_name) };
 
                 ui.horizontal(|ui| {
                     ui.with_layout(
@@ -220,12 +221,10 @@ impl Tools {
                         |ui| {
                             let label = egui::Label::new(
                                 egui::RichText::new(format!(
-                                    "Data: jobs={} | clusters affichés {}/{} | hosts affichés {}/{} | {}",
+                                    "{}jobs={} | {} | {}",
+                                    view_part,
                                     app.filtered_jobs.len(),
-                                    displayed_clusters.len(),
-                                    total_clusters,
-                                    displayed_hosts.len(),
-                                    total_hosts,
+                                    fields_part,
                                     status
                                 ))
                                 .text_style(egui::TextStyle::Small),

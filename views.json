@@ -14,6 +14,10 @@
       },
       "leaf_label_template": "{host|short}",
       "sort_by_label": false,
+      "summary_fields": [
+        "cluster",
+        "host"
+      ],
       "leaf_infos": "host_info"
     },
     {
@@ -30,6 +34,10 @@
       },
       "leaf_label_template": "{host|short}",
       "sort_by_label": false,
+      "summary_fields": [
+        "cluster",
+        "host"
+      ],
       "leaf_infos": "host_info"
     },
     {
@@ -42,6 +50,9 @@
       "filter": null,
       "leaf_label_template": "{type}/{vlan}",
       "sort_by_label": false,
+      "summary_fields": [
+        "vlan"
+      ],
       "leaf_infos": "vlan_info"
     },
     {
@@ -59,6 +70,9 @@
       "filter": null,
       "leaf_label_template": "{subnet_address}/{subnet_prefix}",
       "sort_by_label": true,
+      "summary_fields": [
+        "subnet_address"
+      ],
       "leaf_infos": "subnet_info"
     },
     {
@@ -73,19 +87,10 @@
       "filter": null,
       "leaf_label_template": "{host|short}/{disk|short}/",
       "sort_by_label": false,
-      "leaf_infos": "disk_info"
-    },
-    {
-      "name": "test",
-      "levels": [
-        "site",
-        "type",
-        "cpu"
+      "summary_fields": [
+        "disk"
       ],
-      "filter": null,
-      "leaf_label_template": null,
-      "sort_by_label": false,
-      "leaf_infos": "host_info"
+      "leaf_infos": "disk_info"
     }
   ],
   "leaf_info_presets": [

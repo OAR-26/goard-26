@@ -77,6 +77,12 @@ pub struct ApplicationContext {
     pub font_size: i32,
     pub see_all_jobs: bool,
 
+    // Current gantt view — updated each frame by GanttChart so the toolbar can show
+    // view-specific stats instead of always showing clusters/hosts.
+    pub current_gantt_view_name: String,
+    pub current_gantt_view_levels: Vec<String>,
+    pub current_gantt_view_summary_fields: Vec<String>,
+
     // UI requests (set by views, consumed by Menu/Options)
     pub theme_toggle_requested: bool,
     
@@ -1354,6 +1360,10 @@ impl Default for ApplicationContext {
 
             font_size: 16,
             see_all_jobs: false,
+
+            current_gantt_view_name: String::new(),
+            current_gantt_view_levels: Vec::new(),
+            current_gantt_view_summary_fields: Vec::new(),
 
             theme_toggle_requested: false,
             cluster_presets: Vec::new(),

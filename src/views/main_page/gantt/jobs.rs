@@ -402,7 +402,7 @@ pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[Painte
 // from strata so a job never appears under the wrong cluster/group)
 // ---------------------------------------------------------------------------
 
-pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
+pub(crate) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
     match field {
         "cluster" => s.cluster.clone(),
         "host" => s.network_address.clone().or_else(|| s.host.clone()),

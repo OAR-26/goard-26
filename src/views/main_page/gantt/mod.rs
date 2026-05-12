@@ -1,6 +1,6 @@
 mod canvas;
 mod interaction;
-mod jobs;
+pub(crate) mod jobs;
 mod labels;
 mod theme;
 mod timeline;
@@ -40,6 +40,9 @@ struct GanttView {
     leaf_label_template: Option<String>,
     #[serde(default)]
     sort_by_label: bool,
+    /// Fields shown in the status bar (e.g. ["cluster","host"]). Defaults to [last level] if empty.
+    #[serde(default)]
+    summary_fields: Vec<String>,
     /// ID of the `LeafInfoPreset` that defines this view's tooltip label and fields.
     #[serde(default)]
     leaf_infos: Option<String>,
@@ -67,6 +70,7 @@ fn load_views_config() -> ViewsConfig {
                 filter: None,
                 leaf_label_template: Some("{host|short}".to_string()),
                 sort_by_label: false,
+                summary_fields: vec!["cluster".to_string(), "host".to_string()],
                 leaf_infos: None,
                 leaf_display_name: "Host".to_string(),
                 leaf_hover_details: true,
@@ -77,6 +81,7 @@ fn load_views_config() -> ViewsConfig {
                 filter: None,
                 leaf_label_template: Some("{type}/{vlan}".to_string()),
                 sort_by_label: false,
+                summary_fields: vec!["vlan".to_string()],
                 leaf_infos: None,
                 leaf_display_name: "VLAN".to_string(),
                 leaf_hover_details: false,
@@ -195,6 +200,7 @@ pub struct GanttChart {
     cv_name: String,
     cv_levels: Vec<String>,
     cv_template: String,
+    cv_summary_fields: Vec<String>,
     cv_preset_id: Option<String>,
     cv_sort_by_label: bool,
     cv_filter_enabled: bool,
@@ -215,6 +221,7 @@ pub struct GanttChart {
     ev_name: String,
     ev_levels: Vec<String>,
     ev_template: String,
+    ev_summary_fields: Vec<String>,
     ev_preset_id: Option<String>,
     ev_sort_by_label: bool,
     ev_filter_enabled: bool,
@@ -274,6 +281,7 @@ impl Default for GanttChart {
             cv_name: String::new(),
             cv_levels: Vec::new(),
             cv_template: String::new(),
+            cv_summary_fields: Vec::new(),
             cv_preset_id: None,
             cv_sort_by_label: false,
             cv_filter_enabled: false,
@@ -290,6 +298,7 @@ impl Default for GanttChart {
             ev_name: String::new(),
             ev_levels: Vec::new(),
             ev_template: String::new(),
+            ev_summary_fields: Vec::new(),
             ev_preset_id: None,
             ev_sort_by_label: false,
             ev_filter_enabled: false,
@@ -406,6 +415,7 @@ impl GanttChart {
                                 self.ev_name = v.name.clone();
                                 self.ev_levels = v.levels.clone();
                                 self.ev_template = v.leaf_label_template.clone().unwrap_or_default();
+                                self.ev_summary_fields = v.summary_fields.clone();
                                 self.ev_preset_id = v.leaf_infos.clone();
                                 self.ev_sort_by_label = v.sort_by_label;
                                 self.ev_filter_enabled = v.filter.is_some();
@@ -527,6 +537,26 @@ impl View for GanttChart {
         if self.initial_start_s.is_none() {
             self.initial_start_s = Some(app.get_start_date().timestamp());
             self.initial_end_s = Some(app.get_end_date().timestamp());
+        }
+
+        // Keep toolbar in sync with current view.
+        let view_name = self.gantt_views.get(self.current_view_index)
+            .map(|v| v.name.clone())
+            .unwrap_or_default();
+        if app.current_gantt_view_name != view_name {
+            app.current_gantt_view_name = view_name;
+            app.current_gantt_view_levels = self.options.levels.clone();
+            app.current_gantt_view_summary_fields = {
+                let stored = self.gantt_views
+                    .get(self.current_view_index)
+                    .map(|v| v.summary_fields.clone())
+                    .unwrap_or_default();
+                if stored.is_empty() {
+                    self.options.levels.last().cloned().into_iter().collect()
+                } else {
+                    stored
+                }
+            };
         }
 
         if app.current_data_source_index == 0 {
@@ -934,6 +964,26 @@ impl View for GanttChart {
                         ui.text_edit_singleline(&mut self.cv_template);
                         ui.add_space(6.0);
 
+                        // Summary fields
+                        ui.label("Status bar fields (empty = last level):");
+                        let mut cv_sf_remove: Option<usize> = None;
+                        for (i, f) in self.cv_summary_fields.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(f);
+                                if ui.small_button("🗑").clicked() { cv_sf_remove = Some(i); }
+                            });
+                        }
+                        if let Some(i) = cv_sf_remove { self.cv_summary_fields.remove(i); }
+                        ui.horizontal_wrapped(|ui| {
+                            for (field, _) in &known_fields {
+                                if self.cv_summary_fields.iter().any(|f| f == field) { continue; }
+                                if ui.small_button(*field).clicked() {
+                                    self.cv_summary_fields.push(field.to_string());
+                                }
+                            }
+                        });
+                        ui.add_space(6.0);
+
                         // Options
                         ui.checkbox(&mut self.cv_sort_by_label, "Sort by label (use when levels are opaque IDs)");
                         ui.add_space(6.0);
@@ -979,9 +1029,9 @@ impl View for GanttChart {
                                     name: self.cv_name.trim().to_string(),
                                     levels: self.cv_levels.clone(),
                                     leaf_label_template: if self.cv_template.trim().is_empty() { None } else { Some(self.cv_template.trim().to_string()) },
+                                    summary_fields: self.cv_summary_fields.clone(),
                                     leaf_infos: self.cv_preset_id.clone(),
                                     sort_by_label: self.cv_sort_by_label,
-                                    // backward-compat fields unused for new views
                                     leaf_display_name: String::new(),
                                     leaf_hover_details: false,
                                     filter: if self.cv_filter_enabled {
@@ -1148,6 +1198,25 @@ impl View for GanttChart {
                         ui.text_edit_singleline(&mut self.ev_template);
                         ui.add_space(6.0);
 
+                        ui.label("Status bar fields (empty = last level):");
+                        let mut ev_sf_remove: Option<usize> = None;
+                        for (i, f) in self.ev_summary_fields.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(f);
+                                if ui.small_button("🗑").clicked() { ev_sf_remove = Some(i); }
+                            });
+                        }
+                        if let Some(i) = ev_sf_remove { self.ev_summary_fields.remove(i); }
+                        ui.horizontal_wrapped(|ui| {
+                            for (field, _) in &known_fields {
+                                if self.ev_summary_fields.iter().any(|f| f == field) { continue; }
+                                if ui.small_button(*field).clicked() {
+                                    self.ev_summary_fields.push(field.to_string());
+                                }
+                            }
+                        });
+                        ui.add_space(6.0);
+
                         ui.checkbox(&mut self.ev_sort_by_label, "Sort by label");
                         ui.add_space(6.0);
 
@@ -1190,6 +1259,7 @@ impl View for GanttChart {
                                         name: self.ev_name.trim().to_string(),
                                         levels: self.ev_levels.clone(),
                                         leaf_label_template: if self.ev_template.trim().is_empty() { None } else { Some(self.ev_template.trim().to_string()) },
+                                        summary_fields: self.ev_summary_fields.clone(),
                                         leaf_infos: self.ev_preset_id.clone(),
                                         sort_by_label: self.ev_sort_by_label,
                                         leaf_display_name: String::new(),
