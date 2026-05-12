@@ -47,8 +47,10 @@ pub struct GanttConfig {
     pub min_state_duration_s: i64,
     /// Default gantt width in seconds on first load.
     pub default_timespan_s: i64,
-    /// Hatch colors for each resource state.
+    /// Hatch colors for dark mode.
     pub state_colors: StateColors,
+    /// Hatch colors for light mode (darker so they're visible).
+    pub state_colors_light: StateColors,
 }
 
 impl Default for GanttConfig {
@@ -59,6 +61,12 @@ impl Default for GanttConfig {
             min_state_duration_s: 2,
             default_timespan_s: 6 * 3600,
             state_colors: StateColors::default(),
+            state_colors_light: StateColors {
+                absent:    RgbColor(0x10, 0x40, 0xa0),
+                suspected: RgbColor(0xa0, 0x10, 0x10),
+                dead:      RgbColor(0x40, 0x40, 0x40),
+                standby:   RgbColor(0x00, 0x88, 0x88),
+            },
         }
     }
 }
@@ -78,14 +86,18 @@ impl GanttConfig {
         };
         let def = Self::default();
 
-        let sc = &def.state_colors;
-        let colors = val.get("state_colors");
-        let state_colors = StateColors {
-            absent:   colors.and_then(|c| c.get("Absent")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(sc.absent),
-            suspected: colors.and_then(|c| c.get("Suspected")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(sc.suspected),
-            dead:     colors.and_then(|c| c.get("Dead")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(sc.dead),
-            standby:  colors.and_then(|c| c.get("Standby")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(sc.standby),
+        let parse_colors = |key: &str, fallback: &StateColors| -> StateColors {
+            let colors = val.get(key);
+            StateColors {
+                absent:    colors.and_then(|c| c.get("Absent")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(fallback.absent),
+                suspected: colors.and_then(|c| c.get("Suspected")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(fallback.suspected),
+                dead:      colors.and_then(|c| c.get("Dead")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(fallback.dead),
+                standby:   colors.and_then(|c| c.get("Standby")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(fallback.standby),
+            }
         };
+
+        let state_colors       = parse_colors("state_colors",       &def.state_colors);
+        let state_colors_light = parse_colors("state_colors_light",  &def.state_colors_light);
 
         Self {
             standby_truncate_to_now:    val.get("standby_truncate_state_to_now").and_then(|v| v.as_bool()).unwrap_or(def.standby_truncate_to_now),
@@ -93,6 +105,7 @@ impl GanttConfig {
             min_state_duration_s:       val.get("min_state_duration").and_then(|v| v.as_i64()).unwrap_or(def.min_state_duration_s),
             default_timespan_s:         val.get("default_timespan").and_then(|v| v.as_i64()).unwrap_or(def.default_timespan_s),
             state_colors,
+            state_colors_light,
         }
     }
 }

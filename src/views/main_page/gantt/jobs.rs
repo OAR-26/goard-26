@@ -1009,7 +1009,11 @@ fn draw_dead_intervals_for_row(
     if intervals.is_empty() {
         return;
     }
-    let sc = &app.gantt_config.state_colors;
+    let sc = if info.ctx.style().visuals.dark_mode {
+        &app.gantt_config.state_colors
+    } else {
+        &app.gantt_config.state_colors_light
+    };
     let min_dur = app.gantt_config.min_state_duration_s;
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
