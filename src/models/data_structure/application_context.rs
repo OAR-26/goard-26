@@ -1117,10 +1117,11 @@ impl ApplicationContext {
         };
         
         self.imported_data_sources.push(data_source);
-        
-        // Switch to the newly imported data source
-        self.current_data_source_index = self.imported_data_sources.len(); // This will be 1 + len after we add it
-        
+
+        // Switch via the proper method so dead_intervals/standby_upto/strata are all reset.
+        let new_index = self.imported_data_sources.len();
+        self.switch_to_data_source(new_index);
+
         Ok(())
     }
     
@@ -1157,8 +1158,25 @@ impl ApplicationContext {
                 self.strata_by_resource_id = self.strata_by_resource_id_live.clone();
                 self.strata_by_host = self.strata_by_host_live.clone();
             }
+            // Reload dead intervals immediately from disk (avoids waiting for next 30s tick).
+            self.dead_intervals = get_dead_intervals_from_json("./data/data.json");
+            // Rebuild standby_upto from the live strata cache.
+            let now = chrono::Utc::now().timestamp();
+            self.standby_upto.clear();
+            for (rid, r) in &self.strata_by_resource_id_live {
+                if r.state.as_deref() == Some("Absent") {
+                    if let Some(upto) = r.available_upto {
+                        if upto > now && upto > 0 {
+                            self.standby_upto.insert(*rid, upto);
+                        }
+                    }
+                }
+            }
         } else if self.imported_data_sources.get(index - 1).is_some() {
             self.current_data_source_index = index;
+            // Clear live-specific state so it doesn't bleed into the imported view.
+            self.dead_intervals.clear();
+            self.standby_upto.clear();
             // Rebuild strata from the imported source so resource states are correct.
             let strata = self.imported_data_sources[index - 1].strata.clone();
             self.strata_by_resource_id.clear();
