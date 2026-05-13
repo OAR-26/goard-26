@@ -176,6 +176,7 @@ pub struct GanttChart {
     collapsed_jobs_level_2: BTreeMap<(String, String), bool>,
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
+    last_data_source_index: Option<usize>,
 
     gantt_views: Vec<GanttView>,
     current_view_index: usize,
@@ -264,6 +265,7 @@ impl Default for GanttChart {
             collapsed_jobs_level_2: BTreeMap::new(),
             initial_start_s: None,
             initial_end_s: None,
+            last_data_source_index: None,
             last_canvas_usable_width_px: 1.0,
             admin_panel_open: false,
             admin_mode: None,
@@ -374,9 +376,18 @@ impl GanttChart {
     }
 
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        if self.initial_start_s.is_none() {
-            self.initial_start_s = Some(app.get_start_date().timestamp());
-            self.initial_end_s = Some(app.get_end_date().timestamp());
+        let ds_idx = app.current_data_source_index;
+        if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
+            let start_s = app.get_start_date().timestamp();
+            let end_s = app.get_end_date().timestamp();
+            self.initial_start_s = Some(start_s);
+            self.initial_end_s = Some(end_s);
+            self.last_data_source_index = Some(ds_idx);
+            let span_s = (end_s - start_s) as f32;
+            if span_s > 0.0 && span_s < self.options.canvas_width_s {
+                self.options.canvas_width_s = span_s.max(10.0);
+                self.options.sideways_pan_in_points = 0.0;
+            }
         }
 
         // "View" dropdown in the top toolbar — mirrors the tab row below
@@ -534,9 +545,18 @@ impl View for GanttChart {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         self.render_data_source_tabs(ui, app);
 
-        if self.initial_start_s.is_none() {
-            self.initial_start_s = Some(app.get_start_date().timestamp());
-            self.initial_end_s = Some(app.get_end_date().timestamp());
+        let ds_idx = app.current_data_source_index;
+        if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
+            let start_s = app.get_start_date().timestamp();
+            let end_s = app.get_end_date().timestamp();
+            self.initial_start_s = Some(start_s);
+            self.initial_end_s = Some(end_s);
+            self.last_data_source_index = Some(ds_idx);
+            let span_s = (end_s - start_s) as f32;
+            if span_s > 0.0 && span_s < self.options.canvas_width_s {
+                self.options.canvas_width_s = span_s.max(10.0);
+                self.options.sideways_pan_in_points = 0.0;
+            }
         }
 
         // Keep toolbar in sync with current view.

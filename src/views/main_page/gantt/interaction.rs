@@ -46,7 +46,7 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
             let new_width = options.canvas_width_s / zoom_factor;
 
             let max_canvas_width = 2 * 24 * 60 * 60;
-            const MIN_CANVAS_WIDTH: f32 = 900.0; // 5 minutes minimum
+            const MIN_CANVAS_WIDTH: f32 = 5.0; // 5 seconds minimum
             if new_width <= max_canvas_width as f32 && new_width >= MIN_CANVAS_WIDTH {
                 options.canvas_width_s = new_width;
 

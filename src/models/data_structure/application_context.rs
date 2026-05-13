@@ -1052,8 +1052,13 @@ impl ApplicationContext {
         let mut imported_jobs = Vec::new();
         if let Some(jobs_obj) = json_data.get("jobs") {
             if let Value::Object(jobs_map) = jobs_obj {
-                for (_job_id, job_data) in jobs_map {
-                    let job = self.parse_job_from_json(&job_data)?;
+                for (job_id_str, job_data) in jobs_map {
+                    let mut job = self.parse_job_from_json(&job_data)?;
+                    if job.id == 0 {
+                        if let Ok(parsed_id) = job_id_str.parse::<u32>() {
+                            job.id = parsed_id;
+                        }
+                    }
                     imported_jobs.push(job);
                 }
             }
