@@ -1057,6 +1057,7 @@ impl ApplicationContext {
                     if job.id == 0 {
                         if let Ok(parsed_id) = job_id_str.parse::<u32>() {
                             job.id = parsed_id;
+                            job.gantt_color = crate::models::utils::utils::convert_id_to_color(parsed_id);
                         }
                     }
                     imported_jobs.push(job);
