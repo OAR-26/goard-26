@@ -35,6 +35,7 @@ pub struct ImportedDataSource {
     pub file_path: Option<String>,
     pub jobs: Vec<Job>,
     pub clusters: Vec<Cluster>,
+    pub strata: Vec<Strata>,
 }
 
 pub struct ApplicationContext {
@@ -90,13 +91,21 @@ pub struct ApplicationContext {
     pub imported_data_sources: Vec<ImportedDataSource>,
     pub current_data_source_index: usize, // 0 = live data, 1+ = imported files
     pub request_file_import: bool,
+
+    // Live-only strata caches — updated every resource tick regardless of which tab is active.
+    // Restored into strata_by_* when switching back to live so the display is instant.
+    pub strata_by_resource_id_live: HashMap<u32, Strata>,
+    pub strata_by_host_live: HashMap<String, Strata>,
 }
 
 impl ApplicationContext {
     pub fn check_job_update(&mut self) {
         if let Ok(new_jobs) = self.jobs_receiver.try_recv() {
+            // Always keep swap buffer current so switching back to live is instant.
             self.swap_all_jobs = new_jobs;
-            self.is_loading = false;
+            if self.current_data_source_index == 0 {
+                self.is_loading = false;
+            }
         }
     }
 
@@ -107,6 +116,39 @@ impl ApplicationContext {
      */
     pub fn check_ressource_update(&mut self) {
         if let Ok(new_resources) = self.resources_receiver.try_recv() {
+            // Always keep live-only caches current so switching back to live is instant.
+            self.strata_by_resource_id_live.clear();
+            for r in new_resources.iter() {
+                if let Some(rid) = r.resource_id {
+                    self.strata_by_resource_id_live.insert(rid, r.clone());
+                }
+            }
+            self.strata_by_host_live.clear();
+            for r in new_resources.iter() {
+                let host = r.host.as_deref().unwrap_or("").trim().to_string();
+                let net = r.network_address.as_deref().unwrap_or("").trim().to_string();
+                if !host.is_empty() {
+                    self.strata_by_host_live.entry(host.clone()).or_insert_with(|| r.clone());
+                    if let Some(short) = host.split('.').next() {
+                        if !short.is_empty() {
+                            self.strata_by_host_live.entry(short.to_string()).or_insert_with(|| r.clone());
+                        }
+                    }
+                }
+                if !net.is_empty() {
+                    self.strata_by_host_live.entry(net.clone()).or_insert_with(|| r.clone());
+                    if let Some(short) = net.split('.').next() {
+                        if !short.is_empty() {
+                            self.strata_by_host_live.entry(short.to_string()).or_insert_with(|| r.clone());
+                        }
+                    }
+                }
+            }
+
+            // Don't overwrite imported-file view with live data.
+            if self.current_data_source_index != 0 {
+                return;
+            }
             fn extract_ints_from_value(v: &Value) -> Vec<i32> {
                 fn extract_ints_from_str(s: &str) -> Vec<i32> {
                     let mut out: Vec<i32> = Vec::new();
@@ -1071,6 +1113,7 @@ impl ApplicationContext {
             file_path,
             jobs: imported_jobs,
             clusters: imported_clusters,
+            strata: imported_resources,
         };
         
         self.imported_data_sources.push(data_source);
@@ -1106,11 +1149,43 @@ impl ApplicationContext {
     
     pub fn switch_to_data_source(&mut self, index: usize) {
         if index == 0 {
-            // Live data
             self.current_data_source_index = 0;
-        } else if let Some(_) = self.imported_data_sources.get(index - 1) {
-            // Imported data source
+            // Immediately show last-known live state without waiting for next background tick.
+            self.all_jobs = self.swap_all_jobs.clone();
+            self.all_clusters = self.swap_all_clusters.clone();
+            if !self.strata_by_resource_id_live.is_empty() {
+                self.strata_by_resource_id = self.strata_by_resource_id_live.clone();
+                self.strata_by_host = self.strata_by_host_live.clone();
+            }
+        } else if self.imported_data_sources.get(index - 1).is_some() {
             self.current_data_source_index = index;
+            // Rebuild strata from the imported source so resource states are correct.
+            let strata = self.imported_data_sources[index - 1].strata.clone();
+            self.strata_by_resource_id.clear();
+            self.strata_by_host.clear();
+            for r in &strata {
+                if let Some(rid) = r.resource_id {
+                    self.strata_by_resource_id.insert(rid, r.clone());
+                }
+                let host = r.host.as_deref().unwrap_or("").trim().to_string();
+                let net = r.network_address.as_deref().unwrap_or("").trim().to_string();
+                if !host.is_empty() {
+                    self.strata_by_host.entry(host.clone()).or_insert_with(|| r.clone());
+                    if let Some(short) = host.split('.').next() {
+                        if !short.is_empty() {
+                            self.strata_by_host.entry(short.to_string()).or_insert_with(|| r.clone());
+                        }
+                    }
+                }
+                if !net.is_empty() {
+                    self.strata_by_host.entry(net.clone()).or_insert_with(|| r.clone());
+                    if let Some(short) = net.split('.').next() {
+                        if !short.is_empty() {
+                            self.strata_by_host.entry(short.to_string()).or_insert_with(|| r.clone());
+                        }
+                    }
+                }
+            }
         } else {
             return;
         }
@@ -1371,6 +1446,8 @@ impl Default for ApplicationContext {
             imported_data_sources: Vec::new(),
             current_data_source_index: 0, // Start with live data
             request_file_import: false,
+            strata_by_resource_id_live: HashMap::new(),
+            strata_by_host_live: HashMap::new(),
         };
         
         // populate presets from disk if available
