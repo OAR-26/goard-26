@@ -9,11 +9,20 @@ pub fn compute_energy_points(
     end_s: i64,
 ) -> Vec<(i64, f64)> {
     if let Some(series) = precomputed {
-        return series
-            .iter()
-            .filter(|(ts, _)| *ts >= start_s && *ts <= end_s)
-            .copied()
-            .collect();
+        // No range filter — let the plot manage pan/zoom.
+        // Extend zero line far in both directions so panning shows 0 W outside the data.
+        const FAR: i64 = 10_000_000_000; // ~317 years
+        let mut points = Vec::with_capacity(series.len() + 4);
+        if let Some(&(first_ts, _)) = series.first() {
+            points.push((first_ts - FAR, 0.0));
+            points.push((first_ts - 1, 0.0));
+        }
+        points.extend_from_slice(series);
+        if let Some(&(last_ts, _)) = series.last() {
+            points.push((last_ts + 1, 0.0));
+            points.push((last_ts + FAR, 0.0));
+        }
+        return points;
     }
     estimate_global_energy_series(jobs, start_s, end_s, 10, 300.0)
 }

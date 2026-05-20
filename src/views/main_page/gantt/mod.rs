@@ -1663,6 +1663,11 @@ impl View for GanttChart {
 
                 ui.add_space(4.0);
 
+                let energy_plot_h = if show_gantt {
+                    210.0_f32
+                } else {
+                    (ui.available_height() - 4.0).max(100.0)
+                };
                 let maybe_new_range = energy_plot::ui_energy_global(
                     ui,
                     &energy_points,
@@ -1670,6 +1675,8 @@ impl View for GanttChart {
                     ve,
                     now_s,
                     last_gantt_gutter_width_px,
+                    energy_plot_h,
+                    show_gantt,
                 );
 
                 if let Some((new_vs, new_ve)) = maybe_new_range {
