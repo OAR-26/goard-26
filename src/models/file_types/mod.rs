@@ -2,6 +2,7 @@ use crate::models::data_structure::{cluster::Cluster, job::Job, strata::Strata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod energy_series;
 pub mod oar;
 
 // ── Visualization targets ─────────────────────────────────────────────────────
@@ -34,6 +35,9 @@ pub struct ParsedFileData {
     pub clusters: Vec<Cluster>,
     pub jobs: Vec<Job>,
     pub strata_by_resource_id: HashMap<u32, Strata>,
+    /// Pre-computed energy series (timestamp_s, watts). When set, the energy
+    /// diagram uses this directly instead of estimating from Job data.
+    pub raw_energy_series: Option<Vec<(i64, f64)>>,
 }
 
 // ── Core trait ────────────────────────────────────────────────────────────────
@@ -86,6 +90,7 @@ impl Default for FileTypeRegistry {
     fn default() -> Self {
         let mut registry = Self::new();
         registry.register(Box::new(oar::OarFileType::new()));
+        registry.register(Box::new(energy_series::EnergySeriesFileType::new()));
         registry
     }
 }

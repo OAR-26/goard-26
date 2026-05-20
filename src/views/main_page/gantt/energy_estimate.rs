@@ -1,4 +1,22 @@
 use crate::models::data_structure::job::Job;
+
+/// Single entry point for energy points: uses `precomputed` when available,
+/// otherwise estimates from jobs. Callers stay ignorant of the data source type.
+pub fn compute_energy_points(
+    precomputed: Option<&[(i64, f64)]>,
+    jobs: &[Job],
+    start_s: i64,
+    end_s: i64,
+) -> Vec<(i64, f64)> {
+    if let Some(series) = precomputed {
+        return series
+            .iter()
+            .filter(|(ts, _)| *ts >= start_s && *ts <= end_s)
+            .copied()
+            .collect();
+    }
+    estimate_global_energy_series(jobs, start_s, end_s, 10, 300.0)
+}
 /// Estimation de la puissance globale (W) sur une fenêtre [start_s, end_s].
 
 /// - Si `assigned_resources` est rempli => unités = assigned_resources.len()

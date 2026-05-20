@@ -1435,9 +1435,17 @@ impl View for GanttChart {
         let mut last_gantt_usable_width_px: f32 = 1.0;
         let mut last_gantt_gutter_width_px: f32 = GUTTER_WIDTH;
 
+        let show_energy = app.show_energy_diagram();
+        let show_gantt = app.show_gantt();
         let plot_h = 270.0;
         let sep_h = 12.0;
-        let gantt_h = (ui.available_height() - plot_h - sep_h).max(100.0);
+
+        if show_gantt {
+        let gantt_h = if show_energy {
+            (ui.available_height() - plot_h - sep_h).max(100.0)
+        } else {
+            ui.available_height().max(100.0)
+        };
 
         ui.allocate_ui(egui::vec2(ui.available_width(), gantt_h), |ui| {
             Frame::canvas(ui.style()).show(ui, |ui| {
@@ -1527,46 +1535,45 @@ impl View for GanttChart {
                     let visible_end_s = visible_start_s + self.options.canvas_width_s as i64;
                     visible_range = Some((visible_start_s, visible_end_s));
 
-                    let energy_jobs: Vec<Job> = app
-                        .filtered_jobs
-                        .iter()
-                        .filter(|job| {
-                            let cluster_ok = match &self.energy_filter_cluster {
-                                Some(cluster) => job.clusters.iter().any(|c| c == cluster),
-                                None => true,
-                            };
-                            let owner_ok = match &self.energy_filter_owner {
-                                Some(owner) => &job.owner == owner,
-                                None => true,
-                            };
-                            // Mirror the Gantt: keep job only if ≥1 assigned resource
-                            // would appear in the current view (valid leaf field + filter).
-                            let leaf_field = self.options.levels.last().map(|s| s.as_str()).unwrap_or("");
-                            let view_ok = job.assigned_resources.iter().any(|&rid| {
-                                let Some(s) = app.strata_by_resource_id.get(&rid) else { return false; };
-                                let leaf_val = jobs::resolve_field(s, leaf_field, &app.strata_by_host);
-                                if leaf_val.starts_with("(no ") { return false; }
-                                match &self.options.resource_filter {
+                    if show_energy {
+                        let energy_jobs: Vec<Job> = app
+                            .filtered_jobs
+                            .iter()
+                            .filter(|job| {
+                                let cluster_ok = match &self.energy_filter_cluster {
+                                    Some(cluster) => job.clusters.iter().any(|c| c == cluster),
                                     None => true,
-                                    Some(f) => {
-                                        let actual = jobs::strata_field_value(s, &f.field).unwrap_or_default();
-                                        let matches = actual.trim() == f.value.trim();
-                                        f.exclude != matches
+                                };
+                                let owner_ok = match &self.energy_filter_owner {
+                                    Some(owner) => &job.owner == owner,
+                                    None => true,
+                                };
+                                let leaf_field = self.options.levels.last().map(|s| s.as_str()).unwrap_or("");
+                                let view_ok = job.assigned_resources.iter().any(|&rid| {
+                                    let Some(s) = app.strata_by_resource_id.get(&rid) else { return false; };
+                                    let leaf_val = jobs::resolve_field(s, leaf_field, &app.strata_by_host);
+                                    if leaf_val.starts_with("(no ") { return false; }
+                                    match &self.options.resource_filter {
+                                        None => true,
+                                        Some(f) => {
+                                            let actual = jobs::strata_field_value(s, &f.field).unwrap_or_default();
+                                            let matches = actual.trim() == f.value.trim();
+                                            f.exclude != matches
+                                        }
                                     }
-                                }
-                            });
-                            cluster_ok && owner_ok && view_ok
-                        })
-                        .cloned()
-                        .collect();
+                                });
+                                cluster_ok && owner_ok && view_ok
+                            })
+                            .cloned()
+                            .collect();
 
-                    energy_points = energy_estimate::estimate_global_energy_series(
-                        &energy_jobs,
-                        visible_start_s,
-                        visible_end_s,
-                        10,
-                        300.0,
-                    );
+                        energy_points = energy_estimate::compute_energy_points(
+                            app.get_current_energy_series(),
+                            &energy_jobs,
+                            visible_start_s,
+                            visible_end_s,
+                        );
+                    }
 
                     let start = Local.timestamp_opt(visible_start_s, 0).unwrap();
                     let end = Local.timestamp_opt(visible_end_s, 0).unwrap();
@@ -1585,82 +1592,96 @@ impl View for GanttChart {
                 });
             });
         });
-
-        ui.add_space(6.0);
-        ui.separator();
-        ui.add_space(2.0);
-
-        if let Some((vs, ve)) = visible_range {
-            let now_s = Local::now().timestamp();
-
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Filtres énergie :");
-
-                egui::ComboBox::from_id_salt("energy_filter_cluster")
-                    .selected_text(
-                        self.energy_filter_cluster
-                            .clone()
-                            .unwrap_or_else(|| "Cluster: Tous".to_string()),
-                    )
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.energy_filter_cluster, None, "Cluster: Tous");
-                        for cluster in get_all_clusters(&app.get_current_clusters()) {
-                            ui.selectable_value(
-                                &mut self.energy_filter_cluster,
-                                Some(cluster.clone()),
-                                cluster,
-                            );
-                        }
-                    });
-
-                let mut owners: Vec<String> =
-                    app.filtered_jobs.iter().map(|j| j.owner.clone()).collect();
-                owners.sort();
-                owners.dedup();
-
-                egui::ComboBox::from_id_salt("energy_filter_owner")
-                    .selected_text(
-                        self.energy_filter_owner
-                            .clone()
-                            .unwrap_or_else(|| "Owner: Tous".to_string()),
-                    )
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.energy_filter_owner, None, "Owner: Tous");
-                        for owner in owners {
-                            ui.selectable_value(
-                                &mut self.energy_filter_owner,
-                                Some(owner.clone()),
-                                owner,
-                            );
-                        }
-                    });
-
-                if ui.small_button("Reset").clicked() {
-                    self.energy_filter_cluster = None;
-                    self.energy_filter_owner = None;
-                }
-            });
-
-            ui.add_space(4.0);
-
-            let maybe_new_range = energy_plot::ui_energy_global(
-                ui,
-                &energy_points,
+        } else if show_energy {
+            // Energy-only source: no Gantt rows, compute visible range from stored time bounds.
+            let vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
+            let ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
+            visible_range = Some((vs, ve));
+            energy_points = energy_estimate::compute_energy_points(
+                app.get_current_energy_series(),
+                &[],
                 vs,
                 ve,
-                now_s,
-                last_gantt_gutter_width_px,
             );
+        }
 
-            if let Some((new_vs, new_ve)) = maybe_new_range {
-                let new_width_s = (new_ve - new_vs).max(1) as f32;
-                self.options.canvas_width_s = new_width_s;
-                let start_s = self.initial_start_s.unwrap();
-                let canvas_w_px = last_gantt_usable_width_px.max(1.0);
-                let pan_px =
-                    -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
-                self.options.sideways_pan_in_points = pan_px;
-                self.pending_navigation_refresh = true;
+        if show_energy {
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(2.0);
+
+            if let Some((vs, ve)) = visible_range {
+                let now_s = Local::now().timestamp();
+
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Filtres énergie :");
+
+                    egui::ComboBox::from_id_salt("energy_filter_cluster")
+                        .selected_text(
+                            self.energy_filter_cluster
+                                .clone()
+                                .unwrap_or_else(|| "Cluster: Tous".to_string()),
+                        )
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.energy_filter_cluster, None, "Cluster: Tous");
+                            for cluster in get_all_clusters(&app.get_current_clusters()) {
+                                ui.selectable_value(
+                                    &mut self.energy_filter_cluster,
+                                    Some(cluster.clone()),
+                                    cluster,
+                                );
+                            }
+                        });
+
+                    let mut owners: Vec<String> =
+                        app.filtered_jobs.iter().map(|j| j.owner.clone()).collect();
+                    owners.sort();
+                    owners.dedup();
+
+                    egui::ComboBox::from_id_salt("energy_filter_owner")
+                        .selected_text(
+                            self.energy_filter_owner
+                                .clone()
+                                .unwrap_or_else(|| "Owner: Tous".to_string()),
+                        )
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.energy_filter_owner, None, "Owner: Tous");
+                            for owner in owners {
+                                ui.selectable_value(
+                                    &mut self.energy_filter_owner,
+                                    Some(owner.clone()),
+                                    owner,
+                                );
+                            }
+                        });
+
+                    if ui.small_button("Reset").clicked() {
+                        self.energy_filter_cluster = None;
+                        self.energy_filter_owner = None;
+                    }
+                });
+
+                ui.add_space(4.0);
+
+                let maybe_new_range = energy_plot::ui_energy_global(
+                    ui,
+                    &energy_points,
+                    vs,
+                    ve,
+                    now_s,
+                    last_gantt_gutter_width_px,
+                );
+
+                if let Some((new_vs, new_ve)) = maybe_new_range {
+                    let new_width_s = (new_ve - new_vs).max(1) as f32;
+                    self.options.canvas_width_s = new_width_s;
+                    let start_s = self.initial_start_s.unwrap();
+                    let canvas_w_px = last_gantt_usable_width_px.max(1.0);
+                    let pan_px =
+                        -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
+                    self.options.sideways_pan_in_points = pan_px;
+                    self.pending_navigation_refresh = true;
+                }
             }
         }
 

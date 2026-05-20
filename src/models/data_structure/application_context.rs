@@ -34,9 +34,12 @@ pub struct ImportedDataSource {
     pub name: String,
     pub file_path: Option<String>,
     pub file_type_name: String,
+    pub visualization_targets: Vec<crate::models::file_types::VisualizationTarget>,
     pub jobs: Vec<Job>,
     pub clusters: Vec<Cluster>,
     pub strata: Vec<Strata>,
+    /// Pre-computed energy series from file type that provides raw (timestamp_s, watts) data.
+    pub raw_energy_series: Option<Vec<(i64, f64)>>,
 }
 
 pub struct ApplicationContext {
@@ -797,6 +800,8 @@ impl ApplicationContext {
             name,
             file_path,
             file_type_name: file_type.name().to_string(),
+            visualization_targets: file_type.visualization_targets().to_vec(),
+            raw_energy_series: parsed.raw_energy_series,
             jobs: parsed.jobs,
             clusters: parsed.clusters,
             strata: parsed.resources,
@@ -894,22 +899,32 @@ impl ApplicationContext {
         let jobs: Vec<Job> = self.get_current_jobs().to_vec();
         let jobs_count = jobs.len();
         
-        // Adjust time range for imported data to show all jobs
-        if index != 0 && !jobs.is_empty() {
-            // Find min and max timestamps from imported jobs
+        // Adjust time range for imported data.
+        if index != 0 {
             let mut min_time = i64::MAX;
             let mut max_time = i64::MIN;
-            
+
+            // Range from jobs.
             for job in jobs.iter().filter(|j| j.id != 0) {
-                let job_start = job.start_time;
-                let job_end = job.get_end_date();
-                min_time = min_time.min(job_start).min(job_end);
-                max_time = max_time.max(job_start).max(job_end);
+                min_time = min_time.min(job.start_time).min(job.get_end_date());
+                max_time = max_time.max(job.start_time).max(job.get_end_date());
             }
-            
+
+            // Range from raw energy series when no jobs provide timestamps.
+            if min_time == i64::MAX {
+                if let Some(series) = self.imported_data_sources
+                    .get(index - 1)
+                    .and_then(|ds| ds.raw_energy_series.as_deref())
+                {
+                    for &(ts, _) in series {
+                        min_time = min_time.min(ts);
+                        max_time = max_time.max(ts);
+                    }
+                }
+            }
+
             if min_time != i64::MAX && max_time != i64::MIN {
-                // Set time range to encompass all imported jobs with some padding
-                let padding = (max_time - min_time) / 10; // 10% padding on each side
+                let padding = (max_time - min_time) / 10;
                 let start_time = Local.timestamp_opt(min_time - padding, 0).unwrap();
                 let end_time = Local.timestamp_opt(max_time + padding, 0).unwrap();
                 self.set_localdate(start_time, end_time);
@@ -973,6 +988,43 @@ impl ApplicationContext {
                 .map(|ds| &ds.clusters)
                 .unwrap_or(&self.all_clusters)
         }
+    }
+
+    /// True when the currently active data source should show the energy diagram.
+    /// Live data always shows both visualizations.
+    pub fn show_energy_diagram(&self) -> bool {
+        use crate::models::file_types::VisualizationTarget;
+        if self.current_data_source_index == 0 {
+            return true;
+        }
+        self.imported_data_sources
+            .get(self.current_data_source_index - 1)
+            .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram))
+            .unwrap_or(true)
+    }
+
+    /// True when the currently active data source should show the Gantt chart.
+    /// Live data always shows both visualizations.
+    pub fn show_gantt(&self) -> bool {
+        use crate::models::file_types::VisualizationTarget;
+        if self.current_data_source_index == 0 {
+            return true;
+        }
+        self.imported_data_sources
+            .get(self.current_data_source_index - 1)
+            .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::Gantt))
+            .unwrap_or(true)
+    }
+
+    /// Returns energy series from the current imported source, if any.
+    /// When Some, the energy diagram uses this directly instead of estimating from jobs.
+    pub fn get_current_energy_series(&self) -> Option<&[(i64, f64)]> {
+        if self.current_data_source_index == 0 {
+            return None;
+        }
+        self.imported_data_sources
+            .get(self.current_data_source_index - 1)
+            .and_then(|ds| ds.raw_energy_series.as_deref())
     }
 }
 
