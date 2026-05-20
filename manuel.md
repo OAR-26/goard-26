@@ -114,7 +114,85 @@ Fonctions disponibles :
 
 ---
 
-## 7) Presets de clusters (Admin)
+## 7) Vues d'agrégation du Gantt
+
+### 7.1) Utilisation des vues
+
+Le menu déroulant **View** (dans la barre d'outils du Gantt) permet de choisir la hiérarchie d'affichage des ressources.
+
+Chaque vue définit :
+- **Les niveaux hiérarchiques** : les ressources sont regroupées de gauche à droite (ex. site → cluster → hôte)
+- **L'étiquette de chaque ligne** : dérivée d'un modèle configurable (ex. `{host|short}`)
+- **Un filtre optionnel** : restreint les ressources affichées (ex. uniquement `type = default`)
+
+Exemples de vues prédéfinies :
+- `Compute: site → cluster → host` — vue standard des nœuds de calcul
+- `Network: site → type → vlan` — vue des ressources réseau (Kavlan)
+
+Les bandes colorées à gauche de la timeline représentent les niveaux hiérarchiques : une bande par niveau, du plus externe (gauche) au plus interne (droite). Survoler une bande affiche un tooltip récapitulatif du chemin (site, cluster, etc.).
+
+---
+
+### 7.2) Gestion des vues (Admin)
+
+L'authentification **Admin** donne accès aux fonctionnalités de gestion des vues. Ces actions sont réservées à l'utilisateur `admin`.
+
+#### Créer une vue
+
+Depuis le menu **View**, cliquer sur **+ Create view**.
+
+Champs à remplir :
+- **Name** : nom affiché dans le menu View
+- **Leaf info preset** : jeu de champs affiché dans le tooltip au survol d'une ligne
+- **Hierarchy levels** : niveaux de regroupement, du plus général (ex. `site`) au plus fin (ex. `host`). Cliquer sur les champs disponibles pour les ajouter, utiliser ⬆ / ⬇ pour réordonner, 🗑 pour supprimer.
+- **Leaf label template** : modèle d'étiquette pour les lignes feuilles. Exemples : `{host|short}`, `{type}/{vlan}`. Le modificateur `|short` tronque à la première partie avant le `.`.
+- **Status bar fields** : champs affichés dans la barre de synthèse en haut du Gantt (vide = dernier niveau utilisé).
+- **Sort by label** : trier les groupes par étiquette calculée plutôt que par clé brute (utile quand les clés sont des IDs opaques).
+- **Resource filter** : filtre optionnel sur un champ de ressource. Cocher, sélectionner le champ et la valeur, puis choisir si la règle est une liste blanche (garder) ou liste noire (exclure).
+
+Cliquer **Save view** pour enregistrer. La vue est immédiatement disponible dans le menu.
+
+#### Modifier une vue
+
+Dans le menu **View**, survoler une vue existante → cliquer ✏ à droite de son nom.
+
+Le panneau **Edit view** s'ouvre avec les mêmes champs que la création. Modifier les champs souhaités puis cliquer **Apply**.
+
+#### Supprimer une vue
+
+Dans le menu **View**, survoler une vue → cliquer 🗑. Une fenêtre de confirmation s'affiche. Cliquer **Delete** pour confirmer.
+
+> Note : la suppression est immédiate et irréversible. La configuration est sauvegardée dans `views.json`.
+
+---
+
+### 7.3) Presets d'informations (Leaf info presets)
+
+Un **leaf info preset** définit les champs affichés dans le tooltip au survol d'une ligne de ressource (hôte, VLAN, disque, etc.).
+
+#### Créer un preset
+
+Dans le panneau **Create view** ou **Edit view**, cliquer **+** à côté du sélecteur de preset.
+
+Remplir :
+- **Preset name** : nom du preset
+- **Fields** : cocher les champs à afficher (ex. `cluster`, `network_address`, `cputype`, `cpuset`, `memnode`…)
+
+Cliquer **Save preset**.
+
+#### Modifier un preset
+
+Dans le sélecteur de preset d'une vue, ouvrir la liste déroulante et cliquer ✏ sur le preset à modifier. Changer le nom et/ou les champs, puis **Apply**.
+
+#### Supprimer un preset
+
+Dans la liste déroulante des presets, cliquer 🗑 → confirmer dans la fenêtre de confirmation.
+
+> Attention : supprimer un preset retire son affichage des tooltips pour toutes les vues qui l'utilisaient.
+
+---
+
+## 8) Presets de clusters (Admin)
 
 Le bouton **Admin** est cliquable uniquement pour l’utilisateur `admin` et gris pour les autres.
 
@@ -131,13 +209,14 @@ Ensuite, ils deviennent utilisables dans la fenêtre **Filtres**.
 ---
 
 
-## 8) Résumé des fonctionnalités
+## 9) Résumé des fonctionnalités
 
-- Authentification
+- Authentification administrateur
 - Dashboard (métriques + graphique + tableau tri/pagination/colonnes)
-- Gantt interactif (navigation, zoom, détails)
+- Gantt interactif (navigation, zoom, détails job)
+- Vues d'agrégation configurables (hiérarchies, filtres, templates d'étiquettes)
+- Presets d'informations pour les tooltips de ressources
 - Filtres multi-critères + presets de clusters
 - Estimation énergétique synchronisée avec la timeline
-- Thème, langue, taille de police
+- Thème clair/sombre, langue, taille de police
 - Rafraîchissement auto et manuel
-- Gestion admin des presets

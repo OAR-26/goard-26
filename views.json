@@ -141,21 +141,6 @@
         "diskpath",
         "disktype"
       ]
-    },
-    {
-      "id": "newtry",
-      "name": "newTry",
-      "fields": [
-        "slash_16",
-        "type",
-        "host",
-        "slash_22",
-        "ip",
-        "cputype",
-        "gpu_model",
-        "desktop_computing",
-        "site"
-      ]
     }
   ]
 }

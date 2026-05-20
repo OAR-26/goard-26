@@ -1050,6 +1050,7 @@ impl ApplicationContext {
         
         // Now parse jobs from JSON
         let mut imported_jobs = Vec::new();
+        let mut next_synthetic_id: u32 = u32::MAX;
         if let Some(jobs_obj) = json_data.get("jobs") {
             if let Value::Object(jobs_map) = jobs_obj {
                 for (job_id_str, job_data) in jobs_map {
@@ -1058,6 +1059,10 @@ impl ApplicationContext {
                         if let Ok(parsed_id) = job_id_str.parse::<u32>() {
                             job.id = parsed_id;
                             job.gantt_color = crate::models::utils::utils::convert_id_to_color(parsed_id);
+                        } else {
+                            job.id = next_synthetic_id;
+                            job.gantt_color = crate::models::utils::utils::convert_id_to_color(next_synthetic_id);
+                            next_synthetic_id = next_synthetic_id.saturating_sub(1);
                         }
                     }
                     imported_jobs.push(job);

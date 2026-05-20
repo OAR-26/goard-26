@@ -566,15 +566,20 @@ pub(super) fn resolve_field(
 
     match field {
         "host" | "network_address" => {
-            // Own fields first, then sibling's network_address for normalization.
-            strata.network_address.as_deref()
-                .or(strata.host.as_deref())
-                .or(strata.nodeset.as_deref())
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .or_else(|| sibling()?.network_address.as_deref()
-                    .map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+            // Filter empty strings before .or() — disk resources have network_address=""
+            // (Some("") not None), so the plain .or() chain never reaches strata.host.
+            let trim_nonempty = |s: &str| -> Option<String> {
+                let t = s.trim();
+                if t.is_empty() { None } else { Some(t.to_string()) }
+            };
+            strata.network_address.as_deref().and_then(trim_nonempty)
+                .or_else(|| strata.host.as_deref().and_then(trim_nonempty))
+                .or_else(|| strata.nodeset.as_deref().and_then(trim_nonempty))
+                .or_else(|| {
+                    let sib = sibling()?;
+                    sib.network_address.as_deref().and_then(trim_nonempty)
+                        .or_else(|| sib.host.as_deref().and_then(trim_nonempty))
+                })
                 .unwrap_or_else(|| format!("(no {})", field))
         }
 
@@ -688,6 +693,11 @@ pub(super) fn build_resource_groups<'a>(
             .map(|f| resolve_field(strata, f, &app.strata_by_host))
             .collect();
         if path.last().map_or(true, |v| v.starts_with("(no ")) {
+            continue;
+        }
+        if levels.iter().zip(path.iter()).any(|(level, val)| {
+            (level == "host" || level == "network_address") && val.starts_with("(no ")
+        }) {
             continue;
         }
         if let Some(f) = filter {
