@@ -184,6 +184,8 @@ pub struct GanttChart {
 
     energy_filter_cluster: Option<String>,
     energy_filter_owner: Option<String>,
+    energy_fit_to_figure: bool,
+    energy_y_bounds: Option<(f64, f64)>,
 
     last_canvas_usable_width_px: f32,
 
@@ -275,6 +277,8 @@ impl Default for GanttChart {
             admin_selected_clusters: StdHashSet::new(),
             energy_filter_cluster: None,
             energy_filter_owner: None,
+            energy_fit_to_figure: true,
+            energy_y_bounds: None,
             pending_navigation_refresh: false,
             gantt_views: config.views,
             current_view_index: 0,
@@ -1580,13 +1584,18 @@ impl View for GanttChart {
                     app.set_localdate(start, end);
 
                     if self.pending_navigation_refresh {
-                        let refreshing = *app
-                            .is_refreshing
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        if !refreshing {
-                            app.instant_update();
+                        let never = *app.refresh_rate.lock().unwrap_or_else(|p| p.into_inner()) == u64::MAX;
+                        if never {
                             self.pending_navigation_refresh = false;
+                        } else {
+                            let refreshing = *app
+                                .is_refreshing
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            if !refreshing {
+                                app.instant_update();
+                                self.pending_navigation_refresh = false;
+                            }
                         }
                     }
                 });
@@ -1659,6 +1668,13 @@ impl View for GanttChart {
                         self.energy_filter_cluster = None;
                         self.energy_filter_owner = None;
                     }
+
+                    ui.separator();
+                    let prev_fit = self.energy_fit_to_figure;
+                    ui.checkbox(&mut self.energy_fit_to_figure, "Ajuster à la figure");
+                    if self.energy_fit_to_figure && !prev_fit {
+                        self.energy_y_bounds = None;
+                    }
                 });
 
                 ui.add_space(4.0);
@@ -1668,7 +1684,7 @@ impl View for GanttChart {
                 } else {
                     (ui.available_height() - 4.0).max(100.0)
                 };
-                let maybe_new_range = energy_plot::ui_energy_global(
+                let (maybe_new_range, new_y_bounds) = energy_plot::ui_energy_global(
                     ui,
                     &energy_points,
                     vs,
@@ -1677,7 +1693,12 @@ impl View for GanttChart {
                     last_gantt_gutter_width_px,
                     energy_plot_h,
                     show_gantt,
+                    self.energy_fit_to_figure,
+                    self.energy_y_bounds,
                 );
+                if let Some(yb) = new_y_bounds {
+                    self.energy_y_bounds = Some(yb);
+                }
 
                 if let Some((new_vs, new_ve)) = maybe_new_range {
                     let new_width_s = (new_ve - new_vs).max(1) as f32;

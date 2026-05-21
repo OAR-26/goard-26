@@ -108,7 +108,7 @@ impl ApplicationContext {
 
     // In a different thread, update the data every refresh_rate seconds
     pub fn update_periodically(&mut self) {
-        let rate = *self.refresh_rate.lock().unwrap();
+        let refresh_rate = self.refresh_rate.clone();
         let jobs_sender = self.jobs_sender.clone();
         let resources_sender = self.resources_sender.clone();
         let is_refreshing = self.is_refreshing.clone();
@@ -120,6 +120,14 @@ impl ApplicationContext {
         {
             thread::spawn(move || {
                 loop {
+                    let rate = *refresh_rate.lock().unwrap();
+
+                    // u64::MAX = "Never" — skip fetch, poll again after a short wait.
+                    if rate == u64::MAX {
+                        thread::sleep(Duration::from_secs(5));
+                        continue;
+                    }
+
                     // Check if already refreshing
                     if *is_refreshing.lock().unwrap() {
                         thread::sleep(Duration::from_secs(rate));

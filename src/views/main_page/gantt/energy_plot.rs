@@ -1,5 +1,6 @@
 use chrono::{Local, TimeZone};
 use eframe::egui;
+use egui::Vec2b;
 use egui_plot::{
     CoordinatesFormatter, Corner, Line, Plot, PlotBounds, PlotPoints, VLine,
 };
@@ -29,12 +30,14 @@ pub fn ui_energy_global(
     left_gutter_width_px: f32,
     height: f32,
     gantt_synced: bool,
-) -> Option<(i64, i64)> {
+    fit_to_figure: bool,
+    y_bounds: Option<(f64, f64)>,
+) -> (Option<(i64, i64)>, Option<(f64, f64)>) {
     ui.label("Consommation globale");
 
     if points_w.is_empty() {
         ui.weak("Pas de données énergie pour cette fenêtre.");
-        return None;
+        return (None, None);
     }
 
     // Bornes globales
@@ -52,7 +55,7 @@ pub fn ui_energy_global(
 
     if !global_y_min.is_finite() || !global_y_max.is_finite() {
         ui.weak("Données énergie invalides.");
-        return None;
+        return (None, None);
     }
 
 
@@ -77,7 +80,7 @@ pub fn ui_energy_global(
         .show_y(true)
         .show_grid(true)
         .allow_drag(true)
-        .allow_zoom(true)
+        .allow_zoom(Vec2b::new(true, false))
         .label_formatter(|_, _| String::new())
         .coordinates_formatter(
             Corner::LeftTop,
@@ -111,10 +114,18 @@ pub fn ui_energy_global(
                 initial_bounds
             };
 
-            // In Gantt-synced mode, force bounds to match Gantt viewport.
-            // In standalone mode, let egui_plot manage pan/zoom natively.
             if gantt_synced {
-                plot_ui.set_plot_bounds(bounds);
+                if fit_to_figure {
+                    // Lock both X and Y to Gantt viewport + data extents.
+                    plot_ui.set_plot_bounds(bounds);
+                } else {
+                    // Lock X to Gantt viewport; Y from stored bounds (updated after show).
+                    let (y0, y1) = y_bounds.unwrap_or((global_y_min, global_y_max));
+                    plot_ui.set_plot_bounds(PlotBounds::from_min_max(
+                        [visible_start_s as f64, y0],
+                        [visible_end_s as f64, y1],
+                    ));
+                }
             }
 
             plot_ui.line(line);
@@ -147,15 +158,24 @@ pub fn ui_energy_global(
         let b = plot_resp.transform.bounds();
         let new_start = b.min()[0].round() as i64;
         let new_end = b.max()[0].round() as i64;
-    
+        let mut new_y = (b.min()[1], b.max()[1]);
+
+    // Alt+scroll: manual vertical zoom (native zoom restricted to X only).
+    let (alt_held, scroll_delta) = ui.input(|i| (i.modifiers.alt, i.raw_scroll_delta.y));
+    if plot_resp.response.hovered() && alt_held && scroll_delta != 0.0 && !fit_to_figure {
+        let zoom = (1.0 + scroll_delta as f64 * 0.005).clamp(0.1, 10.0);
+        let center = (new_y.0 + new_y.1) / 2.0;
+        let half = (new_y.1 - new_y.0) / 2.0 / zoom;
+        new_y = (center - half, center + half);
+    }
 
     let scrolled = ui.input(|i| i.raw_scroll_delta.y != 0.0);
     if plot_resp.response.dragged()
         || plot_resp.response.double_clicked()
         || (plot_resp.response.hovered() && scrolled)
     {
-        return Some((new_start, new_end));
+        return (Some((new_start, new_end)), Some(new_y));
     }
 
-    None
+    (None, Some(new_y))
 }

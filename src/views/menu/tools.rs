@@ -153,6 +153,7 @@ impl Tools {
                             (30, t!("app.menu.refresh_rate.refresh_30")),
                             (60, t!("app.menu.refresh_rate.refresh_60")),
                             (300, t!("app.menu.refresh_rate.refresh_300")),
+                            (u64::MAX, t!("app.menu.refresh_rate.refresh_never")),
                         ];
 
                         for (rate, label) in refresh_rates {
