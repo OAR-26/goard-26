@@ -848,6 +848,12 @@ impl ApplicationContext {
             }
             // Reload dead intervals immediately from disk (avoids waiting for next 30s tick).
             self.dead_intervals = get_dead_intervals_from_json("./data/data.json");
+            // Reset time range to current live window so initial_start_s is correct.
+            let live_now = Local::now();
+            self.set_localdate(
+                live_now - chrono::Duration::hours(1),
+                live_now + chrono::Duration::hours(1),
+            );
             // Rebuild standby_upto from the live strata cache.
             let now = chrono::Utc::now().timestamp();
             self.standby_upto.clear();

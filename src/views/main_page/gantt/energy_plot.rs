@@ -116,16 +116,26 @@ pub fn ui_energy_global(
 
             if gantt_synced {
                 if fit_to_figure {
-                    // Lock both X and Y to Gantt viewport + data extents.
+                    // X = Gantt range, Y = data extents.
                     plot_ui.set_plot_bounds(bounds);
                 } else {
-                    // Lock X to Gantt viewport; Y from stored bounds (updated after show).
+                    // X = Gantt range, Y = stored (alt+scroll).
                     let (y0, y1) = y_bounds.unwrap_or((global_y_min, global_y_max));
                     plot_ui.set_plot_bounds(PlotBounds::from_min_max(
                         [visible_start_s as f64, y0],
                         [visible_end_s as f64, y1],
                     ));
                 }
+            } else if fit_to_figure {
+                // Standalone + fit: auto-fit Y every frame, X stays free.
+                plot_ui.set_auto_bounds(Vec2b::new(false, true));
+            } else if let Some((y0, y1)) = y_bounds {
+                // Standalone + free Y: lock Y to stored bounds, X stays native.
+                let cur = plot_ui.plot_bounds();
+                plot_ui.set_plot_bounds(PlotBounds::from_min_max(
+                    [cur.min()[0], y0],
+                    [cur.max()[0], y1],
+                ));
             }
 
             plot_ui.line(line);
