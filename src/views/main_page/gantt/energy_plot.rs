@@ -64,13 +64,12 @@ pub fn ui_energy_global(
         .color(egui::Color32::RED)
         .width(2.0);
 
-    let initial_bounds = PlotBounds::from_min_max(
-        [visible_start_s as f64, global_y_min],
-        [visible_end_s as f64, global_y_max],
-    );
-
     // Texte affiché au survol, dessiné manuellement pour éviter le tooltip de egui_plot (x=..., y=...).
     let mut hover_label: Option<String> = None;
+
+    // Capture BEFORE .show() — inside closure we may zero these to block egui_plot's X zoom.
+    let alt_held = ui.input(|i| i.modifiers.alt);
+    let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
 
     let plot_resp = Plot::new("energy_global_plot")
         .height(height)
@@ -79,8 +78,8 @@ pub fn ui_energy_global(
         .show_x(true)
         .show_y(true)
         .show_grid(true)
-        .allow_drag(true)
-        .allow_zoom(Vec2b::new(true, false))
+        .allow_drag(Vec2b::new(true, false))   // Y never dragged; controlled explicitly
+        .allow_zoom(Vec2b::new(true, false))   // Y zoom via alt+scroll only
         .label_formatter(|_, _| String::new())
         .coordinates_formatter(
             Corner::LeftTop,
@@ -91,52 +90,45 @@ pub fn ui_energy_global(
             fmt_hhmm(ts)
         })
         .show(ui, |plot_ui| {
-            let vx0 = visible_start_s;
-            let vx1 = visible_end_s;
+            // egui_plot processes scroll for X zoom AFTER this closure returns.
+            // Zero it here when alt is held + cursor is inside the plot so the plot
+            // doesn't also X-zoom while we manually Y-zoom with alt+scroll.
+            if alt_held && plot_ui.pointer_coordinate().is_some() {
+                plot_ui.ctx().input_mut(|i| {
+                    i.raw_scroll_delta = egui::Vec2::ZERO;
+                    i.smooth_scroll_delta = egui::Vec2::ZERO;
+                });
+            }
 
-            // Recalcule les bornes y sur la fenêtre visible pour garder une courbe lisible pendant les déplacements
+            // X source: Gantt-synced → Gantt's viewport; standalone → last frame's plot bounds.
+            let (vx0, vx1) = if gantt_synced {
+                (visible_start_s as f64, visible_end_s as f64)
+            } else {
+                let cur = plot_ui.plot_bounds();
+                (cur.min()[0], cur.max()[0])
+            };
+
+            // Compute Y that fits the currently visible X window.
             let mut y_min = f64::INFINITY;
             let mut y_max = f64::NEG_INFINITY;
             for (t, w) in points_w {
-                if *t >= vx0 && *t <= vx1 {
+                if (*t as f64) >= vx0 && (*t as f64) <= vx1 {
                     y_min = y_min.min(*w);
                     y_max = y_max.max(*w);
                 }
             }
-
-            let bounds = if y_min.is_finite() && y_max.is_finite() {
+            let y_fit = if y_min.is_finite() && y_max.is_finite() {
                 let pad = ((y_max - y_min).abs() * 0.10).max(1.0);
-                PlotBounds::from_min_max(
-                    [visible_start_s as f64, y_min - pad],
-                    [visible_end_s as f64, y_max + pad],
-                )
+                (y_min - pad, y_max + pad)
             } else {
-                initial_bounds
+                (global_y_min, global_y_max)
             };
 
-            if gantt_synced {
-                if fit_to_figure {
-                    // X = Gantt range, Y = data extents.
-                    plot_ui.set_plot_bounds(bounds);
-                } else {
-                    // X = Gantt range, Y = stored (alt+scroll).
-                    let (y0, y1) = y_bounds.unwrap_or((global_y_min, global_y_max));
-                    plot_ui.set_plot_bounds(PlotBounds::from_min_max(
-                        [visible_start_s as f64, y0],
-                        [visible_end_s as f64, y1],
-                    ));
-                }
-            } else if fit_to_figure {
-                // Standalone + fit: auto-fit Y every frame, X stays free.
-                plot_ui.set_auto_bounds(Vec2b::new(false, true));
-            } else if let Some((y0, y1)) = y_bounds {
-                // Standalone + free Y: lock Y to stored bounds, X stays native.
-                let cur = plot_ui.plot_bounds();
-                plot_ui.set_plot_bounds(PlotBounds::from_min_max(
-                    [cur.min()[0], y0],
-                    [cur.max()[0], y1],
-                ));
-            }
+            // Choose Y: fit mode → computed fit; free mode → stored (alt+scroll) or fit as fallback.
+            let (y0, y1) = if fit_to_figure { y_fit } else { y_bounds.unwrap_or(y_fit) };
+
+            // Unified bounds application — same logic for both modes; only X source differs.
+            plot_ui.set_plot_bounds(PlotBounds::from_min_max([vx0, y0], [vx1, y1]));
 
             plot_ui.line(line);
             plot_ui.vline(now_line);
@@ -149,18 +141,18 @@ pub fn ui_energy_global(
 
         if let (Some(label), Some(mouse_pos)) = (hover_label, plot_resp.response.hover_pos()) {
             let painter = ui.painter();
-        
+
             let font_id = egui::TextStyle::Body.resolve(ui.style());
             let text_color = egui::Color32::WHITE;
             let bg_color = egui::Color32::from_black_alpha(220);
             let padding = egui::vec2(6.0, 4.0);
-        
+
             let galley = painter.layout_no_wrap(label, font_id, text_color);
             let rect = egui::Rect::from_min_size(
                 mouse_pos + egui::vec2(12.0, 12.0),
                 galley.size() + 2.0 * padding,
             );
-        
+
             painter.rect_filled(rect, 4.0, bg_color);
             painter.galley(rect.min + padding, galley, text_color);
         }
@@ -170,13 +162,19 @@ pub fn ui_energy_global(
         let new_end = b.max()[0].round() as i64;
         let mut new_y = (b.min()[1], b.max()[1]);
 
-    // Alt+scroll: manual vertical zoom (native zoom restricted to X only).
-    let (alt_held, scroll_delta) = ui.input(|i| (i.modifiers.alt, i.raw_scroll_delta.y));
-    if plot_resp.response.hovered() && alt_held && scroll_delta != 0.0 && !fit_to_figure {
-        let zoom = (1.0 + scroll_delta as f64 * 0.005).clamp(0.1, 10.0);
-        let center = (new_y.0 + new_y.1) / 2.0;
-        let half = (new_y.1 - new_y.0) / 2.0 / zoom;
-        new_y = (center - half, center + half);
+    // Alt+scroll: manual vertical zoom. Use pre-captured delta (may have been zeroed inside closure).
+    if plot_resp.response.hovered() && alt_held && scroll_delta_y != 0.0 {
+        if !fit_to_figure {
+            let zoom = (1.0 + scroll_delta_y as f64 * 0.005).clamp(0.1, 10.0);
+            let center = (new_y.0 + new_y.1) / 2.0;
+            let half = (new_y.1 - new_y.0) / 2.0 / zoom;
+            new_y = (center - half, center + half);
+        }
+        // Ensure consumed (closure may not have run if pointer was outside).
+        ui.input_mut(|i| {
+            i.raw_scroll_delta = egui::Vec2::ZERO;
+            i.smooth_scroll_delta = egui::Vec2::ZERO;
+        });
     }
 
     let scrolled = ui.input(|i| i.raw_scroll_delta.y != 0.0);

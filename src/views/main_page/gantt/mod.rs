@@ -1623,53 +1623,56 @@ impl View for GanttChart {
                 let now_s = Local::now().timestamp();
 
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("Filtres énergie :");
+                    if show_gantt {
+                        ui.label("Filtres énergie :");
 
-                    egui::ComboBox::from_id_salt("energy_filter_cluster")
-                        .selected_text(
-                            self.energy_filter_cluster
-                                .clone()
-                                .unwrap_or_else(|| "Cluster: Tous".to_string()),
-                        )
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.energy_filter_cluster, None, "Cluster: Tous");
-                            for cluster in get_all_clusters(&app.get_current_clusters()) {
-                                ui.selectable_value(
-                                    &mut self.energy_filter_cluster,
-                                    Some(cluster.clone()),
-                                    cluster,
-                                );
-                            }
-                        });
+                        egui::ComboBox::from_id_salt("energy_filter_cluster")
+                            .selected_text(
+                                self.energy_filter_cluster
+                                    .clone()
+                                    .unwrap_or_else(|| "Cluster: Tous".to_string()),
+                            )
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.energy_filter_cluster, None, "Cluster: Tous");
+                                for cluster in get_all_clusters(&app.get_current_clusters()) {
+                                    ui.selectable_value(
+                                        &mut self.energy_filter_cluster,
+                                        Some(cluster.clone()),
+                                        cluster,
+                                    );
+                                }
+                            });
 
-                    let mut owners: Vec<String> =
-                        app.filtered_jobs.iter().map(|j| j.owner.clone()).collect();
-                    owners.sort();
-                    owners.dedup();
+                        let mut owners: Vec<String> =
+                            app.filtered_jobs.iter().map(|j| j.owner.clone()).collect();
+                        owners.sort();
+                        owners.dedup();
 
-                    egui::ComboBox::from_id_salt("energy_filter_owner")
-                        .selected_text(
-                            self.energy_filter_owner
-                                .clone()
-                                .unwrap_or_else(|| "Owner: Tous".to_string()),
-                        )
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.energy_filter_owner, None, "Owner: Tous");
-                            for owner in owners {
-                                ui.selectable_value(
-                                    &mut self.energy_filter_owner,
-                                    Some(owner.clone()),
-                                    owner,
-                                );
-                            }
-                        });
+                        egui::ComboBox::from_id_salt("energy_filter_owner")
+                            .selected_text(
+                                self.energy_filter_owner
+                                    .clone()
+                                    .unwrap_or_else(|| "Owner: Tous".to_string()),
+                            )
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.energy_filter_owner, None, "Owner: Tous");
+                                for owner in owners {
+                                    ui.selectable_value(
+                                        &mut self.energy_filter_owner,
+                                        Some(owner.clone()),
+                                        owner,
+                                    );
+                                }
+                            });
 
-                    if ui.small_button("Reset").clicked() {
-                        self.energy_filter_cluster = None;
-                        self.energy_filter_owner = None;
+                        if ui.small_button("Reset").clicked() {
+                            self.energy_filter_cluster = None;
+                            self.energy_filter_owner = None;
+                        }
+
+                        ui.separator();
                     }
 
-                    ui.separator();
                     let prev_fit = self.energy_fit_to_figure;
                     ui.checkbox(&mut self.energy_fit_to_figure, "Ajuster à la figure");
                     if self.energy_fit_to_figure && !prev_fit {
@@ -1682,15 +1685,18 @@ impl View for GanttChart {
                 let energy_plot_h = if show_gantt {
                     210.0_f32
                 } else {
-                    (ui.available_height() - 4.0).max(100.0)
+                    // Subtract label height (~24px) inside ui_energy_global to avoid overflow.
+                    (ui.available_height() - 28.0).max(100.0)
                 };
+                // In standalone mode, don't force the Gantt gutter width onto the Y axis.
+                let y_axis_gutter = if show_gantt { last_gantt_gutter_width_px } else { 0.0 };
                 let (maybe_new_range, new_y_bounds) = energy_plot::ui_energy_global(
                     ui,
                     &energy_points,
                     vs,
                     ve,
                     now_s,
-                    last_gantt_gutter_width_px,
+                    y_axis_gutter,
                     energy_plot_h,
                     show_gantt,
                     self.energy_fit_to_figure,
