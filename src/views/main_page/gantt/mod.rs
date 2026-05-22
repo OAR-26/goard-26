@@ -330,7 +330,7 @@ impl GanttChart {
         ui.add_space(4.0);
 
         let data_source_names = app.get_all_data_source_names();
-        let current_index = app.current_data_source_index;
+        let current_index = app.import.current_data_source_index;
 
         ui.horizontal(|ui| {
             for (index, name) in data_source_names.iter().enumerate() {
@@ -382,7 +382,7 @@ impl GanttChart {
     }
 
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        let ds_idx = app.current_data_source_index;
+        let ds_idx = app.import.current_data_source_index;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
             let start_s = app.get_start_date().timestamp();
             let end_s = app.get_end_date().timestamp();
@@ -551,7 +551,7 @@ impl View for GanttChart {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         self.render_data_source_tabs(ui, app);
 
-        let ds_idx = app.current_data_source_index;
+        let ds_idx = app.import.current_data_source_index;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
             let start_s = app.get_start_date().timestamp();
             let end_s = app.get_end_date().timestamp();
@@ -569,10 +569,10 @@ impl View for GanttChart {
         let view_name = self.gantt_views.get(self.current_view_index)
             .map(|v| v.name.clone())
             .unwrap_or_default();
-        if app.current_gantt_view_name != view_name {
-            app.current_gantt_view_name = view_name;
-            app.current_gantt_view_levels = self.options.levels.clone();
-            app.current_gantt_view_summary_fields = {
+        if app.prefs.current_gantt_view_name != view_name {
+            app.prefs.current_gantt_view_name = view_name;
+            app.prefs.current_gantt_view_levels = self.options.levels.clone();
+            app.prefs.current_gantt_view_summary_fields = {
                 let stored = self.gantt_views
                     .get(self.current_view_index)
                     .map(|v| v.summary_fields.clone())
@@ -585,15 +585,15 @@ impl View for GanttChart {
             };
         }
 
-        if app.current_data_source_index == 0 {
-            app.all_jobs.retain(|j| j.id != 0);
+        if app.import.current_data_source_index == 0 {
+            app.data.all_jobs.retain(|j| j.id != 0);
         }
 
         let selected_cluster_names: Option<Vec<String>> = app
             .filters
             .selected_preset
             .as_ref()
-            .and_then(|n| app.cluster_presets.iter().find(|p| p.name == *n))
+            .and_then(|n| app.prefs.cluster_presets.iter().find(|p| p.name == *n))
             .map(|p| p.clusters.clone());
 
         let all_hosts = if let Some(cluster_names) = &selected_cluster_names {
@@ -622,8 +622,8 @@ impl View for GanttChart {
             get_all_resources(&app.get_current_clusters())
         };
 
-        if app.current_data_source_index == 0 {
-            app.all_jobs.push(Job {
+        if app.import.current_data_source_index == 0 {
+            app.data.all_jobs.push(Job {
                 id: 0,
                 owner: "all_resources".to_string(),
                 state: JobState::Unknown,
@@ -695,12 +695,12 @@ impl View for GanttChart {
                                 egui::ComboBox::from_label("Select Preset")
                                     .selected_text(
                                         self.admin_selected_preset
-                                            .and_then(|i| app.cluster_presets.get(i))
+                                            .and_then(|i| app.prefs.cluster_presets.get(i))
                                             .map(|p| p.name.clone())
                                             .unwrap_or_else(|| "Select a preset".to_string()),
                                     )
                                     .show_ui(ui, |ui| {
-                                        for (i, preset) in app.cluster_presets.iter().enumerate() {
+                                        for (i, preset) in app.prefs.cluster_presets.iter().enumerate() {
                                             if ui
                                                 .selectable_value(
                                                     &mut self.admin_selected_preset,
@@ -780,7 +780,7 @@ impl View for GanttChart {
                                         if ui.button("Delete").clicked() {
                                             if let Some(i) = self.admin_selected_preset {
                                                 if let Some(preset) =
-                                                    app.cluster_presets.get(i)
+                                                    app.prefs.cluster_presets.get(i)
                                                 {
                                                     let name = preset.name.clone();
                                                     app.remove_preset(&name);
@@ -1506,7 +1506,7 @@ impl View for GanttChart {
                         &mut self.job_details_windows,
                         &mut self.collapsed_jobs_level_1,
                         &mut self.collapsed_jobs_level_2,
-                        &app.all_clusters,
+                        &app.data.all_clusters,
                         gutter_width,
                     );
 
@@ -1542,7 +1542,7 @@ impl View for GanttChart {
 
                     if show_energy {
                         let energy_jobs: Vec<Job> = app
-                            .filtered_jobs
+                            .data.filtered_jobs
                             .iter()
                             .filter(|job| {
                                 let cluster_ok = match &self.energy_filter_cluster {
@@ -1555,8 +1555,8 @@ impl View for GanttChart {
                                 };
                                 let leaf_field = self.options.levels.last().map(|s| s.as_str()).unwrap_or("");
                                 let view_ok = job.assigned_resources.iter().any(|&rid| {
-                                    let Some(s) = app.strata_by_resource_id.get(&rid) else { return false; };
-                                    let leaf_val = jobs::resolve_field(s, leaf_field, &app.strata_by_host);
+                                    let Some(s) = app.data.strata_by_resource_id.get(&rid) else { return false; };
+                                    let leaf_val = jobs::resolve_field(s, leaf_field, &app.data.strata_by_host);
                                     if leaf_val.starts_with("(no ") { return false; }
                                     match &self.options.resource_filter {
                                         None => true,
@@ -1585,12 +1585,12 @@ impl View for GanttChart {
                     app.set_localdate(start, end);
 
                     if self.pending_navigation_refresh {
-                        let never = *app.refresh_rate.lock().unwrap_or_else(|p| p.into_inner()) == u64::MAX;
+                        let never = *app.refresh.refresh_rate.lock().unwrap_or_else(|p| p.into_inner()) == u64::MAX;
                         if never {
                             self.pending_navigation_refresh = false;
                         } else {
                             let refreshing = *app
-                                .is_refreshing
+                                .refresh.is_refreshing
                                 .lock()
                                 .unwrap_or_else(|poisoned| poisoned.into_inner());
                             if !refreshing {
@@ -1667,7 +1667,7 @@ impl View for GanttChart {
                             });
 
                         let mut owners: Vec<String> =
-                            app.filtered_jobs.iter().map(|j| j.owner.clone()).collect();
+                            app.data.filtered_jobs.iter().map(|j| j.owner.clone()).collect();
                         owners.sort();
                         owners.dedup();
 

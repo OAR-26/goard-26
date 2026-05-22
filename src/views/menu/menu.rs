@@ -30,12 +30,12 @@ impl Default for Menu {
 
 impl View for Menu {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        if app.theme_toggle_requested {
+        if app.prefs.theme_toggle_requested {
             self.options_pane.toggle_theme(ui.ctx());
-            app.theme_toggle_requested = false;
+            app.prefs.theme_toggle_requested = false;
         }
         self.options_pane
-            .apply_options(ui.ctx(), &mut app.font_size);
+            .apply_options(ui.ctx(), &mut app.prefs.font_size);
 
         ui.horizontal(|ui| {
             // Menu File
@@ -44,7 +44,7 @@ impl View for Menu {
                 ui.vertical(|ui| {
                     // Import File option
                     if ui.button("📁 Import File").clicked() {
-                        app.request_file_import = true;
+                        app.import.request_file_import = true;
                         ui.close_menu();
                     }
                     
@@ -91,7 +91,7 @@ impl View for Menu {
             });
 
             // Show External Window
-            self.options_pane.ui(ui, &mut app.font_size);
+            self.options_pane.ui(ui, &mut app.prefs.font_size);
         });
     }
 }

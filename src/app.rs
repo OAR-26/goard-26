@@ -68,8 +68,8 @@ impl eframe::App for App {
         self.application_context.check_data_update();
         
         // Handle file import request
-        if self.application_context.request_file_import {
-            self.application_context.request_file_import = false;
+        if self.application_context.import.request_file_import {
+            self.application_context.import.request_file_import = false;
             self.trigger_file_import();
         }
         
@@ -98,7 +98,7 @@ impl eframe::App for App {
             .exact_height(18.0)
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if *self.application_context.is_refreshing.lock().unwrap() {
+                    if *self.application_context.refresh.is_refreshing.lock().unwrap() {
                         ui.add(egui::Spinner::new().size(12.0));
                         ui.label(egui::RichText::new(t!("app.refreshing")).small());
                     }

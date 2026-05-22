@@ -74,7 +74,7 @@ impl Filtering {
                             self.temp_filters.selected_preset = None;
                         }
 
-                        for preset in &app.cluster_presets {
+                        for preset in &app.prefs.cluster_presets {
                             let is_selected = self
                                 .temp_filters
                                 .selected_preset

@@ -135,7 +135,7 @@ fn cpuset_display_aggregate(
     key: &str,
 ) -> Option<String> {
     let mut all_ints: Vec<i32> = Vec::new();
-    for s in app.strata_by_resource_id.values() {
+    for s in app.data.strata_by_resource_id.values() {
         if strata_field_value(s, leaf_field)
             .map(|v| v.trim().to_string())
             .as_deref()
@@ -233,7 +233,7 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
                 preset_fields.sort_unstable();
                 if !preset_fields.is_empty() {
                     let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("");
-                    let strata = app.strata_by_resource_id.values().find(|s| {
+                    let strata = app.data.strata_by_resource_id.values().find(|s| {
                         strata_field_value(s, leaf_field)
                             .map(|v| v.trim().to_string())
                             .as_deref() == Some(trimmed)
@@ -640,15 +640,15 @@ pub(super) fn max_leaf_label(
     };
     let ancestor_fields = &levels[..levels.len().saturating_sub(1)];
     let mut longest = String::new();
-    for strata in app.strata_by_resource_id.values() {
-        let raw = resolve_field(strata, leaf_field, &app.strata_by_host);
+    for strata in app.data.strata_by_resource_id.values() {
+        let raw = resolve_field(strata, leaf_field, &app.data.strata_by_host);
         if raw.starts_with("(no ") {
             continue;
         }
         let label = if let Some(tmpl) = template {
             let path_context: Vec<(String, String)> = ancestor_fields
                 .iter()
-                .map(|f| (f.clone(), resolve_field(strata, f, &app.strata_by_host)))
+                .map(|f| (f.clone(), resolve_field(strata, f, &app.data.strata_by_host)))
                 .collect();
             resolve_label_with_strata(tmpl, &path_context, leaf_field, &raw, strata)
         } else {
@@ -688,9 +688,9 @@ pub(super) fn build_resource_groups<'a>(
     // path -> (job id set, representative strata for label resolution)
     let mut leaf_data: BTreeMap<Vec<String>, (HashSet<u32>, &Strata)> = BTreeMap::new();
 
-    for (&rid, strata) in &app.strata_by_resource_id {
+    for (&rid, strata) in &app.data.strata_by_resource_id {
         let path: Vec<String> = levels.iter()
-            .map(|f| resolve_field(strata, f, &app.strata_by_host))
+            .map(|f| resolve_field(strata, f, &app.data.strata_by_host))
             .collect();
         if path.last().map_or(true, |v| v.starts_with("(no ")) {
             continue;
@@ -964,7 +964,7 @@ fn draw_leaf_label(
                 |ui: &mut egui::Ui| {
                     let trimmed = key.trim();
                     let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("");
-                    let strata_label = app.strata_by_resource_id.values().find(|s| {
+                    let strata_label = app.data.strata_by_resource_id.values().find(|s| {
                         strata_field_value(s, leaf_field)
                             .map(|v| v.trim().to_string())
                             .as_deref() == Some(trimmed)
@@ -1020,11 +1020,11 @@ fn draw_dead_intervals_for_row(
         return;
     }
     let sc = if info.ctx.style().visuals.dark_mode {
-        &app.gantt_config.state_colors
+        &app.prefs.gantt_config.state_colors
     } else {
-        &app.gantt_config.state_colors_light
+        &app.prefs.gantt_config.state_colors_light
     };
-    let min_dur = app.gantt_config.min_state_duration_s;
+    let min_dur = app.prefs.gantt_config.min_state_duration_s;
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
         pos2(info.canvas.max.x, info.canvas.max.y),
@@ -1218,12 +1218,12 @@ pub(super) fn draw_level_n<'a>(
                 // Layer order: states → drain → jobs (jobs on top)
 
                 // 1. Dead/absent/suspected/standby intervals.
-                let resource_ids = resource_ids_for_leaf(field, key, path_context, &app.strata_by_resource_id);
+                let resource_ids = resource_ids_for_leaf(field, key, path_context, &app.data.strata_by_resource_id);
                 let now_s = chrono::Utc::now().timestamp();
                 let mut seen: HashSet<DeadInterval> = HashSet::new();
                 let mut intervals: Vec<DeadInterval> = Vec::new();
                 for id in &resource_ids {
-                    if let Some(ivs) = app.dead_intervals.get(id) {
+                    if let Some(ivs) = app.data.dead_intervals.get(id) {
                         for iv in ivs {
                             if seen.insert(iv.clone()) {
                                 intervals.push(iv.clone());
@@ -1231,12 +1231,12 @@ pub(super) fn draw_level_n<'a>(
                         }
                     }
                 }
-                let has_standby = resource_ids.iter().any(|id| app.standby_upto.contains_key(id));
+                let has_standby = resource_ids.iter().any(|id| app.data.standby_upto.contains_key(id));
                 if has_standby {
                     for iv in intervals.iter_mut() {
                         if iv.state == ResourceState::Absent && iv.end_s == 0 {
                             iv.state = ResourceState::Standby;
-                            if app.gantt_config.standby_truncate_to_now {
+                            if app.prefs.gantt_config.standby_truncate_to_now {
                                 iv.end_s = now_s;
                             }
                         }
@@ -1248,7 +1248,7 @@ pub(super) fn draw_level_n<'a>(
                 let total = resource_ids.len();
                 if total > 0 {
                     let drained = resource_ids.iter().filter(|id| {
-                        app.strata_by_resource_id.get(id)
+                        app.data.strata_by_resource_id.get(id)
                             .and_then(|s| s.drain.as_deref())
                             == Some("YES")
                     }).count();
@@ -1267,7 +1267,7 @@ pub(super) fn draw_level_n<'a>(
                         details_window,
                         all_clusters,
                         Some(key.as_str()),
-                        app.gantt_config.besteffort_truncate_to_now,
+                        app.prefs.gantt_config.besteffort_truncate_to_now,
                     );
                 }
 
