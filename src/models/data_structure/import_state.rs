@@ -1,6 +1,14 @@
 use super::{cluster::Cluster, job::Job, marker::GanttMarker, strata::Strata};
 use crate::models::file_types::VisualizationTarget;
 
+/// Named collection of imported data sources rendered together.
+/// Member indices are 1-based into `ImportState::imported_data_sources`.
+#[derive(Clone, Debug)]
+pub struct DataSourceGroup {
+    pub name: String,
+    pub member_indices: Vec<usize>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ImportedDataSource {
     pub name: String,
@@ -31,6 +39,12 @@ pub struct ImportState {
     pub current_data_source_index: usize,
     pub request_file_import: bool,
     pub pending_import: Option<PendingImport>,
+    /// Groups of sources rendered together.
+    pub groups: Vec<DataSourceGroup>,
+    /// When Some, the group at that index is the active view.
+    pub current_group_index: Option<usize>,
+    /// When Some, the next completed import will be grouped with this 1-based ds index.
+    pub pending_group_target: Option<usize>,
 }
 
 impl Default for ImportState {
@@ -40,6 +54,9 @@ impl Default for ImportState {
             current_data_source_index: 0,
             request_file_import: false,
             pending_import: None,
+            groups: Vec::new(),
+            current_group_index: None,
+            pending_group_target: None,
         }
     }
 }

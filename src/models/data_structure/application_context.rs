@@ -531,9 +531,99 @@ impl ApplicationContext {
         });
 
         let new_index = self.import.imported_data_sources.len();
-        self.switch_to_data_source(new_index);
+
+        if let Some(target_ds) = self.import.pending_group_target.take() {
+            // Find existing group that already contains target_ds, or create a new one.
+            let existing = self.import.groups.iter().position(|g| g.member_indices.contains(&target_ds));
+            if let Some(gi) = existing {
+                self.import.groups[gi].member_indices.push(new_index);
+                let gi = gi; // borrow ends
+                self.switch_to_group(gi);
+            } else {
+                let name = self.next_group_name();
+                self.import.groups.push(crate::models::data_structure::import_state::DataSourceGroup {
+                    name,
+                    member_indices: vec![target_ds, new_index],
+                });
+                let gi = self.import.groups.len() - 1;
+                self.switch_to_group(gi);
+            }
+        } else {
+            self.switch_to_data_source(new_index);
+        }
 
         Ok(())
+    }
+
+    fn next_group_name(&self) -> String {
+        format!("group{}", self.import.groups.len() + 1)
+    }
+
+    pub fn switch_to_group(&mut self, group_idx: usize) {
+        use crate::models::file_types::VisualizationTarget;
+        let Some(group) = self.import.groups.get(group_idx) else { return; };
+        let members = group.member_indices.clone();
+
+        // Find the gantt-capable member to drive jobs/clusters/strata.
+        let gantt_member = members.iter().copied().find(|&i| {
+            self.import.imported_data_sources.get(i - 1)
+                .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::Gantt))
+                .unwrap_or(false)
+        }).or_else(|| members.first().copied());
+
+        if let Some(mi) = gantt_member {
+            self.switch_to_data_source(mi); // clears current_group_index
+        }
+        self.import.current_group_index = Some(group_idx);
+    }
+
+    pub fn close_group(&mut self, group_idx: usize) {
+        if group_idx >= self.import.groups.len() { return; }
+        if self.import.current_group_index == Some(group_idx) {
+            self.import.current_group_index = None;
+            self.switch_to_data_source(0);
+        } else if let Some(cur) = self.import.current_group_index {
+            if cur > group_idx {
+                self.import.current_group_index = Some(cur - 1);
+            }
+        }
+        self.import.groups.remove(group_idx);
+    }
+
+    /// Delete a ds that belongs to a group: removes it from the group AND from
+    /// imported_data_sources entirely. If ≤1 member remains the group dissolves.
+    pub fn remove_ds_from_group(&mut self, group_idx: usize, ds_idx: usize) {
+        if group_idx >= self.import.groups.len() { return; }
+
+        // Drop ds_idx from group membership.
+        self.import.groups[group_idx].member_indices.retain(|&i| i != ds_idx);
+        let remaining_count = self.import.groups[group_idx].member_indices.len();
+
+        // Shift every group's member indices that are above ds_idx (removal will renumber them).
+        for g in &mut self.import.groups {
+            for i in &mut g.member_indices {
+                if *i > ds_idx { *i -= 1; }
+            }
+        }
+
+        // Actually delete the data source (adjusts current_data_source_index, calls filter_jobs).
+        self.close_imported_data_source(ds_idx);
+
+        // Dissolve group if ≤1 member survives.
+        if remaining_count <= 1 {
+            let was_active = self.import.current_group_index == Some(group_idx);
+            // Indices already adjusted above.
+            let survivor = self.import.groups.get(group_idx)
+                .and_then(|g| g.member_indices.first().copied());
+            self.close_group(group_idx);
+            if was_active {
+                if let Some(m) = survivor {
+                    self.switch_to_data_source(m);
+                }
+            }
+        } else if self.import.current_group_index == Some(group_idx) {
+            self.switch_to_group(group_idx);
+        }
     }
 
     fn generate_unique_name(&self, base_name: &str) -> String {
@@ -558,6 +648,7 @@ impl ApplicationContext {
     }
 
     pub fn switch_to_data_source(&mut self, index: usize) {
+        self.import.current_group_index = None;
         if index == 0 {
             self.import.current_data_source_index = 0;
             self.data.all_jobs = self.data.swap_all_jobs.clone();
@@ -709,6 +800,15 @@ impl ApplicationContext {
 
     pub fn show_energy_diagram(&self) -> bool {
         use crate::models::file_types::VisualizationTarget;
+        if let Some(gi) = self.import.current_group_index {
+            return self.import.groups.get(gi).map(|g| {
+                g.member_indices.iter().any(|&i| {
+                    self.import.imported_data_sources.get(i - 1)
+                        .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram))
+                        .unwrap_or(false)
+                })
+            }).unwrap_or(false);
+        }
         if self.import.current_data_source_index == 0 {
             return true;
         }
@@ -720,6 +820,15 @@ impl ApplicationContext {
 
     pub fn show_gantt(&self) -> bool {
         use crate::models::file_types::VisualizationTarget;
+        if let Some(gi) = self.import.current_group_index {
+            return self.import.groups.get(gi).map(|g| {
+                g.member_indices.iter().any(|&i| {
+                    self.import.imported_data_sources.get(i - 1)
+                        .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::Gantt))
+                        .unwrap_or(false)
+                })
+            }).unwrap_or(false);
+        }
         if self.import.current_data_source_index == 0 {
             return true;
         }
@@ -744,6 +853,21 @@ impl ApplicationContext {
     }
 
     pub fn get_current_energy_series(&self) -> Option<&[(i64, f64)]> {
+        use crate::models::file_types::VisualizationTarget;
+        if let Some(gi) = self.import.current_group_index {
+            if let Some(g) = self.import.groups.get(gi) {
+                for &i in &g.member_indices {
+                    if let Some(ds) = self.import.imported_data_sources.get(i - 1) {
+                        if ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram)
+                            && ds.raw_energy_series.is_some()
+                        {
+                            return ds.raw_energy_series.as_deref();
+                        }
+                    }
+                }
+            }
+            return None;
+        }
         if self.import.current_data_source_index == 0 {
             return None;
         }

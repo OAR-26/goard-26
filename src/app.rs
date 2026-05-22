@@ -157,6 +157,7 @@ impl eframe::App for App {
 
             if do_cancel {
                 self.application_context.import.pending_import = None;
+                self.application_context.import.pending_group_target = None;
             } else if do_import {
                 let pending = self.application_context.import.pending_import.take().unwrap();
                 let result = self.application_context.import_data_from_json(

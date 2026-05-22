@@ -230,52 +230,166 @@ impl GanttChart {
     pub fn render_data_source_tabs(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         ui.add_space(4.0);
 
-        let data_source_names = app.get_all_data_source_names();
+        // Pre-collect everything needed so we don't borrow `app` inside the closure.
         let current_index = app.import.current_data_source_index;
+        let current_group = app.import.current_group_index;
+        let stroke_color = ui.visuals().widgets.active.bg_stroke.color;
+        let text_color = ui.visuals().text_color();
+        let active_fill = ui.visuals().widgets.active.bg_fill;
+        let inactive_fill = ui.visuals().widgets.inactive.bg_fill;
+
+        // Which ds indices belong to at least one group.
+        let grouped_ds: std::collections::HashSet<usize> = app.import.groups.iter()
+            .flat_map(|g| g.member_indices.iter().copied())
+            .collect();
+
+        // Individual (ungrouped) sources.
+        let individual: Vec<(usize, String)> = app.import.imported_data_sources.iter()
+            .enumerate()
+            .filter(|(i, _)| !grouped_ds.contains(&(i + 1)))
+            .map(|(i, ds)| (i + 1, ds.name.clone()))
+            .collect();
+
+        // Groups — collect (gi, group_name, [(ds_idx, member_name)]).
+        let groups_info: Vec<(usize, String, Vec<(usize, String)>)> = app.import.groups.iter()
+            .enumerate()
+            .map(|(gi, g)| {
+                let members = g.member_indices.iter()
+                    .filter_map(|&i| app.import.imported_data_sources.get(i - 1).map(|ds| (i, ds.name.clone())))
+                    .collect();
+                (gi, g.name.clone(), members)
+            })
+            .collect();
+
+        let mut switch_to_ds: Option<usize> = None;
+        let mut switch_to_group: Option<usize> = None;
+        let mut close_ds: Option<usize> = None;
+        let mut group_target: Option<usize> = None;
+        let mut remove_from_group: Option<(usize, usize)> = None; // (group_idx, ds_idx)
 
         ui.horizontal(|ui| {
-            for (index, name) in data_source_names.iter().enumerate() {
-                let is_active = index == current_index;
-                let can_close = index != 0;
+            // Live Data tab.
+            let is_active = current_index == 0 && current_group.is_none();
+            let fill = if is_active { active_fill } else { inactive_fill };
+            let text = if is_active {
+                egui::RichText::new("Live Data").strong()
+            } else {
+                egui::RichText::new("Live Data")
+            };
+            let mut btn = egui::Button::new(text).fill(fill).frame(true);
+            if is_active {
+                btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
+            }
+            if ui.add(btn).clicked() {
+                switch_to_ds = Some(0);
+            }
+            ui.add_space(4.0);
 
-                let tab_color = if is_active {
-                    ui.visuals().widgets.active.bg_fill
-                } else {
-                    ui.visuals().widgets.inactive.bg_fill
-                };
-
-                let tab_text = if is_active {
+            // Individual ungrouped tabs.
+            for (ds_idx, name) in &individual {
+                let is_active = *ds_idx == current_index && current_group.is_none();
+                let fill = if is_active { active_fill } else { inactive_fill };
+                let text = if is_active {
                     egui::RichText::new(name).strong()
                 } else {
-                    egui::RichText::new(name)
+                    egui::RichText::new(name.as_str())
                 };
-
-                let mut tab_button = egui::Button::new(tab_text).fill(tab_color).frame(true);
+                let mut btn = egui::Button::new(text).fill(fill).frame(true);
                 if is_active {
-                    tab_button = tab_button.stroke(egui::Stroke::new(
-                        1.0,
-                        ui.visuals().widgets.active.bg_stroke.color,
-                    ));
+                    btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
                 }
-
                 ui.horizontal(|ui| {
-                    if ui.add(tab_button).clicked() {
-                        app.switch_to_data_source(index);
+                    if ui.add(btn).clicked() {
+                        switch_to_ds = Some(*ds_idx);
                     }
-                    if can_close {
-                        ui.add_space(-4.0);
-                        let close_btn = egui::Button::new("×")
-                            .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::new(1.0, ui.visuals().text_color()));
-                        if ui.add(close_btn).clicked() {
-                            app.close_imported_data_source(index);
-                        }
+                    // "+" — group with another file.
+                    let plus = egui::Button::new("+")
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::new(1.0, text_color))
+                        .min_size(egui::vec2(16.0, 16.0));
+                    if ui.add(plus).on_hover_text("Group with another file").clicked() {
+                        group_target = Some(*ds_idx);
+                    }
+                    // "×" — remove.
+                    ui.add_space(-4.0);
+                    let close = egui::Button::new("×")
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::new(1.0, text_color));
+                    if ui.add(close).clicked() {
+                        close_ds = Some(*ds_idx);
                     }
                 });
+                ui.add_space(4.0);
+            }
+
+            // Group tabs.
+            for (gi, group_name, members) in &groups_info {
+                let is_active = current_group == Some(*gi);
+                let fill = if is_active { active_fill } else { inactive_fill };
+                let popup_id = ui.make_persistent_id(("group_dd", *gi));
+
+                let text = if is_active {
+                    egui::RichText::new(group_name).strong()
+                } else {
+                    egui::RichText::new(group_name.as_str())
+                };
+
+                // Name button — activates the group.
+                let mut name_btn = egui::Button::new(text).fill(fill).frame(true);
+                if is_active {
+                    name_btn = name_btn.stroke(egui::Stroke::new(1.0, stroke_color));
+                }
+                let name_resp = ui.add(name_btn);
+                if name_resp.clicked() {
+                    switch_to_group = Some(*gi);
+                }
+
+                // Arrow button — toggles the member popup.
+                let arrow_resp = ui.small_button("v");
+                if arrow_resp.clicked() {
+                    ui.memory_mut(|m| m.toggle_popup(popup_id));
+                }
+
+                // Popup anchored below the full tab (name + arrow combined rect).
+                let tab_anchor = name_resp | arrow_resp;
+                egui::popup::popup_below_widget(
+                    ui, popup_id, &tab_anchor,
+                    egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+                    |ui| {
+                        ui.set_min_width(180.0);
+                        for (ds_idx, mn) in members {
+                            ui.horizontal(|ui| {
+                                ui.label(mn);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("🗑")
+                                            .on_hover_text("Delete file")
+                                            .clicked()
+                                        {
+                                            remove_from_group = Some((*gi, *ds_idx));
+                                            ui.memory_mut(|m| m.close_popup());
+                                        }
+                                    },
+                                );
+                            });
+                        }
+                    },
+                );
 
                 ui.add_space(4.0);
             }
         });
+
+        // Apply deferred actions (avoids re-borrow of `app` inside closure).
+        if let Some(i) = switch_to_ds               { app.switch_to_data_source(i); }
+        if let Some(gi) = switch_to_group           { app.switch_to_group(gi); }
+        if let Some(i) = close_ds                   { app.close_imported_data_source(i); }
+        if let Some((gi, di)) = remove_from_group   { app.remove_ds_from_group(gi, di); }
+        if let Some(target) = group_target          {
+            app.import.pending_group_target = Some(target);
+            app.import.request_file_import = true;
+        }
 
         ui.add_space(8.0);
         ui.separator();
