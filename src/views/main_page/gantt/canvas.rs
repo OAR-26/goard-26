@@ -9,7 +9,6 @@ use crate::models::data_structure::cluster::Cluster;
 use crate::models::data_structure::job::Job;
 use crate::views::components::job_details::JobDetailsWindow;
 use egui::{pos2, Rect, Stroke};
-use std::collections::BTreeMap;
 
 pub(super) fn ui_canvas(
     options: &mut Options,
@@ -18,9 +17,6 @@ pub(super) fn ui_canvas(
     fixed_timeline_y: f32,
     (min_ns, max_ns): (i64, i64),
     details_window: &mut Vec<JobDetailsWindow>,
-    // kept for API compatibility but no longer used (collapsing removed)
-    _collapsed_jobs_level_1: &mut BTreeMap<String, bool>,
-    _collapsed_jobs_level_2: &mut BTreeMap<(String, String), bool>,
     all_cluster: &Vec<Cluster>,
     gutter_width: f32,
 ) -> f32 {
