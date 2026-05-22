@@ -1,8 +1,9 @@
-use crate::models::data_structure::{cluster::Cluster, job::Job, strata::Strata};
+use crate::models::data_structure::{cluster::Cluster, job::Job, marker::GanttMarker, strata::Strata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod energy_series;
+pub mod event;
 pub mod oar;
 
 // ── Visualization targets ─────────────────────────────────────────────────────
@@ -38,6 +39,8 @@ pub struct ParsedFileData {
     /// Pre-computed energy series (timestamp_s, watts). When set, the energy
     /// diagram uses this directly instead of estimating from Job data.
     pub raw_energy_series: Option<Vec<(i64, f64)>>,
+    /// Point-in-time annotations rendered generically on Gantt resource rows.
+    pub markers: Vec<GanttMarker>,
 }
 
 // ── Core trait ────────────────────────────────────────────────────────────────
@@ -53,6 +56,13 @@ pub trait FileTypeConfig: Send + Sync {
     fn detect(&self, content: &str) -> f32;
     fn validate(&self, content: &str) -> Vec<ValidationError>;
     fn parse(&self, content: &str) -> Result<ParsedFileData, String>;
+    /// Whether the Gantt hierarchy/view controls (level selector, filters) are meaningful
+    /// for this file type. Defaults to true; set false for flat annotation-only types.
+    fn supports_hierarchy_controls(&self) -> bool { true }
+    /// Aggregation levels to force when this file type is active.
+    /// None  = use the live-data configured view (OAR-style).
+    /// Some  = override options.levels with these field names.
+    fn hierarchy_levels(&self) -> Option<Vec<String>> { None }
 }
 
 // ── Registry ──────────────────────────────────────────────────────────────────
@@ -84,6 +94,10 @@ impl FileTypeRegistry {
     pub fn all_types(&self) -> impl Iterator<Item = &dyn FileTypeConfig> {
         self.types.iter().map(|t| t.as_ref())
     }
+
+    pub fn find_by_name(&self, name: &str) -> Option<&dyn FileTypeConfig> {
+        self.types.iter().find(|t| t.name() == name).map(|t| t.as_ref())
+    }
 }
 
 impl Default for FileTypeRegistry {
@@ -91,6 +105,7 @@ impl Default for FileTypeRegistry {
         let mut registry = Self::new();
         registry.register(Box::new(oar::OarFileType::new()));
         registry.register(Box::new(energy_series::EnergySeriesFileType::new()));
+        registry.register(Box::new(event::EventFileType::new()));
         registry
     }
 }

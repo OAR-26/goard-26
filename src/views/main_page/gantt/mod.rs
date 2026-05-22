@@ -295,7 +295,29 @@ impl GanttChart {
                 self.options.canvas_width_s = span_s.max(10.0);
                 self.options.sideways_pan_in_points = 0.0;
             }
+
+            // Apply or restore aggregation levels when the data source changes.
+            use crate::models::file_types::FileTypeRegistry;
+            if ds_idx == 0 {
+                // Back to live data → restore the active view's preset levels.
+                if let Some(view) = self.gantt_views.get(self.current_view_index) {
+                    self.options.levels = view.levels.clone();
+                    self.options.resource_filter = view.filter.clone();
+                    self.options.leaf_label_template = view.leaf_label_template.clone();
+                }
+            } else {
+                let type_name = app.import.imported_data_sources
+                    .get(ds_idx - 1).map(|ds| ds.file_type_name.clone()).unwrap_or_default();
+                let registry = FileTypeRegistry::default();
+                if let Some(levels) = registry.find_by_name(&type_name).and_then(|t| t.hierarchy_levels()) {
+                    self.options.levels = levels;
+                    self.options.resource_filter = None;
+                    self.options.leaf_label_template = None;
+                }
+            }
         }
+
+        let supports_hierarchy = app.current_file_type_supports_hierarchy();
 
         // "View" dropdown in the top toolbar — mirrors the tab row below
         let current_view_name = self.gantt_views
@@ -303,49 +325,51 @@ impl GanttChart {
             .map(|v| v.name.as_str())
             .unwrap_or("View");
         let is_admin = app.is_admin();
-        ui.menu_button(format!("View: {}", current_view_name), |ui| {
-            ui.set_min_width(220.0);
-            for i in 0..self.gantt_views.len() {
-                let is_active = self.current_view_index == i;
-                let name = self.gantt_views[i].name.clone();
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(is_active, &name).clicked() {
-                        self.current_view_index = i;
-                        self.options.levels = self.gantt_views[i].levels.clone();
-                        self.options.resource_filter = self.gantt_views[i].filter.clone();
-                        self.options.leaf_label_template = self.gantt_views[i].leaf_label_template.clone();
-                        self.options.sort_by_label = self.gantt_views[i].sort_by_label;
-                        self.options.leaf_info_preset =
-                            resolve_leaf_preset(&self.leaf_info_presets, &self.gantt_views[i].leaf_infos)
-                                .cloned()
-                                .or_else(|| backward_compat_preset(&self.gantt_views[i]));
-                        ui.close_menu();
-                    }
-                    if is_admin {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("🗑").on_hover_text("Delete view").clicked() {
-                                self.delete_view_confirm = Some(i);
-                                ui.close_menu();
-                            }
-                            if ui.small_button("✏").on_hover_text("Edit view").clicked() {
-                                let v = self.gantt_views[i].clone();
-                                self.edit_view.open_for(i, &v);
-                                ui.close_menu();
-                            }
-                        });
-                    }
-                });
-            }
-            ui.separator();
-            let create_btn = egui::Button::new("+ Create view");
-            let create_btn = if is_admin { create_btn } else { create_btn.fill(egui::Color32::TRANSPARENT) };
-            let resp = ui.add_enabled(is_admin, create_btn);
-            let resp = if !is_admin { resp.on_hover_text("Admin access required") } else { resp };
-            if resp.clicked() {
-                self.create_view.reset_and_open();
-                ui.close_menu();
-            }
-        });
+        if supports_hierarchy {
+            ui.menu_button(format!("View: {}", current_view_name), |ui| {
+                ui.set_min_width(220.0);
+                for i in 0..self.gantt_views.len() {
+                    let is_active = self.current_view_index == i;
+                    let name = self.gantt_views[i].name.clone();
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(is_active, &name).clicked() {
+                            self.current_view_index = i;
+                            self.options.levels = self.gantt_views[i].levels.clone();
+                            self.options.resource_filter = self.gantt_views[i].filter.clone();
+                            self.options.leaf_label_template = self.gantt_views[i].leaf_label_template.clone();
+                            self.options.sort_by_label = self.gantt_views[i].sort_by_label;
+                            self.options.leaf_info_preset =
+                                resolve_leaf_preset(&self.leaf_info_presets, &self.gantt_views[i].leaf_infos)
+                                    .cloned()
+                                    .or_else(|| backward_compat_preset(&self.gantt_views[i]));
+                            ui.close_menu();
+                        }
+                        if is_admin {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("🗑").on_hover_text("Delete view").clicked() {
+                                    self.delete_view_confirm = Some(i);
+                                    ui.close_menu();
+                                }
+                                if ui.small_button("✏").on_hover_text("Edit view").clicked() {
+                                    let v = self.gantt_views[i].clone();
+                                    self.edit_view.open_for(i, &v);
+                                    ui.close_menu();
+                                }
+                            });
+                        }
+                    });
+                }
+                ui.separator();
+                let create_btn = egui::Button::new("+ Create view");
+                let create_btn = if is_admin { create_btn } else { create_btn.fill(egui::Color32::TRANSPARENT) };
+                let resp = ui.add_enabled(is_admin, create_btn);
+                let resp = if !is_admin { resp.on_hover_text("Admin access required") } else { resp };
+                if resp.clicked() {
+                    self.create_view.reset_and_open();
+                    ui.close_menu();
+                }
+            });
+        }
 
         ui.menu_button(t!("app.gantt.settings.title"), |ui| {
             ui.set_max_height(500.0);
@@ -442,6 +466,26 @@ impl View for GanttChart {
                 self.options.canvas_width_s = span_s.max(10.0);
                 self.options.sideways_pan_in_points = 0.0;
             }
+        }
+
+        // Every frame: enforce the correct hierarchy levels regardless of what
+        // other code paths (tab clicks, view dropdown) may have set previously.
+        if ds_idx != 0 {
+            use crate::models::file_types::FileTypeRegistry;
+            let type_name = app.import.imported_data_sources
+                .get(ds_idx - 1).map(|ds| ds.file_type_name.as_str()).unwrap_or("");
+            if let Some(levels) = FileTypeRegistry::default()
+                .find_by_name(type_name)
+                .and_then(|t| t.hierarchy_levels())
+            {
+                self.options.levels = levels;
+                self.options.resource_filter = None;
+                self.options.leaf_label_template = None;
+            }
+        } else if let Some(view) = self.gantt_views.get(self.current_view_index) {
+            self.options.levels = view.levels.clone();
+            self.options.resource_filter = view.filter.clone();
+            self.options.leaf_label_template = view.leaf_label_template.clone();
         }
 
         // Keep toolbar in sync with current view.

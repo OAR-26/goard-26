@@ -418,6 +418,6 @@ impl FileTypeConfig for OarFileType {
         let clusters = self.build_clusters(&resources);
         let jobs = self.parse_jobs(&json, &clusters)?;
 
-        Ok(ParsedFileData { resources, clusters, jobs, strata_by_resource_id, raw_energy_series: None })
+        Ok(ParsedFileData { resources, clusters, jobs, strata_by_resource_id, raw_energy_series: None, markers: Vec::new() })
     }
 }

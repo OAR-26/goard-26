@@ -128,6 +128,7 @@ impl FileTypeConfig for EnergySeriesFileType {
             jobs: Vec::new(),
             strata_by_resource_id: HashMap::new(),
             raw_energy_series: Some(series),
+            markers: Vec::new(),
         })
     }
 }

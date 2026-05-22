@@ -524,6 +524,7 @@ impl ApplicationContext {
             file_type_name: file_type.name().to_string(),
             visualization_targets: file_type.visualization_targets().to_vec(),
             raw_energy_series: parsed.raw_energy_series,
+            markers: parsed.markers,
             jobs: parsed.jobs,
             clusters: parsed.clusters,
             strata: parsed.resources,
@@ -573,6 +574,7 @@ impl ApplicationContext {
             );
             let now = chrono::Utc::now().timestamp();
             self.data.standby_upto.clear();
+            self.data.markers.clear();
             for (rid, r) in &self.data.strata_by_resource_id_live {
                 if r.state.as_deref() == Some("Absent") {
                     if let Some(upto) = r.available_upto {
@@ -586,6 +588,7 @@ impl ApplicationContext {
             self.import.current_data_source_index = index;
             self.data.dead_intervals.clear();
             self.data.standby_upto.clear();
+            self.data.markers = self.import.imported_data_sources[index - 1].markers.clone();
             let strata = self.import.imported_data_sources[index - 1].strata.clone();
             self.data.strata_by_resource_id.clear();
             self.data.strata_by_host.clear();
@@ -635,6 +638,12 @@ impl ApplicationContext {
                     for &(ts, _) in series {
                         min_time = min_time.min(ts);
                         max_time = max_time.max(ts);
+                    }
+                }
+                if min_time == i64::MAX {
+                    for m in &self.data.markers {
+                        min_time = min_time.min(m.timestamp_s);
+                        max_time = max_time.max(m.timestamp_s);
                     }
                 }
             }
@@ -717,6 +726,20 @@ impl ApplicationContext {
         self.import.imported_data_sources
             .get(self.import.current_data_source_index - 1)
             .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::Gantt))
+            .unwrap_or(true)
+    }
+
+    /// Whether the current data source's file type supports Gantt hierarchy/view controls.
+    pub fn current_file_type_supports_hierarchy(&self) -> bool {
+        use crate::models::file_types::FileTypeRegistry;
+        let idx = self.import.current_data_source_index;
+        if idx == 0 { return true; }
+        let name = self.import.imported_data_sources.get(idx - 1)
+            .map(|ds| ds.file_type_name.clone())
+            .unwrap_or_default();
+        FileTypeRegistry::default()
+            .find_by_name(&name)
+            .map(|t| t.supports_hierarchy_controls())
             .unwrap_or(true)
     }
 

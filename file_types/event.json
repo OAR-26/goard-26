@@ -1,0 +1,33 @@
+{
+  "name": "Event",
+  "description": "Timed point events (start/stop circles) on named resources",
+  "file_extension": "json",
+  "detection": {
+    "strategy": "json_array_field_presence",
+    "required_fields": ["timestamp", "resource", "event"]
+  },
+  "visualizations": ["gantt"],
+  "supports_hierarchy_controls": false,
+  "primary_shape": "circle",
+  "hierarchy": {
+    "mode": "own",
+    "levels": ["resource"]
+  },
+  "schema": {
+    "timestamp_field": "timestamp",
+    "resource_field":  "resource",
+    "event_field":     "event",
+    "walltime_field":  "walltime"
+  },
+  "event_shapes": {
+    "start": { "shape": "circle", "color": [0, 200, 80, 220] },
+    "stop":  { "shape": "circle", "color": [220, 40, 40, 220] }
+  },
+  "validation": {
+    "rules": [
+      { "field": "timestamp", "expected_type": "integer", "required": true },
+      { "field": "resource",  "expected_type": "string",  "required": true },
+      { "field": "event",     "expected_type": "string",  "required": true }
+    ]
+  }
+}

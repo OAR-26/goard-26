@@ -3,6 +3,7 @@ use super::types::{gutter_stripes_total_w, Info, Options, STRIPE_W};
 use crate::models::data_structure::application_context::ApplicationContext;
 use crate::models::data_structure::cluster::Cluster;
 use crate::models::data_structure::job::Job;
+use crate::models::data_structure::marker::MarkerShape;
 use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::data_structure::strata::Strata;
 use crate::models::utils::date_converter::format_timestamp;
@@ -1271,6 +1272,36 @@ pub(super) fn draw_level_n<'a>(
                     );
                 }
 
+                // 4. Markers (generic — any file type can emit these).
+                if !app.data.markers.is_empty() {
+                    let chart_clip = Rect::from_min_max(
+                        pos2(info.canvas.min.x + gutter_width, job_row_y),
+                        pos2(info.canvas.max.x, job_row_y + row_height),
+                    );
+                    let chart_painter = info.painter.with_clip_rect(chart_clip);
+                    let r = (row_height * 0.35).max(4.0);
+                    for marker in app.data.markers.iter().filter(|m| m.resource_name == *key) {
+                        let x = info.point_from_s(options, marker.timestamp_s);
+                        let center = pos2(x, job_row_y + row_height * 0.5);
+                        let [rc, gc, bc, ac] = marker.color;
+                        let fill = Color32::from_rgba_unmultiplied(rc, gc, bc, ac);
+                        match marker.shape {
+                            MarkerShape::Circle => {
+                                chart_painter.circle_filled(center, r, fill);
+                                chart_painter.circle_stroke(center, r, Stroke::new(1.0, Color32::from_black_alpha(160)));
+                            }
+                            MarkerShape::Rectangle { end_timestamp_s } => {
+                                let x1 = info.point_from_s(options, end_timestamp_s);
+                                let bar = Rect::from_min_max(
+                                    pos2(x, job_row_y + row_height * 0.15),
+                                    pos2(x1.max(x + 2.0), job_row_y + row_height * 0.85),
+                                );
+                                chart_painter.rect_filled(bar, 2.0, fill);
+                                chart_painter.rect_stroke(bar, 2.0, Stroke::new(1.0, Color32::from_black_alpha(160)));
+                            }
+                        }
+                    }
+                }
 
                 // Collect rows for job-ID label painting.
                 let mut sorted_jobs: Vec<&&Job> = jobs.iter().collect();

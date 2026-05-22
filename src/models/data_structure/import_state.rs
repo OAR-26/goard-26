@@ -1,4 +1,4 @@
-use super::{cluster::Cluster, job::Job, strata::Strata};
+use super::{cluster::Cluster, job::Job, marker::GanttMarker, strata::Strata};
 use crate::models::file_types::VisualizationTarget;
 
 #[derive(Clone, Debug)]
@@ -12,6 +12,8 @@ pub struct ImportedDataSource {
     pub strata: Vec<Strata>,
     /// Pre-computed energy series (timestamp_s, watts) from file types that provide raw power data.
     pub raw_energy_series: Option<Vec<(i64, f64)>>,
+    /// Point-in-time annotations for Gantt rows (generic; produced by any file type).
+    pub markers: Vec<GanttMarker>,
 }
 
 /// File selected but not yet imported — awaiting user type selection.

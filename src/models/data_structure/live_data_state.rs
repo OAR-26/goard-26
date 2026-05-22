@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::{cluster::Cluster, job::Job, resource::DeadInterval, strata::Strata};
+use super::{cluster::Cluster, job::Job, marker::GanttMarker, resource::DeadInterval, strata::Strata};
 
 pub struct LiveDataState {
     pub all_jobs: Vec<Job>,
@@ -21,6 +21,9 @@ pub struct LiveDataState {
     /// Restored into strata_by_* when switching back to live.
     pub strata_by_resource_id_live: HashMap<u32, Strata>,
     pub strata_by_host_live: HashMap<String, Strata>,
+
+    /// Active markers from the current data source (empty for live data).
+    pub markers: Vec<GanttMarker>,
 }
 
 impl Default for LiveDataState {
@@ -37,6 +40,7 @@ impl Default for LiveDataState {
             standby_upto: HashMap::new(),
             strata_by_resource_id_live: HashMap::new(),
             strata_by_host_live: HashMap::new(),
+            markers: Vec::new(),
         }
     }
 }
