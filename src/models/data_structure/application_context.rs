@@ -490,13 +490,18 @@ impl ApplicationContext {
             .collect();
     }
 
-    pub fn import_data_from_json(&mut self, json_str: &str, file_path: Option<String>) -> Result<(), String> {
+    pub fn import_data_from_json(&mut self, json_str: &str, file_path: Option<String>, type_name: Option<&str>) -> Result<(), String> {
         use crate::models::file_types::FileTypeRegistry;
 
         let registry = FileTypeRegistry::default();
-        let file_type = registry
-            .detect(json_str)
-            .ok_or_else(|| "Unrecognized file format — no matching file type found.".to_string())?;
+        let file_type = if let Some(name) = type_name {
+            registry.all_types().find(|t| t.name() == name)
+                .ok_or_else(|| format!("Unknown file type: {}", name))?
+        } else {
+            registry
+                .detect(json_str)
+                .ok_or_else(|| "Unrecognized file format — no matching file type found.".to_string())?
+        };
 
         let errors = file_type.validate(json_str);
         if !errors.is_empty() {
