@@ -117,6 +117,6 @@ impl eframe::App for App {
                     .render(ui, &mut self.application_context);
             }
         });
-        ctx.request_repaint();
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
 }

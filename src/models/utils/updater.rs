@@ -14,7 +14,7 @@ use crate::models::utils::parser::get_current_jobs_for_period;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-use super::parser::{get_jobs_from_json, get_resources_from_json};
+use super::parser::{get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json};
 
 impl ApplicationContext {
     pub fn update_refresh_rate(&mut self, new_rate: u64) {
@@ -68,6 +68,7 @@ impl ApplicationContext {
 
         let jobs_sender = self.jobs_sender.clone();
         let resources_sender = self.resources_sender.clone();
+        let dead_intervals_sender = self.dead_intervals_sender.clone();
         // Get the data in a different thread
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -77,12 +78,15 @@ impl ApplicationContext {
                 if res {
                     let jobs = get_jobs_from_json("./data/data.json");
                     let resources = get_resources_from_json("./data/data.json");
+                    let dead_intervals = get_dead_intervals_from_json("./data/data.json");
                     jobs_sender.send(jobs).unwrap_or_else(|e| {
                         println!("Error while sending jobs: {}", e);
                     });
-
                     resources_sender.send(resources).unwrap_or_else(|e| {
                         println!("Error while sending resources: {}", e);
+                    });
+                    dead_intervals_sender.send(dead_intervals).unwrap_or_else(|e| {
+                        println!("Error while sending dead intervals: {}", e);
                     });
                 }
 
@@ -111,6 +115,7 @@ impl ApplicationContext {
         let refresh_rate = self.refresh_rate.clone();
         let jobs_sender = self.jobs_sender.clone();
         let resources_sender = self.resources_sender.clone();
+        let dead_intervals_sender = self.dead_intervals_sender.clone();
         let is_refreshing = self.is_refreshing.clone();
         let start_date = self.start_date.clone();
         let end_date = self.end_date.clone();
@@ -149,13 +154,16 @@ impl ApplicationContext {
                     if res {
                         let jobs = get_jobs_from_json("./data/data.json");
                         let resources = get_resources_from_json("./data/data.json");
+                        let dead_intervals = get_dead_intervals_from_json("./data/data.json");
 
                         jobs_sender.send(jobs).unwrap_or_else(|e| {
                             println!("Error while sending jobs: {}", e);
                         });
-
                         resources_sender.send(resources).unwrap_or_else(|e| {
                             println!("Error while sending resources: {}", e);
+                        });
+                        dead_intervals_sender.send(dead_intervals).unwrap_or_else(|e| {
+                            println!("Error while sending dead intervals: {}", e);
                         });
                     }
 

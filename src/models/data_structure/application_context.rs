@@ -66,6 +66,8 @@ pub struct ApplicationContext {
     pub jobs_sender: Sender<Vec<Job>>,
     pub resources_receiver: Receiver<Vec<Strata>>,
     pub resources_sender: Sender<Vec<Strata>>,
+    pub dead_intervals_receiver: Receiver<HashMap<u32, Vec<DeadInterval>>>,
+    pub dead_intervals_sender: Sender<HashMap<u32, Vec<DeadInterval>>>,
 
     // Resource metadata indexed by host name (tooltip lookups for compute nodes).
     pub strata_by_host: HashMap<String, Strata>,
@@ -625,13 +627,22 @@ impl ApplicationContext {
 
             self.all_jobs = self.swap_all_jobs.clone();
             self.all_clusters = self.swap_all_clusters.clone();
-            self.dead_intervals = get_dead_intervals_from_json("./data/data.json");
+        }
+    }
+
+    pub fn check_dead_intervals_update(&mut self) {
+        if self.current_data_source_index != 0 {
+            return;
+        }
+        if let Ok(intervals) = self.dead_intervals_receiver.try_recv() {
+            self.dead_intervals = intervals;
         }
     }
 
     pub fn check_data_update(&mut self) {
         self.check_job_update();
         self.check_ressource_update();
+        self.check_dead_intervals_update();
 
         // set filter date to the date of the app context
         self.filters
@@ -1040,6 +1051,7 @@ impl Default for ApplicationContext {
     fn default() -> Self {
         let (jobs_sender, jobs_receiver) = channel();
         let (resources_sender, resources_receiver) = channel();
+        let (dead_intervals_sender, dead_intervals_receiver) = channel();
 
         let now: DateTime<Local> = Local::now();
         let mut context = Self {
@@ -1053,6 +1065,8 @@ impl Default for ApplicationContext {
             jobs_sender: jobs_sender,
             resources_receiver: resources_receiver,
             resources_sender: resources_sender,
+            dead_intervals_receiver,
+            dead_intervals_sender,
             user_connected: None,
 
             strata_by_host: HashMap::new(),

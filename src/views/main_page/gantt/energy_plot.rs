@@ -78,7 +78,7 @@ pub fn ui_energy_global(
         .show_x(true)
         .show_y(true)
         .show_grid(true)
-        .allow_drag(Vec2b::new(true, false))   // Y never dragged; controlled explicitly
+        .allow_drag(Vec2b::new(true, true))
         .allow_zoom(Vec2b::new(true, false))   // Y zoom via alt+scroll only
         .label_formatter(|_, _| String::new())
         .coordinates_formatter(
