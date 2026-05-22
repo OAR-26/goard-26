@@ -186,6 +186,7 @@ pub struct GanttChart {
     energy_filter_owner: Option<String>,
     energy_fit_to_figure: bool,
     energy_y_bounds: Option<(f64, f64)>,
+    energy_panel_height: f32,
 
     last_canvas_usable_width_px: f32,
 
@@ -279,6 +280,7 @@ impl Default for GanttChart {
             energy_filter_owner: None,
             energy_fit_to_figure: true,
             energy_y_bounds: None,
+            energy_panel_height: 270.0,
             pending_navigation_refresh: false,
             gantt_views: config.views,
             current_view_index: 0,
@@ -1441,12 +1443,11 @@ impl View for GanttChart {
 
         let show_energy = app.show_energy_diagram();
         let show_gantt = app.show_gantt();
-        let plot_h = 270.0;
-        let sep_h = 12.0;
+        let sep_h = 8.0; // draggable handle height
 
         if show_gantt {
         let gantt_h = if show_energy {
-            (ui.available_height() - plot_h - sep_h).max(100.0)
+            (ui.available_height() - self.energy_panel_height - sep_h).max(100.0)
         } else {
             ui.available_height().max(100.0)
         };
@@ -1615,9 +1616,31 @@ impl View for GanttChart {
         }
 
         if show_energy {
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(2.0);
+            if show_gantt {
+                // Draggable resize handle between Gantt and energy diagram.
+                let (handle_rect, handle_resp) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), sep_h),
+                    egui::Sense::drag(),
+                );
+                if handle_resp.hovered() || handle_resp.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                }
+                if handle_resp.dragged() {
+                    // Drag up (negative delta) → energy gets taller; drag down → shorter.
+                    self.energy_panel_height = (self.energy_panel_height - handle_resp.drag_delta().y)
+                        .clamp(80.0, 700.0);
+                }
+                let stroke_color = if handle_resp.hovered() || handle_resp.dragged() {
+                    ui.visuals().widgets.hovered.bg_stroke.color
+                } else {
+                    ui.visuals().widgets.noninteractive.bg_stroke.color
+                };
+                ui.painter().hline(
+                    handle_rect.x_range(),
+                    handle_rect.center().y,
+                    egui::Stroke::new(if handle_resp.hovered() || handle_resp.dragged() { 2.0 } else { 1.0 }, stroke_color),
+                );
+            }
 
             if let Some((vs, ve)) = visible_range {
                 let now_s = Local::now().timestamp();
@@ -1683,7 +1706,8 @@ impl View for GanttChart {
                 ui.add_space(4.0);
 
                 let energy_plot_h = if show_gantt {
-                    210.0_f32
+                    // energy_panel_height covers plot + filters/toolbar row (~60 px overhead).
+                    (self.energy_panel_height - 60.0).max(60.0)
                 } else {
                     // Subtract label height (~24px) inside ui_energy_global to avoid overflow.
                     (ui.available_height() - 28.0).max(100.0)
