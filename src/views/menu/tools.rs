@@ -99,7 +99,6 @@ impl Tools {
                         start_time: 0,
                         stop_time: 0,
                         exit_code: None,
-                        gantt_color: Color32::TRANSPARENT,
                         main_resource_state: ResourceState::Unknown,
                         job_type: String::new(),
                         job_types: Vec::new(),

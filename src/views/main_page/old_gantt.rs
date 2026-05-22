@@ -11,6 +11,7 @@ use crate::models::utils::utils::get_all_resources;
 use crate::models::utils::utils::get_cluster_from_name;
 use crate::models::utils::utils::get_cluster_state_from_name;
 use crate::models::utils::utils::get_host_state_from_name;
+use crate::models::utils::utils::get_job_gantt_colors;
 use crate::models::utils::utils::get_tree_structure_for_job;
 use crate::views::view::View;
 use crate::{
@@ -124,7 +125,6 @@ impl View for GanttChart {
                                 start_time: 0,
                                 stop_time: 0,
                                 exit_code: None,
-                                gantt_color: Color32::TRANSPARENT,
                                 main_resource_state: ResourceState::Unknown,
                             });
                         } else {
@@ -1674,7 +1674,7 @@ fn paint_job(
 
     // Caculate the color of the job depending the selected job color int gantt component
     let (hovered_color, normal_color) = if options.job_color.is_random() {
-        job.get_gantt_color()
+        get_job_gantt_colors(job.id)
     } else {
         job.state.get_color()
     };

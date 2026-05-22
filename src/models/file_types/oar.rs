@@ -8,7 +8,7 @@ use crate::models::data_structure::{
     strata::Strata,
 };
 use crate::models::utils::utils::{
-    convert_id_to_color, get_all_clusters, get_all_hosts, get_all_resources,
+    get_all_clusters, get_all_hosts, get_all_resources,
     get_clusters_for_job, get_hosts_for_job,
 };
 use serde::Deserialize;
@@ -273,7 +273,6 @@ impl OarFileType {
             start_time,
             stop_time,
             exit_code: None,
-            gantt_color: convert_id_to_color(id),
             main_resource_state: ResourceState::Alive,
             job_type,
             job_types,
@@ -298,10 +297,8 @@ impl OarFileType {
             if job.id == 0 {
                 if let Ok(parsed) = id_str.parse::<u32>() {
                     job.id = parsed;
-                    job.gantt_color = convert_id_to_color(parsed);
                 } else {
                     job.id = next_synthetic_id;
-                    job.gantt_color = convert_id_to_color(next_synthetic_id);
                     next_synthetic_id = next_synthetic_id.saturating_sub(1);
                 }
             }
@@ -332,7 +329,6 @@ impl OarFileType {
             start_time: 0,
             stop_time: 0,
             exit_code: None,
-            gantt_color: egui::Color32::TRANSPARENT,
             main_resource_state: ResourceState::Unknown,
             job_type: String::new(),
             job_types: Vec::new(),

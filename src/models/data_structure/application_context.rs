@@ -246,108 +246,84 @@ impl ApplicationContext {
                 }
             }
 
+            // Build cluster hierarchy in O(n) using index maps for find-or-create.
+            // Background thread sends a complete resource snapshot each cycle, so we
+            // clear and rebuild from scratch to avoid stale/duplicate entries.
+            self.data.swap_all_clusters.clear();
+            let mut cluster_idx: HashMap<String, usize> = HashMap::new();
+            let mut host_idx: HashMap<(usize, String), usize> = HashMap::new();
+            let mut cpu_idx: HashMap<(usize, usize, String), usize> = HashMap::new();
+
+            let parse_state = |s: Option<&str>| match s.unwrap_or("") {
+                "Dead"   => ResourceState::Dead,
+                "Alive"  => ResourceState::Alive,
+                "Absent" => ResourceState::Absent,
+                _        => ResourceState::Unknown,
+            };
+
             for resource in new_resources.iter() {
-                let cluster_name = resource.cluster.as_ref().unwrap_or(&"".to_string()).clone();
-                if cluster_name == "" {
-                    continue;
-                }
-                if !self.data.swap_all_clusters.iter().any(|c| c.name == cluster_name) {
-                    let new_cluster = Cluster {
-                        name: cluster_name.clone(),
-                        hosts: vec![Host {
-                            name: resource.host.as_ref().unwrap_or(&"".to_string()).clone(),
-                            cpus: vec![Cpu {
-                                name: resource.cputype.as_ref().unwrap_or(&"".to_string()).clone(),
-                                resources: vec![Resource {
-                                    id: resource.resource_id.unwrap_or(0),
-                                    state: match resource.state.as_ref().unwrap_or(&"".to_string()).as_str() {
-                                        "Dead" => ResourceState::Dead,
-                                        "Alive" => ResourceState::Alive,
-                                        "Absent" => ResourceState::Absent,
-                                        _ => ResourceState::Unknown,
-                                    },
-                                    thread_count: resource.thread_count.unwrap_or(0) as i32,
-                                }],
-                                core_count: resource.core_count.unwrap_or(0) as i32,
-                                cpufreq: resource.cpufreq.as_ref().unwrap_or(&"".to_string()).parse::<f32>().unwrap_or(0.0),
-                                chassis: resource.chassis.as_ref().unwrap_or(&"".to_string()).clone(),
-                                resource_ids: vec![resource.resource_id.unwrap_or(0)],
-                            }],
-                            network_address: resource.network_address.as_ref().unwrap_or(&"".to_string()).clone(),
-                            resource_ids: vec![resource.resource_id.unwrap_or(0)],
-                            state: ResourceState::Unknown,
-                        }],
-                        resource_ids: vec![resource.resource_id.unwrap_or(0)],
-                        state: ResourceState::Unknown,
-                    };
-                    self.data.swap_all_clusters.push(new_cluster);
+                let cluster_name = resource.cluster.as_deref().unwrap_or("").trim().to_string();
+                if cluster_name.is_empty() { continue; }
+                let host_name = resource.host.as_deref().unwrap_or("").trim().to_string();
+                let cpu_name  = resource.cputype.as_deref().unwrap_or("").trim().to_string();
+                let rid       = resource.resource_id.unwrap_or(0);
+                let state     = parse_state(resource.state.as_deref());
+
+                // O(1) find-or-create cluster
+                let ci = if let Some(&i) = cluster_idx.get(&cluster_name) {
+                    i
                 } else {
-                    let cluster = self.data.swap_all_clusters.iter_mut().find(|c| c.name == cluster_name).unwrap();
-                    if !cluster.hosts.iter().any(|h| h.name == resource.host.as_ref().unwrap_or(&"".to_string()).clone()) {
-                        cluster.hosts.push(Host {
-                            name: resource.host.as_ref().unwrap_or(&"".to_string()).clone(),
-                            cpus: vec![Cpu {
-                                name: resource.cputype.as_ref().unwrap_or(&"".to_string()).clone(),
-                                resources: vec![Resource {
-                                    id: resource.resource_id.unwrap_or(0),
-                                    state: match resource.state.as_ref().unwrap_or(&"".to_string()).as_str() {
-                                        "Dead" => ResourceState::Dead,
-                                        "Alive" => ResourceState::Alive,
-                                        "Absent" => ResourceState::Absent,
-                                        _ => ResourceState::Unknown,
-                                    },
-                                    thread_count: resource.thread_count.unwrap_or(0) as i32,
-                                }],
-                                core_count: resource.core_count.unwrap_or(0) as i32,
-                                cpufreq: resource.cpufreq.as_ref().unwrap_or(&"".to_string()).parse::<f32>().unwrap_or(0.0),
-                                chassis: resource.chassis.as_ref().unwrap_or(&"".to_string()).clone(),
-                                resource_ids: vec![resource.resource_id.unwrap_or(0)],
-                            }],
-                            network_address: resource.network_address.as_ref().unwrap_or(&"".to_string()).clone(),
-                            resource_ids: vec![resource.resource_id.unwrap_or(0)],
-                            state: ResourceState::Unknown,
-                        });
-                        cluster.resource_ids.push(resource.resource_id.unwrap_or(0));
-                    } else {
-                        let host = cluster.hosts.iter_mut().find(|h| h.name == resource.host.as_ref().unwrap_or(&"".to_string()).clone()).unwrap();
-                        if !host.cpus.iter().any(|cpu| cpu.name == resource.cputype.as_ref().unwrap_or(&"".to_string()).clone()) {
-                            host.cpus.push(Cpu {
-                                name: resource.cputype.as_ref().unwrap_or(&"".to_string()).clone(),
-                                resources: vec![Resource {
-                                    id: resource.resource_id.unwrap_or(0),
-                                    state: match resource.state.as_ref().unwrap_or(&"".to_string()).as_str() {
-                                        "Dead" => ResourceState::Dead,
-                                        "Alive" => ResourceState::Alive,
-                                        "Absent" => ResourceState::Absent,
-                                        _ => ResourceState::Unknown,
-                                    },
-                                    thread_count: resource.thread_count.unwrap_or(0) as i32,
-                                }],
-                                core_count: resource.core_count.unwrap_or(0) as i32,
-                                cpufreq: resource.cpufreq.as_ref().unwrap_or(&"".to_string()).parse::<f32>().unwrap_or(0.0),
-                                chassis: resource.chassis.as_ref().unwrap_or(&"".to_string()).clone(),
-                                resource_ids: vec![resource.resource_id.unwrap_or(0)],
-                            });
-                            host.resource_ids.push(resource.resource_id.unwrap_or(0));
-                            cluster.resource_ids.push(resource.resource_id.unwrap_or(0));
-                        } else {
-                            let cpu = host.cpus.iter_mut().find(|cpu| cpu.name == resource.cputype.as_ref().unwrap_or(&"".to_string()).clone()).unwrap();
-                            cpu.resources.push(Resource {
-                                id: resource.resource_id.unwrap_or(0),
-                                state: match resource.state.as_ref().unwrap_or(&"".to_string()).as_str() {
-                                    "Dead" => ResourceState::Dead,
-                                    "Alive" => ResourceState::Alive,
-                                    "Absent" => ResourceState::Absent,
-                                    _ => ResourceState::Unknown,
-                                },
-                                thread_count: resource.thread_count.unwrap_or(0) as i32,
-                            });
-                            cpu.resource_ids.push(resource.resource_id.unwrap_or(0));
-                            host.resource_ids.push(resource.resource_id.unwrap_or(0));
-                            cluster.resource_ids.push(resource.resource_id.unwrap_or(0));
-                        }
-                    }
-                }
+                    let i = self.data.swap_all_clusters.len();
+                    self.data.swap_all_clusters.push(Cluster {
+                        name: cluster_name.clone(),
+                        hosts: Vec::new(),
+                        resource_ids: Vec::new(),
+                        state: ResourceState::Unknown,
+                    });
+                    cluster_idx.insert(cluster_name.clone(), i);
+                    i
+                };
+
+                // O(1) find-or-create host
+                let hi = if let Some(&i) = host_idx.get(&(ci, host_name.clone())) {
+                    i
+                } else {
+                    let i = self.data.swap_all_clusters[ci].hosts.len();
+                    self.data.swap_all_clusters[ci].hosts.push(Host {
+                        name: host_name.clone(),
+                        cpus: Vec::new(),
+                        network_address: resource.network_address.as_deref().unwrap_or("").to_string(),
+                        resource_ids: Vec::new(),
+                        state: ResourceState::Unknown,
+                    });
+                    host_idx.insert((ci, host_name.clone()), i);
+                    i
+                };
+
+                // O(1) find-or-create CPU
+                let ki = if let Some(&i) = cpu_idx.get(&(ci, hi, cpu_name.clone())) {
+                    i
+                } else {
+                    let i = self.data.swap_all_clusters[ci].hosts[hi].cpus.len();
+                    self.data.swap_all_clusters[ci].hosts[hi].cpus.push(Cpu {
+                        name: cpu_name.clone(),
+                        resources: Vec::new(),
+                        core_count: resource.core_count.unwrap_or(0) as i32,
+                        cpufreq: resource.cpufreq.as_deref().unwrap_or("").parse::<f32>().unwrap_or(0.0),
+                        chassis: resource.chassis.as_deref().unwrap_or("").to_string(),
+                        resource_ids: Vec::new(),
+                    });
+                    cpu_idx.insert((ci, hi, cpu_name), i);
+                    i
+                };
+
+                // Push resource and propagate resource_id up the hierarchy
+                self.data.swap_all_clusters[ci].hosts[hi].cpus[ki].resources.push(Resource {
+                    id: rid, state, thread_count: resource.thread_count.unwrap_or(0) as i32,
+                });
+                self.data.swap_all_clusters[ci].hosts[hi].cpus[ki].resource_ids.push(rid);
+                self.data.swap_all_clusters[ci].hosts[hi].resource_ids.push(rid);
+                self.data.swap_all_clusters[ci].resource_ids.push(rid);
             }
 
             for job in self.data.swap_all_jobs.iter_mut() {

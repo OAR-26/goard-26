@@ -6,7 +6,7 @@ use crate::models::data_structure::job::Job;
 use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::data_structure::strata::Strata;
 use crate::models::utils::date_converter::format_timestamp;
-use crate::models::utils::utils::{compare_string_with_number, get_tree_structure_for_job};
+use crate::models::utils::utils::{compare_string_with_number, get_job_gantt_colors, get_tree_structure_for_job};
 use crate::views::components::job_details::JobDetailsWindow;
 use egui::{
     pos2, Align2, Color32, CursorIcon, FontId, Id, LayerId, Order, Rect, Shape, Stroke,
@@ -1498,7 +1498,7 @@ fn paint_job(
     }
 
     let (hovered_color, normal_color) = if options.job_color.is_random() {
-        job.get_gantt_color()
+        get_job_gantt_colors(job.id)
     } else {
         job.state.get_color()
     };
