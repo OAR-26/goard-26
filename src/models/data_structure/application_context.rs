@@ -853,27 +853,37 @@ impl ApplicationContext {
     }
 
     pub fn get_current_energy_series(&self) -> Option<&[(i64, f64)]> {
+        self.get_current_energy_series_multi().into_iter().next()
+            .map(|(_, s)| s)
+    }
+
+    /// Returns all energy series for the current source/group.
+    /// Single source → 0 or 1 entry. Group with N energy files → N entries.
+    /// Each entry is (file_name, raw_series_slice).
+    pub fn get_current_energy_series_multi(&self) -> Vec<(&str, &[(i64, f64)])> {
         use crate::models::file_types::VisualizationTarget;
         if let Some(gi) = self.import.current_group_index {
             if let Some(g) = self.import.groups.get(gi) {
-                for &i in &g.member_indices {
-                    if let Some(ds) = self.import.imported_data_sources.get(i - 1) {
-                        if ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram)
-                            && ds.raw_energy_series.is_some()
-                        {
-                            return ds.raw_energy_series.as_deref();
+                let result: Vec<(&str, &[(i64, f64)])> = g.member_indices.iter()
+                    .filter_map(|&i| {
+                        let ds = self.import.imported_data_sources.get(i - 1)?;
+                        if !ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram) {
+                            return None;
                         }
-                    }
-                }
+                        let s = ds.raw_energy_series.as_deref()?;
+                        Some((ds.name.as_str(), s))
+                    })
+                    .collect();
+                return result;
             }
-            return None;
         }
         if self.import.current_data_source_index == 0 {
-            return None;
+            return Vec::new();
         }
         self.import.imported_data_sources
             .get(self.import.current_data_source_index - 1)
-            .and_then(|ds| ds.raw_energy_series.as_deref())
+            .and_then(|ds| ds.raw_energy_series.as_deref().map(|s| vec![(ds.name.as_str(), s)]))
+            .unwrap_or_default()
     }
 }
 

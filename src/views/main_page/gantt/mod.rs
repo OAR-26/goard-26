@@ -264,6 +264,7 @@ impl GanttChart {
         let mut switch_to_ds: Option<usize> = None;
         let mut switch_to_group: Option<usize> = None;
         let mut close_ds: Option<usize> = None;
+        let mut close_group_idx: Option<usize> = None;
         let mut group_target: Option<usize> = None;
         let mut remove_from_group: Option<(usize, usize)> = None; // (group_idx, ds_idx)
 
@@ -377,6 +378,26 @@ impl GanttChart {
                     },
                 );
 
+                // "+" — add another file to this group.
+                let first_member = members.first().map(|(i, _)| *i);
+                let plus = egui::Button::new("+")
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::new(1.0, text_color))
+                    .min_size(egui::vec2(16.0, 16.0));
+                if ui.add(plus).on_hover_text("Add file to group").clicked() {
+                    if let Some(m) = first_member {
+                        group_target = Some(m);
+                    }
+                }
+
+                // "×" — dissolve the group (members become individual tabs).
+                let close = egui::Button::new("×")
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::new(1.0, text_color));
+                if ui.add(close).on_hover_text("Close group").clicked() {
+                    close_group_idx = Some(*gi);
+                }
+
                 ui.add_space(4.0);
             }
         });
@@ -385,6 +406,7 @@ impl GanttChart {
         if let Some(i) = switch_to_ds               { app.switch_to_data_source(i); }
         if let Some(gi) = switch_to_group           { app.switch_to_group(gi); }
         if let Some(i) = close_ds                   { app.close_imported_data_source(i); }
+        if let Some(gi) = close_group_idx           { app.close_group(gi); }
         if let Some((gi, di)) = remove_from_group   { app.remove_ds_from_group(gi, di); }
         if let Some(target) = group_target          {
             app.import.pending_group_target = Some(target);
@@ -820,7 +842,8 @@ impl View for GanttChart {
         }
 
         let mut visible_range: Option<(i64, i64)> = None;
-        let mut energy_points: Vec<(i64, f64)> = Vec::new();
+        // Each entry: (label, computed points). Multiple entries when a group has >1 energy file.
+        let mut energy_series: Vec<(String, Vec<(i64, f64)>)> = Vec::new();
         let mut last_gantt_usable_width_px: f32 = 1.0;
         let mut last_gantt_gutter_width_px: f32 = GUTTER_WIDTH;
 
@@ -953,12 +976,16 @@ impl View for GanttChart {
                             .cloned()
                             .collect();
 
-                        energy_points = energy_estimate::compute_energy_points(
-                            app.get_current_energy_series(),
-                            &energy_jobs,
-                            visible_start_s,
-                            visible_end_s,
-                        );
+                        let raw_multi = app.get_current_energy_series_multi();
+                        energy_series = if raw_multi.is_empty() {
+                            vec![("Estimated".to_string(),
+                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s))]
+                        } else {
+                            raw_multi.iter().map(|(name, s)| {
+                                (name.to_string(),
+                                 energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s))
+                            }).collect()
+                        };
                     }
 
                     let start = Local.timestamp_opt(visible_start_s, 0).unwrap();
@@ -988,12 +1015,16 @@ impl View for GanttChart {
             let vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
             let ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
             visible_range = Some((vs, ve));
-            energy_points = energy_estimate::compute_energy_points(
-                app.get_current_energy_series(),
-                &[],
-                vs,
-                ve,
-            );
+            let raw_multi = app.get_current_energy_series_multi();
+            energy_series = if raw_multi.is_empty() {
+                vec![("Estimated".to_string(),
+                    energy_estimate::compute_energy_points(None, &[], vs, ve))]
+            } else {
+                raw_multi.iter().map(|(name, s)| {
+                    (name.to_string(),
+                     energy_estimate::compute_energy_points(Some(s), &[], vs, ve))
+                }).collect()
+            };
         }
 
         if show_energy {
@@ -1033,7 +1064,7 @@ impl View for GanttChart {
                 owners.sort();
                 owners.dedup();
                 if let Some((new_vs, new_ve)) = self.energy.show(
-                    ui, &energy_points, vs, ve, now_s, y_axis_gutter, show_gantt,
+                    ui, &energy_series, vs, ve, now_s, y_axis_gutter, show_gantt,
                     &cluster_names_energy, &owners,
                 ) {
                     let new_width_s = (new_ve - new_vs).max(1) as f32;

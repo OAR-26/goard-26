@@ -132,7 +132,7 @@ impl EnergyPanelState {
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
-        energy_points: &[(i64, f64)],
+        energy_series: &[(String, Vec<(i64, f64)>)],
         vs: i64,
         ve: i64,
         now_s: i64,
@@ -204,7 +204,7 @@ impl EnergyPanelState {
 
         let (maybe_new_range, new_y) = energy_plot::ui_energy_global(
             ui,
-            energy_points,
+            energy_series,
             vs,
             ve,
             now_s,

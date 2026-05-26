@@ -19,11 +19,27 @@ fn fmt_hhmmss(ts: i64) -> String {
         .unwrap_or_else(|| "?".to_string())
 }
 
-/// Affiche le graphe global de consommation d’énergie.
+fn series_color(idx: usize) -> egui::Color32 {
+    const PALETTE: &[(u8, u8, u8)] = &[
+        (31,  119, 180), // blue
+        (255, 127,  14), // orange
+        (44,  160,  44), // green
+        (214,  39,  40), // red
+        (148, 103, 189), // purple
+        (140,  86,  75), // brown
+        (227, 119, 194), // pink
+        (188, 189,  34), // olive
+    ];
+    let (r, g, b) = PALETTE[idx % PALETTE.len()];
+    egui::Color32::from_rgb(r, g, b)
+}
+
+/// Affiche le graphe global de consommation d'énergie.
 /// Le graphe est synchronisé avec la fenêtre temporelle visible du Gantt.
+/// `series`: list of (label, points) — one entry per energy file.
 pub fn ui_energy_global(
     ui: &mut egui::Ui,
-    points_w: &[(i64, f64)],
+    series: &[(String, Vec<(i64, f64)>)],
     visible_start_s: i64,
     visible_end_s: i64,
     now_s: i64,
@@ -35,36 +51,68 @@ pub fn ui_energy_global(
 ) -> (Option<(i64, i64)>, Option<(f64, f64)>) {
     ui.label("Consommation globale");
 
-    if points_w.is_empty() {
+    let non_empty: Vec<&(String, Vec<(i64, f64)>)> = series.iter()
+        .filter(|(_, pts)| !pts.is_empty())
+        .collect();
+
+    if non_empty.is_empty() {
         ui.weak("Pas de données énergie pour cette fenêtre.");
         return (None, None);
     }
 
-    // Bornes globales
+    // Legend — only shown when there are 2+ series.
+    if non_empty.len() > 1 {
+        ui.horizontal(|ui| {
+            for (idx, (label, _)) in non_empty.iter().enumerate() {
+                let color = series_color(idx);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(14.0, 14.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter().rect_filled(rect, 2.0, color);
+                ui.painter().rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)));
+                ui.label(label.as_str());
+                if idx + 1 < non_empty.len() {
+                    ui.separator();
+                }
+            }
+        });
+    }
+
+    // Global Y bounds across all series.
     let mut global_y_min = f64::INFINITY;
     let mut global_y_max = f64::NEG_INFINITY;
-
-    let pts: PlotPoints = points_w
-        .iter()
-        .map(|(t, w)| {
+    for (_, pts) in &non_empty {
+        for (_, w) in pts.iter() {
             global_y_min = global_y_min.min(*w);
             global_y_max = global_y_max.max(*w);
-            [*t as f64, *w]
-        })
-        .collect();
+        }
+    }
 
     if !global_y_min.is_finite() || !global_y_max.is_finite() {
         ui.weak("Données énergie invalides.");
         return (None, None);
     }
 
+    // Build egui_plot Lines — one per series.
+    let lines: Vec<Line> = non_empty.iter().enumerate().map(|(idx, (label, pts))| {
+        let color = if non_empty.len() == 1 {
+            egui::Color32::BLUE
+        } else {
+            series_color(idx)
+        };
+        let plot_pts: PlotPoints = pts.iter().map(|(t, w)| [*t as f64, *w]).collect();
+        let mut line = Line::new(plot_pts).color(color);
+        if non_empty.len() > 1 {
+            line = line.name(label.as_str());
+        }
+        line
+    }).collect();
 
-    let line = Line::new(pts).color(egui::Color32::BLUE);
     let now_line = VLine::new(now_s as f64)
         .color(egui::Color32::RED)
         .width(2.0);
 
-    // Texte affiché au survol, dessiné manuellement pour éviter le tooltip de egui_plot (x=..., y=...).
     let mut hover_label: Option<String> = None;
 
     // Capture BEFORE .show() — inside closure we may zero these to block egui_plot's X zoom.
@@ -79,7 +127,7 @@ pub fn ui_energy_global(
         .show_y(true)
         .show_grid(true)
         .allow_drag(Vec2b::new(true, true))
-        .allow_zoom(Vec2b::new(true, false))   // Y zoom via alt+scroll only
+        .allow_zoom(Vec2b::new(true, false))
         .label_formatter(|_, _| String::new())
         .coordinates_formatter(
             Corner::LeftTop,
@@ -90,9 +138,6 @@ pub fn ui_energy_global(
             fmt_hhmm(ts)
         })
         .show(ui, |plot_ui| {
-            // egui_plot processes scroll for X zoom AFTER this closure returns.
-            // Zero it here when alt is held + cursor is inside the plot so the plot
-            // doesn't also X-zoom while we manually Y-zoom with alt+scroll.
             if alt_held && plot_ui.pointer_coordinate().is_some() {
                 plot_ui.ctx().input_mut(|i| {
                     i.raw_scroll_delta = egui::Vec2::ZERO;
@@ -100,7 +145,6 @@ pub fn ui_energy_global(
                 });
             }
 
-            // X source: Gantt-synced → Gantt's viewport; standalone → last frame's plot bounds.
             let (vx0, vx1) = if gantt_synced {
                 (visible_start_s as f64, visible_end_s as f64)
             } else {
@@ -108,13 +152,15 @@ pub fn ui_energy_global(
                 (cur.min()[0], cur.max()[0])
             };
 
-            // Compute Y that fits the currently visible X window.
+            // Y that fits visible X window across all series.
             let mut y_min = f64::INFINITY;
             let mut y_max = f64::NEG_INFINITY;
-            for (t, w) in points_w {
-                if (*t as f64) >= vx0 && (*t as f64) <= vx1 {
-                    y_min = y_min.min(*w);
-                    y_max = y_max.max(*w);
+            for (_, pts) in &non_empty {
+                for (t, w) in pts.iter() {
+                    if (*t as f64) >= vx0 && (*t as f64) <= vx1 {
+                        y_min = y_min.min(*w);
+                        y_max = y_max.max(*w);
+                    }
                 }
             }
             let y_fit = if y_min.is_finite() && y_max.is_finite() {
@@ -124,45 +170,40 @@ pub fn ui_energy_global(
                 (global_y_min, global_y_max)
             };
 
-            // Choose Y: fit mode → computed fit; free mode → stored (alt+scroll) or fit as fallback.
             let (y0, y1) = if fit_to_figure { y_fit } else { y_bounds.unwrap_or(y_fit) };
-
-            // Unified bounds application — same logic for both modes; only X source differs.
             plot_ui.set_plot_bounds(PlotBounds::from_min_max([vx0, y0], [vx1, y1]));
 
-            plot_ui.line(line);
+            for line in lines {
+                plot_ui.line(line);
+            }
             plot_ui.vline(now_line);
-            // Tooltip personnalisé : heure exacte + puissance en watts
+
             if let Some(pos) = plot_ui.pointer_coordinate() {
                 let ts = pos.x.round() as i64;
                 hover_label = Some(format!("{}  |  {:.0} W", fmt_hhmmss(ts), pos.y));
             }
         });
 
-        if let (Some(label), Some(mouse_pos)) = (hover_label, plot_resp.response.hover_pos()) {
-            let painter = ui.painter();
+    if let (Some(label), Some(mouse_pos)) = (hover_label, plot_resp.response.hover_pos()) {
+        let painter = ui.painter();
+        let font_id = egui::TextStyle::Body.resolve(ui.style());
+        let text_color = egui::Color32::WHITE;
+        let bg_color = egui::Color32::from_black_alpha(220);
+        let padding = egui::vec2(6.0, 4.0);
+        let galley = painter.layout_no_wrap(label, font_id, text_color);
+        let rect = egui::Rect::from_min_size(
+            mouse_pos + egui::vec2(12.0, 12.0),
+            galley.size() + 2.0 * padding,
+        );
+        painter.rect_filled(rect, 4.0, bg_color);
+        painter.galley(rect.min + padding, galley, text_color);
+    }
 
-            let font_id = egui::TextStyle::Body.resolve(ui.style());
-            let text_color = egui::Color32::WHITE;
-            let bg_color = egui::Color32::from_black_alpha(220);
-            let padding = egui::vec2(6.0, 4.0);
+    let b = plot_resp.transform.bounds();
+    let new_start = b.min()[0].round() as i64;
+    let new_end = b.max()[0].round() as i64;
+    let mut new_y = (b.min()[1], b.max()[1]);
 
-            let galley = painter.layout_no_wrap(label, font_id, text_color);
-            let rect = egui::Rect::from_min_size(
-                mouse_pos + egui::vec2(12.0, 12.0),
-                galley.size() + 2.0 * padding,
-            );
-
-            painter.rect_filled(rect, 4.0, bg_color);
-            painter.galley(rect.min + padding, galley, text_color);
-        }
-
-        let b = plot_resp.transform.bounds();
-        let new_start = b.min()[0].round() as i64;
-        let new_end = b.max()[0].round() as i64;
-        let mut new_y = (b.min()[1], b.max()[1]);
-
-    // Alt+scroll: manual vertical zoom. Use pre-captured delta (may have been zeroed inside closure).
     if plot_resp.response.hovered() && alt_held && scroll_delta_y != 0.0 {
         if !fit_to_figure {
             let zoom = (1.0 + scroll_delta_y as f64 * 0.005).clamp(0.1, 10.0);
@@ -170,7 +211,6 @@ pub fn ui_energy_global(
             let half = (new_y.1 - new_y.0) / 2.0 / zoom;
             new_y = (center - half, center + half);
         }
-        // Ensure consumed (closure may not have run if pointer was outside).
         ui.input_mut(|i| {
             i.raw_scroll_delta = egui::Vec2::ZERO;
             i.smooth_scroll_delta = egui::Vec2::ZERO;
