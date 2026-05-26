@@ -1,6 +1,7 @@
 use eframe::egui;
-use egui::ScrollArea;
+use egui::{Color32, ScrollArea};
 use std::collections::HashSet as StdHashSet;
+
 
 use super::energy_plot;
 use super::types::{self, ResourceFilter};
@@ -641,18 +642,47 @@ fn show_view_form(
     });
     ui.add_space(6.0);
 
-    // Hierarchy levels
-    ui.label("Hierarchy levels (outermost → leaf):");
+    // Hierarchy levels — shown as horizontal colored boxes mirroring gutter stripes.
+    ui.label("Hierarchy levels :");
     let mut remove_idx: Option<usize> = None;
     let mut swap: Option<(usize, usize)> = None;
-    for (i, level) in form.levels.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.label(format!("{}. {}", i + 1, level));
-            if i > 0 && ui.small_button("⬆").clicked() { swap = Some((i - 1, i)); }
-            if i + 1 < form.levels.len() && ui.small_button("⬇").clicked() { swap = Some((i, i + 1)); }
-            if ui.small_button("🗑").clicked() { remove_idx = Some(i); }
-        });
-    }
+    let n_levels = form.levels.len();
+    let fill = Color32::from_rgb(252, 232, 80);
+    let border = egui::Stroke::new(1.0, Color32::from_black_alpha(120));
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (i, level) in form.levels.iter().enumerate() {
+            let rounding = egui::Rounding {
+                nw: if i == 0 { 4.0 } else { 0.0 },
+                sw: if i == 0 { 4.0 } else { 0.0 },
+                ne: if i + 1 == n_levels { 4.0 } else { 0.0 },
+                se: if i + 1 == n_levels { 4.0 } else { 0.0 },
+            };
+            egui::Frame::none()
+                .fill(fill)
+                .inner_margin(egui::Margin::symmetric(6.0, 4.0))
+                .rounding(rounding)
+                .stroke(border)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        if ui.add_enabled(
+                            i > 0,
+                            egui::Button::new("◀").frame(false).fill(Color32::TRANSPARENT),
+                        ).clicked() { swap = Some((i - 1, i)); }
+
+                        ui.label(level);
+
+                        if ui.add_enabled(
+                            i + 1 < n_levels,
+                            egui::Button::new("▶").frame(false).fill(Color32::TRANSPARENT),
+                        ).clicked() { swap = Some((i, i + 1)); }
+
+                        if ui.small_button("🗑").clicked() { remove_idx = Some(i); }
+                    });
+                });
+        }
+    });
     if let Some(i) = remove_idx { form.levels.remove(i); }
     if let Some((a, b)) = swap { form.levels.swap(a, b); }
     ui.add_space(4.0);
