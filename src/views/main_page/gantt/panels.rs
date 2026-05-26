@@ -393,11 +393,12 @@ pub struct CreatePresetPanel {
     pub name: String,
     pub fields: Vec<String>,
     pub error: Option<String>,
+    field_search: String,
 }
 
 impl Default for CreatePresetPanel {
     fn default() -> Self {
-        Self { open: false, name: String::new(), fields: Vec::new(), error: None }
+        Self { open: false, name: String::new(), fields: Vec::new(), error: None, field_search: String::new() }
     }
 }
 
@@ -406,6 +407,7 @@ impl CreatePresetPanel {
         self.name.clear();
         self.fields.clear();
         self.error = None;
+        self.field_search.clear();
         self.open = true;
     }
 
@@ -426,7 +428,14 @@ impl CreatePresetPanel {
                     ui.text_edit_singleline(&mut self.name);
                     ui.add_space(6.0);
                     ui.label("Fields to show in tooltip:");
+                    ui.text_edit_singleline(&mut self.field_search)
+                        .on_hover_text("Filter fields");
+                    ui.add_space(4.0);
+                    let q = self.field_search.to_lowercase();
                     for (field, desc) in &known {
+                        if !q.is_empty() && !field.to_lowercase().contains(&q) && !desc.to_lowercase().contains(&q) {
+                            continue;
+                        }
                         let mut checked = self.fields.iter().any(|f| f == field);
                         if ui.checkbox(&mut checked, *field).on_hover_text(*desc).changed() {
                             if checked { self.fields.push(field.to_string()); }
@@ -464,11 +473,12 @@ pub struct EditPresetPanel {
     pub name: String,
     pub fields: Vec<String>,
     pub error: Option<String>,
+    field_search: String,
 }
 
 impl Default for EditPresetPanel {
     fn default() -> Self {
-        Self { open: false, idx: None, name: String::new(), fields: Vec::new(), error: None }
+        Self { open: false, idx: None, name: String::new(), fields: Vec::new(), error: None, field_search: String::new() }
     }
 }
 
@@ -479,6 +489,7 @@ impl EditPresetPanel {
         self.name = preset.name.clone();
         self.fields = preset.fields.clone();
         self.error = None;
+        self.field_search.clear();
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) -> Option<PresetPanelAction> {
@@ -497,7 +508,14 @@ impl EditPresetPanel {
                     ui.text_edit_singleline(&mut self.name);
                     ui.add_space(6.0);
                     ui.label("Fields to show in tooltip:");
+                    ui.text_edit_singleline(&mut self.field_search)
+                        .on_hover_text("Filter fields");
+                    ui.add_space(4.0);
+                    let q = self.field_search.to_lowercase();
                     for (field, desc) in &known {
+                        if !q.is_empty() && !field.to_lowercase().contains(&q) && !desc.to_lowercase().contains(&q) {
+                            continue;
+                        }
                         let mut checked = self.fields.iter().any(|f| f == field);
                         if ui.checkbox(&mut checked, *field).on_hover_text(*desc).changed() {
                             if checked { self.fields.push(field.to_string()); }
@@ -558,6 +576,7 @@ struct ViewFormState {
     filter_value: String,
     filter_exclude: bool,
     error: Option<String>,
+    field_search: String,
 }
 
 impl Default for ViewFormState {
@@ -574,6 +593,7 @@ impl Default for ViewFormState {
             filter_value: String::new(),
             filter_exclude: false,
             error: None,
+            field_search: String::new(),
         }
     }
 }
@@ -637,9 +657,16 @@ fn show_view_form(
     if let Some((a, b)) = swap { form.levels.swap(a, b); }
     ui.add_space(4.0);
     ui.label("Add field:");
+    ui.text_edit_singleline(&mut form.field_search)
+        .on_hover_text("Filter fields");
+    ui.add_space(2.0);
+    let fq = form.field_search.to_lowercase();
     ui.horizontal_wrapped(|ui| {
         for (field, desc) in known {
             if form.levels.iter().any(|l| l == field) { continue; }
+            if !fq.is_empty() && !field.to_lowercase().contains(&fq) && !desc.to_lowercase().contains(&fq) {
+                continue;
+            }
             if ui.button(*field).on_hover_text(*desc).clicked() {
                 form.levels.push(field.to_string());
             }
@@ -824,6 +851,7 @@ impl EditViewPanel {
             filter_value: view.filter.as_ref().map(|f| f.value.clone()).unwrap_or_default(),
             filter_exclude: view.filter.as_ref().map(|f| f.exclude).unwrap_or(false),
             error: None,
+            field_search: String::new(),
         };
     }
 
