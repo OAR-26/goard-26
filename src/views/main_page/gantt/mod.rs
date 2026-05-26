@@ -390,11 +390,11 @@ impl GanttChart {
                     }
                 }
 
-                // "×" — dissolve the group (members become individual tabs).
-                let close = egui::Button::new("×")
+                // "🗑" — delete the group and all its member files.
+                let close = egui::Button::new("🗑")
                     .fill(egui::Color32::TRANSPARENT)
                     .stroke(egui::Stroke::new(1.0, text_color));
-                if ui.add(close).on_hover_text("Close group").clicked() {
+                if ui.add(close).on_hover_text("Delete group and all files").clicked() {
                     close_group_idx = Some(*gi);
                 }
 
@@ -406,7 +406,7 @@ impl GanttChart {
         if let Some(i) = switch_to_ds               { app.switch_to_data_source(i); }
         if let Some(gi) = switch_to_group           { app.switch_to_group(gi); }
         if let Some(i) = close_ds                   { app.close_imported_data_source(i); }
-        if let Some(gi) = close_group_idx           { app.close_group(gi); }
+        if let Some(gi) = close_group_idx           { app.delete_group(gi); }
         if let Some((gi, di)) = remove_from_group   { app.remove_ds_from_group(gi, di); }
         if let Some(target) = group_target          {
             app.import.pending_group_target = Some(target);

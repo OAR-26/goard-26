@@ -590,6 +590,51 @@ impl ApplicationContext {
         self.import.groups.remove(group_idx);
     }
 
+    /// Delete a group AND every file it contains.
+    pub fn delete_group(&mut self, group_idx: usize) {
+        if group_idx >= self.import.groups.len() { return; }
+
+        // Switch away first if this group was active.
+        if self.import.current_group_index == Some(group_idx) {
+            self.import.current_group_index = None;
+            self.import.current_data_source_index = 0;
+        }
+
+        // Collect member indices; sort descending so removals don't shift later indices.
+        let mut members = self.import.groups[group_idx].member_indices.clone();
+        members.sort_unstable_by(|a, b| b.cmp(a));
+
+        // Remove the group record first.
+        self.import.groups.remove(group_idx);
+        if let Some(cur) = self.import.current_group_index {
+            if cur > group_idx {
+                self.import.current_group_index = Some(cur - 1);
+            }
+        }
+
+        // Delete each member file, adjusting all remaining group indices each time.
+        for ds_idx in members {
+            if ds_idx == 0 || ds_idx > self.import.imported_data_sources.len() { continue; }
+
+            // Shift every surviving group's member indices above this removal.
+            for g in &mut self.import.groups {
+                for i in &mut g.member_indices {
+                    if *i > ds_idx { *i -= 1; }
+                }
+            }
+
+            self.import.imported_data_sources.remove(ds_idx - 1);
+
+            match self.import.current_data_source_index.cmp(&ds_idx) {
+                std::cmp::Ordering::Greater => self.import.current_data_source_index -= 1,
+                std::cmp::Ordering::Equal   => self.import.current_data_source_index = 0,
+                _ => {}
+            }
+        }
+
+        self.filter_jobs();
+    }
+
     /// Delete a ds that belongs to a group: removes it from the group AND from
     /// imported_data_sources entirely. If ≤1 member remains the group dissolves.
     pub fn remove_ds_from_group(&mut self, group_idx: usize, ds_idx: usize) {
