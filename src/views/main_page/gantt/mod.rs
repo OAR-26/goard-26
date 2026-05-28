@@ -977,9 +977,26 @@ impl View for GanttChart {
                             .collect();
 
                         let raw_multi = app.get_current_energy_series_multi();
+                        let in_group = app.import.current_group_index.is_some();
                         energy_series = if raw_multi.is_empty() {
+                            // No raw energy files — estimate from Gantt jobs.
                             vec![("Estimated".to_string(),
                                 energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s))]
+                        } else if in_group {
+                            // Group with Gantt member + raw energy files: estimated series first, then raw.
+                            let gantt_name = app.import.imported_data_sources
+                                .get(app.import.current_data_source_index.saturating_sub(1))
+                                .map(|ds| ds.name.clone())
+                                .unwrap_or_else(|| "Gantt".to_string());
+                            let mut all = vec![(
+                                format!("{} (est.)", gantt_name),
+                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s),
+                            )];
+                            for (name, s) in &raw_multi {
+                                all.push((name.to_string(),
+                                    energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s)));
+                            }
+                            all
                         } else {
                             raw_multi.iter().map(|(name, s)| {
                                 (name.to_string(),
