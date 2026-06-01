@@ -68,11 +68,11 @@ impl Tools {
             if ui.add(dashboard_btn).clicked() {
                 app.view_type = ViewType::Dashboard;
                 ui.close_menu();
-                if app.all_jobs.iter().any(|job| job.id == 0) {
-                    app.see_all_jobs = true;
+                if app.data.all_jobs.iter().any(|job| job.id == 0) {
+                    app.prefs.see_all_jobs = true;
                 }
 
-                app.all_jobs.retain(|job| job.id != 0);
+                app.data.all_jobs.retain(|job| job.id != 0);
             }
 
             // Gantt Button
@@ -81,26 +81,29 @@ impl Tools {
                 app.view_type = ViewType::Gantt;
                 ui.close_menu();
 
-                if app.see_all_jobs {
-                    app.see_all_jobs = false;
-                    app.all_jobs.push(Job {
+                if app.prefs.see_all_jobs {
+                    app.prefs.see_all_jobs = false;
+                    app.data.all_jobs.push(Job {
                         id: 0,
                         owner: "all_resources".to_string(),
                         state: JobState::Unknown,
                         scheduled_start: 0,
                         walltime: 0,
-                        hosts: get_all_hosts(&app.all_clusters),
-                        clusters: get_all_clusters(&app.all_clusters),
+                        hosts: get_all_hosts(&app.data.all_clusters),
+                        clusters: get_all_clusters(&app.data.all_clusters),
                         command: String::new(),
                         message: None,
                         queue: String::new(),
-                        assigned_resources: get_all_resources(&app.all_clusters),
+                        assigned_resources: get_all_resources(&app.data.all_clusters),
                         submission_time: 0,
                         start_time: 0,
                         stop_time: 0,
                         exit_code: None,
-                        gantt_color: Color32::TRANSPARENT,
                         main_resource_state: ResourceState::Unknown,
+                        job_type: String::new(),
+                        job_types: Vec::new(),
+                        name: None,
+                        project: String::new(),
                     });
                 }
             }
@@ -136,7 +139,7 @@ impl Tools {
                     .on_hover_text(theme_hint)
                     .clicked()
                 {
-                    app.theme_toggle_requested = true;
+                    app.prefs.theme_toggle_requested = true;
                 }
 
                 // Menu Refresh Rate (adjacent to theme on the right)
@@ -149,10 +152,11 @@ impl Tools {
                             (30, t!("app.menu.refresh_rate.refresh_30")),
                             (60, t!("app.menu.refresh_rate.refresh_60")),
                             (300, t!("app.menu.refresh_rate.refresh_300")),
+                            (u64::MAX, t!("app.menu.refresh_rate.refresh_never")),
                         ];
 
                         for (rate, label) in refresh_rates {
-                            let selected = *app.refresh_rate.lock().unwrap() == rate;
+                            let selected = *app.refresh.refresh_rate.lock().unwrap() == rate;
                             let display_label = if selected {
                                 format!("{} ✔", label)
                             } else {
@@ -167,7 +171,7 @@ impl Tools {
                 );
 
                 let refresh_btn = egui::Button::new("⟳");
-                let refresh_btn_response = if *app.is_refreshing.lock().unwrap() {
+                let refresh_btn_response = if *app.refresh.is_refreshing.lock().unwrap() {
                     ui.add_enabled(false, refresh_btn)
                 } else {
                     ui.add(refresh_btn)
@@ -182,33 +186,34 @@ impl Tools {
             // Gantt-only: compact data summary line just below the tool bar.
             if has_gantt {
                 use std::collections::HashSet;
+                use crate::views::main_page::gantt::jobs::strata_field_value;
 
-                let total_clusters = app.get_current_clusters().len();
-                let total_hosts: usize = app.get_current_clusters().iter().map(|c| c.hosts.len()).sum();
+                let refreshing = *app.refresh.is_refreshing.lock().unwrap_or_else(|p| p.into_inner());
+                let status = if refreshing { "refreshing" } else if app.is_loading { "loading" } else { "ready" };
 
-                let mut displayed_clusters: HashSet<String> = HashSet::new();
-                let mut displayed_hosts: HashSet<String> = HashSet::new();
-                for job in app.filtered_jobs.iter() {
-                    for c in job.clusters.iter() {
-                        if !c.trim().is_empty() {
-                            displayed_clusters.insert(c.clone());
-                        }
-                    }
-                    for h in job.hosts.iter() {
-                        if !h.trim().is_empty() {
-                            displayed_hosts.insert(h.clone());
-                        }
-                    }
-                }
-
-                let refreshing = *app.is_refreshing.lock().unwrap_or_else(|p| p.into_inner());
-                let status = if refreshing {
-                    "refreshing"
-                } else if app.is_loading {
-                    "loading"
+                let view_name = app.prefs.current_gantt_view_name.clone();
+                let levels = app.prefs.current_gantt_view_levels.clone();
+                let summary_fields: Vec<String> = if app.prefs.current_gantt_view_summary_fields.is_empty() {
+                    levels.last().cloned().into_iter().collect()
                 } else {
-                    "ready"
+                    app.prefs.current_gantt_view_summary_fields.clone()
                 };
+
+                let fields_part: String = summary_fields.iter().map(|field| {
+                    let total: HashSet<String> = app.data.strata_by_resource_id.values()
+                        .filter_map(|s| strata_field_value(s, field))
+                        .filter(|v: &String| !v.starts_with("(no "))
+                        .collect();
+                    let displayed: HashSet<String> = app.data.filtered_jobs.iter()
+                        .flat_map(|j| j.assigned_resources.iter())
+                        .filter_map(|rid| app.data.strata_by_resource_id.get(rid))
+                        .filter_map(|s| strata_field_value(s, field))
+                        .filter(|v: &String| !v.starts_with("(no "))
+                        .collect();
+                    format!("{} {}/{}", field, displayed.len(), total.len())
+                }).collect::<Vec<_>>().join(" | ");
+
+                let view_part = if view_name.is_empty() { String::new() } else { format!("[{}] ", view_name) };
 
                 ui.horizontal(|ui| {
                     ui.with_layout(
@@ -216,12 +221,10 @@ impl Tools {
                         |ui| {
                             let label = egui::Label::new(
                                 egui::RichText::new(format!(
-                                    "Data: jobs={} | clusters affichés {}/{} | hosts affichés {}/{} | {}",
-                                    app.filtered_jobs.len(),
-                                    displayed_clusters.len(),
-                                    total_clusters,
-                                    displayed_hosts.len(),
-                                    total_hosts,
+                                    "{}jobs={} | {} | {}",
+                                    view_part,
+                                    app.data.filtered_jobs.len(),
+                                    fields_part,
                                     status
                                 ))
                                 .text_style(egui::TextStyle::Small),

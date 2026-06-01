@@ -43,20 +43,20 @@ impl View for Dashboard {
             self.metric_grid.show(ui, |grid| {
                 if self.show_chart {
                     // Add the job state chart
-                    let chart = create_jobstate_chart(app.filtered_jobs.clone());
+                    let chart = create_jobstate_chart(app.data.filtered_jobs.clone());
                     grid.add_chart(chart);
                 } else {
                     // Add total jobs metric
                     grid.add_metric(MetricBox::new(
                         t!("app.dashboard.total_jobs").to_string(),
-                        app.filtered_jobs.len().to_string(),
+                        app.data.filtered_jobs.len().to_string(),
                         egui::Color32::from_rgb(128, 128, 128),
                     ));
 
                     // Add the job state metrics
                     for state in JobState::iter() {
                         let count = app
-                            .filtered_jobs
+                            .data.filtered_jobs
                             .iter()
                             .filter(|j| j.state == state)
                             .count();

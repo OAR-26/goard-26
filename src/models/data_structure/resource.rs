@@ -6,6 +6,7 @@ pub enum ResourceState {
     Alive,
     Absent,
     Suspected,
+    Standby,
     Unknown,
 }
 
@@ -16,6 +17,7 @@ impl Clone for ResourceState {
             ResourceState::Alive => ResourceState::Alive,
             ResourceState::Absent => ResourceState::Absent,
             ResourceState::Suspected => ResourceState::Suspected,
+            ResourceState::Standby => ResourceState::Standby,
             ResourceState::Unknown => ResourceState::Unknown,
         }
     }
@@ -35,6 +37,7 @@ impl Display for ResourceState {
             ResourceState::Alive => write!(f, "Alive"),
             ResourceState::Absent => write!(f, "Absent"),
             ResourceState::Suspected => write!(f, "Suspected"),
+            ResourceState::Standby => write!(f, "Standby"),
             ResourceState::Unknown => write!(f, "Unknown"),
         }
     }

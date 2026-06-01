@@ -3,10 +3,11 @@ use super::types::{gutter_stripes_total_w, Info, Options, STRIPE_W};
 use crate::models::data_structure::application_context::ApplicationContext;
 use crate::models::data_structure::cluster::Cluster;
 use crate::models::data_structure::job::Job;
+use crate::models::data_structure::marker::MarkerShape;
 use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::data_structure::strata::Strata;
 use crate::models::utils::date_converter::format_timestamp;
-use crate::models::utils::utils::{compare_string_with_number, get_tree_structure_for_job};
+use crate::models::utils::utils::{compare_string_with_number, get_job_gantt_colors, get_tree_structure_for_job};
 use crate::views::components::job_details::JobDetailsWindow;
 use egui::{
     pos2, Align2, Color32, CursorIcon, FontId, Id, LayerId, Order, Rect, Shape, Stroke,
@@ -135,7 +136,7 @@ fn cpuset_display_aggregate(
     key: &str,
 ) -> Option<String> {
     let mut all_ints: Vec<i32> = Vec::new();
-    for s in app.strata_by_resource_id.values() {
+    for s in app.data.strata_by_resource_id.values() {
         if strata_field_value(s, leaf_field)
             .map(|v| v.trim().to_string())
             .as_deref()
@@ -187,18 +188,31 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
     let mut tooltip_text = String::new();
 
     if let Some(job) = &options.current_hovered_job {
+        let stop_str = if job.stop_time == 0 { "Running".to_string() } else { format_timestamp(job.stop_time) };
+        let types_str = if job.job_types.is_empty() { "-".to_string() } else { job.job_types.join(", ") };
+        let name_str = job.name.as_deref().unwrap_or("-");
+        let resources_str = format!("{} resources", job.assigned_resources.len());
+        let machines_str = job.hosts.len().to_string();
+        let h = job.walltime / 3600;
+        let m = (job.walltime % 3600) / 60;
+        let s = job.walltime % 60;
+        let walltime_str = format!("{}h {:02}m {:02}s", h, m, s);
         tooltip_text.push_str(&format!(
-            "{}: {}\n{}: {:?}\n{}: {}\n{}: {}\n{}: {} seconds",
-            t!("app.details.tooltip.job_id"),
+            "Job: {}\nUser: {}\nKind: {}\nQueue: {}\nTypes: {}\nName: {}\nProject: {}\nWalltime: {}\nResources: {}\nMachines: {}\nSubmission: {}\nStart: {}\nStop: {}\nState: {}",
             job.id,
-            t!("app.details.tooltip.owner"),
             job.owner,
-            t!("app.details.tooltip.state"),
-            job.state.get_label(),
-            t!("app.details.tooltip.start_time"),
+            job.job_type,
+            job.queue,
+            types_str,
+            name_str,
+            job.project,
+            walltime_str,
+            resources_str,
+            machines_str,
+            format_timestamp(job.submission_time),
             format_timestamp(job.scheduled_start),
-            t!("app.details.tooltip.walltime"),
-            job.walltime
+            stop_str,
+            job.state.get_label(),
         ));
     }
 
@@ -220,7 +234,7 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
                 preset_fields.sort_unstable();
                 if !preset_fields.is_empty() {
                     let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("");
-                    let strata = app.strata_by_resource_id.values().find(|s| {
+                    let strata = app.data.strata_by_resource_id.values().find(|s| {
                         strata_field_value(s, leaf_field)
                             .map(|v| v.trim().to_string())
                             .as_deref() == Some(trimmed)
@@ -243,6 +257,46 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
         tooltip_text.push_str(&format!("{} State: {:?}", kind_label, resource_state));
         options.current_hovered_resource_state = None;
         options.current_hovered_resource_label = None;
+    }
+
+    if let Some(is_full) = options.current_hovered_drain.take() {
+        let kind = if is_full { "full" } else { "partial" };
+        let drain_text = format!(
+            "Draining\n{} draining: no new job accepted\nSince: now\nUntil: indefinite",
+            kind
+        );
+        if !tooltip_text.is_empty() { tooltip_text.push('\n'); }
+        tooltip_text.push_str(&drain_text);
+    }
+
+    if let Some(iv) = options.current_hovered_dead_interval.take() {
+        let state_label = match iv.state {
+            ResourceState::Dead => "Dead",
+            ResourceState::Absent => "Absent",
+            ResourceState::Suspected => "Suspected",
+            ResourceState::Standby => "Standby",
+            _ => "Unknown",
+        };
+        const OAR_INDEFINITE: i64 = 2_147_483_646;
+        let until_str = if iv.end_s == 0 || iv.end_s >= OAR_INDEFINITE {
+            "Indefinite".to_string()
+        } else {
+            format_timestamp(iv.end_s)
+        };
+        let since_label = "Since";
+        let until_label = "Until";
+        let interval_text = format!(
+            "{}\n{}: {}\n{}: {}",
+            state_label,
+            since_label,
+            format_timestamp(iv.start_s),
+            until_label,
+            until_str,
+        );
+        if !tooltip_text.is_empty() {
+            tooltip_text.push('\n');
+        }
+        tooltip_text.push_str(&interval_text);
     }
 
     if !tooltip_text.is_empty() {
@@ -349,7 +403,7 @@ pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[Painte
 // from strata so a job never appears under the wrong cluster/group)
 // ---------------------------------------------------------------------------
 
-pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
+pub(crate) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
     match field {
         "cluster" => s.cluster.clone(),
         "host" => s.network_address.clone().or_else(|| s.host.clone()),
@@ -393,7 +447,25 @@ pub(super) fn strata_field_value(s: &Strata, field: &str) -> Option<String> {
         "slash_21" => s.slash_21.clone(),
         "slash_22" => s.slash_22.clone(),
         // Disk
-        "disk" => s.disk.clone(),
+        // Compute resources (type=default) have no disk field but should still appear
+        // in the Disks view grouped under their host. Return "node" so they're not
+        // filtered out at the disk leaf level.
+        "disk" => s.disk.clone().or_else(|| {
+            if s.r#type.as_deref() == Some("default") { Some("node".to_string()) } else { None }
+        }),
+        // disk_id: groups compute nodes and their disks under the same host.
+        // disk resources → slot prefix of disk name ("disk1.yeti-4" → "disk1").
+        // compute resources (type=default) → "node".
+        // other types → their type value.
+        "disk_id" => {
+            if let Some(d) = &s.disk {
+                Some(d.split('.').next().unwrap_or(d).to_string())
+            } else {
+                s.r#type.as_deref().map(|t| {
+                    if t == "default" { "node".to_string() } else { t.to_string() }
+                })
+            }
+        }
         "nodeset" => s.nodeset.clone(),
         // Named Strata fields not yet exposed
         "state_num" => s.state_num.map(|v| v.to_string()),
@@ -495,15 +567,20 @@ pub(super) fn resolve_field(
 
     match field {
         "host" | "network_address" => {
-            // Own fields first, then sibling's network_address for normalization.
-            strata.network_address.as_deref()
-                .or(strata.host.as_deref())
-                .or(strata.nodeset.as_deref())
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .or_else(|| sibling()?.network_address.as_deref()
-                    .map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+            // Filter empty strings before .or() — disk resources have network_address=""
+            // (Some("") not None), so the plain .or() chain never reaches strata.host.
+            let trim_nonempty = |s: &str| -> Option<String> {
+                let t = s.trim();
+                if t.is_empty() { None } else { Some(t.to_string()) }
+            };
+            strata.network_address.as_deref().and_then(trim_nonempty)
+                .or_else(|| strata.host.as_deref().and_then(trim_nonempty))
+                .or_else(|| strata.nodeset.as_deref().and_then(trim_nonempty))
+                .or_else(|| {
+                    let sib = sibling()?;
+                    sib.network_address.as_deref().and_then(trim_nonempty)
+                        .or_else(|| sib.host.as_deref().and_then(trim_nonempty))
+                })
                 .unwrap_or_else(|| format!("(no {})", field))
         }
 
@@ -564,15 +641,15 @@ pub(super) fn max_leaf_label(
     };
     let ancestor_fields = &levels[..levels.len().saturating_sub(1)];
     let mut longest = String::new();
-    for strata in app.strata_by_resource_id.values() {
-        let raw = resolve_field(strata, leaf_field, &app.strata_by_host);
+    for strata in app.data.strata_by_resource_id.values() {
+        let raw = resolve_field(strata, leaf_field, &app.data.strata_by_host);
         if raw.starts_with("(no ") {
             continue;
         }
         let label = if let Some(tmpl) = template {
             let path_context: Vec<(String, String)> = ancestor_fields
                 .iter()
-                .map(|f| (f.clone(), resolve_field(strata, f, &app.strata_by_host)))
+                .map(|f| (f.clone(), resolve_field(strata, f, &app.data.strata_by_host)))
                 .collect();
             resolve_label_with_strata(tmpl, &path_context, leaf_field, &raw, strata)
         } else {
@@ -612,11 +689,16 @@ pub(super) fn build_resource_groups<'a>(
     // path -> (job id set, representative strata for label resolution)
     let mut leaf_data: BTreeMap<Vec<String>, (HashSet<u32>, &Strata)> = BTreeMap::new();
 
-    for (&rid, strata) in &app.strata_by_resource_id {
+    for (&rid, strata) in &app.data.strata_by_resource_id {
         let path: Vec<String> = levels.iter()
-            .map(|f| resolve_field(strata, f, &app.strata_by_host))
+            .map(|f| resolve_field(strata, f, &app.data.strata_by_host))
             .collect();
         if path.last().map_or(true, |v| v.starts_with("(no ")) {
+            continue;
+        }
+        if levels.iter().zip(path.iter()).any(|(level, val)| {
+            (level == "host" || level == "network_address") && val.starts_with("(no ")
+        }) {
             continue;
         }
         if let Some(f) = filter {
@@ -632,6 +714,22 @@ pub(super) fn build_resource_groups<'a>(
                 entry.0.insert(job.id);
             }
         }
+    }
+
+    // When "disk" is the leaf level: synthetic "node" entries (from compute resources that
+    // have no disk) are only kept for hosts that have at least one real disk resource.
+    // This matches Monika's "nodelistByProperty" behaviour: include the compute node row
+    // only when the host actually owns disk resources.
+    if levels.last().map(|s| s.as_str()) == Some("disk") && levels.len() >= 3 {
+        let pfx_len = levels.len() - 2; // path prefix up to (but not including) type+disk
+        let qualifying: HashSet<Vec<String>> = leaf_data.keys()
+            .filter(|p| p.last().map(|v| v != "node").unwrap_or(false))
+            .map(|p| p[..pfx_len.min(p.len())].to_vec())
+            .collect();
+        leaf_data.retain(|path, _| {
+            path.last().map(|v| v != "node").unwrap_or(true)
+                || qualifying.contains(&path[..pfx_len.min(path.len())].to_vec())
+        });
     }
 
     let assignments: Vec<(Vec<String>, Vec<&'a Job>, Option<String>)> = leaf_data
@@ -867,7 +965,7 @@ fn draw_leaf_label(
                 |ui: &mut egui::Ui| {
                     let trimmed = key.trim();
                     let leaf_field = options.levels.last().map(|s| s.as_str()).unwrap_or("");
-                    let strata_label = app.strata_by_resource_id.values().find(|s| {
+                    let strata_label = app.data.strata_by_resource_id.values().find(|s| {
                         strata_field_value(s, leaf_field)
                             .map(|v| v.trim().to_string())
                             .as_deref() == Some(trimmed)
@@ -913,15 +1011,21 @@ fn resource_ids_for_leaf(
 
 fn draw_dead_intervals_for_row(
     info: &Info,
-    options: &Options,
+    options: &mut Options,
     top_y: f32,
     height: f32,
     intervals: &[DeadInterval],
+    app: &ApplicationContext,
 ) {
     if intervals.is_empty() {
         return;
     }
-    let theme_colors = get_theme_colors(&info.ctx.style());
+    let sc = if info.ctx.style().visuals.dark_mode {
+        &app.prefs.gantt_config.state_colors
+    } else {
+        &app.prefs.gantt_config.state_colors_light
+    };
+    let min_dur = app.prefs.gantt_config.min_state_duration_s;
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
         pos2(info.canvas.max.x, info.canvas.max.y),
@@ -930,10 +1034,16 @@ fn draw_dead_intervals_for_row(
     let hachure_spacing = 10.0;
 
     for iv in intervals {
-        let color = match iv.state {
-            ResourceState::Dead => Color32::from_rgba_premultiplied(255, 0, 0, 150),
-            ResourceState::Absent => theme_colors.hatch,
-            ResourceState::Suspected => Color32::from_rgba_premultiplied(255, 140, 0, 150),
+        // Skip intervals shorter than min_state_duration_s (closed intervals only).
+        if iv.end_s != 0 && min_dur > 0 && (iv.end_s - iv.start_s) < min_dur {
+            continue;
+        }
+        let mk = |r: u8, g: u8, b: u8| Color32::from_rgba_premultiplied(r, g, b, 150);
+        let base_color = match iv.state {
+            ResourceState::Dead     => mk(sc.dead.0,     sc.dead.1,     sc.dead.2),
+            ResourceState::Absent   => mk(sc.absent.0,   sc.absent.1,   sc.absent.2),
+            ResourceState::Suspected => mk(sc.suspected.0, sc.suspected.1, sc.suspected.2),
+            ResourceState::Standby  => Color32::from_rgb(sc.standby.0, sc.standby.1, sc.standby.2).gamma_multiply(0.7),
             _ => continue,
         };
         let start_x = info.point_from_s(options, iv.start_s);
@@ -942,6 +1052,17 @@ fn draw_dead_intervals_for_row(
         } else {
             info.point_from_s(options, iv.end_s)
         };
+
+        let hover_rect = Rect::from_min_max(
+            pos2(start_x.max(info.canvas.min.x + info.gutter_width), top_y),
+            pos2(end_x.min(info.canvas.max.x), top_y + height),
+        );
+        let is_hovered = info.response.hover_pos().map_or(false, |m| hover_rect.contains(m));
+        if is_hovered && options.current_hovered_dead_interval.is_none() {
+            options.current_hovered_dead_interval = Some(iv.clone());
+        }
+        let color = if is_hovered { base_color.gamma_multiply(1.5) } else { base_color };
+
         let mut x = start_x.max(info.canvas.min.x);
         let mut shapes = Vec::new();
         while x < end_x.min(info.canvas.max.x) {
@@ -952,6 +1073,51 @@ fn draw_dead_intervals_for_row(
             x += hachure_spacing;
         }
         chart_painter.extend(shapes);
+    }
+}
+
+fn draw_drain_overlay_for_row(
+    info: &Info,
+    options: &mut Options,
+    top_y: f32,
+    row_height: f32,
+    is_full: bool,
+    now_s: i64,
+) {
+    let now_x = info.point_from_s(options, now_s);
+    let end_x = info.canvas.max.x;
+    if now_x >= end_x {
+        return;
+    }
+    let chart_clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
+        pos2(info.canvas.max.x, info.canvas.max.y),
+    );
+    let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
+
+    let draw_h = if is_full { row_height } else { row_height * 0.5 };
+    let start_x = now_x.max(info.canvas.min.x + info.gutter_width);
+
+    let overlay_rect = Rect::from_min_max(
+        pos2(start_x, top_y),
+        pos2(end_x, top_y + draw_h),
+    );
+
+    // Semi-transparent red background
+    chart_painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_premultiplied(200, 0, 0, 70));
+
+    // White horizontal bar across center (no-entry sign bar)
+    let bar_h = (draw_h * 0.22).max(2.0);
+    let bar_y = top_y + (draw_h - bar_h) * 0.5;
+    chart_painter.rect_filled(
+        Rect::from_min_max(pos2(start_x, bar_y), pos2(end_x, bar_y + bar_h)),
+        0.0,
+        Color32::from_rgba_premultiplied(255, 255, 255, 180),
+    );
+
+    let is_hovered = info.response.hover_pos().map_or(false, |m| overlay_rect.contains(m));
+    if is_hovered && options.current_hovered_drain.is_none() {
+        options.current_hovered_drain = Some(is_full);
     }
 }
 
@@ -1050,6 +1216,49 @@ pub(super) fn draw_level_n<'a>(
                     );
                 }
 
+                // Layer order: states → drain → jobs (jobs on top)
+
+                // 1. Dead/absent/suspected/standby intervals.
+                let resource_ids = resource_ids_for_leaf(field, key, path_context, &app.data.strata_by_resource_id);
+                let now_s = chrono::Utc::now().timestamp();
+                let mut seen: HashSet<DeadInterval> = HashSet::new();
+                let mut intervals: Vec<DeadInterval> = Vec::new();
+                for id in &resource_ids {
+                    if let Some(ivs) = app.data.dead_intervals.get(id) {
+                        for iv in ivs {
+                            if seen.insert(iv.clone()) {
+                                intervals.push(iv.clone());
+                            }
+                        }
+                    }
+                }
+                let has_standby = resource_ids.iter().any(|id| app.data.standby_upto.contains_key(id));
+                if has_standby {
+                    for iv in intervals.iter_mut() {
+                        if iv.state == ResourceState::Absent && iv.end_s == 0 {
+                            iv.state = ResourceState::Standby;
+                            if app.prefs.gantt_config.standby_truncate_to_now {
+                                iv.end_s = now_s;
+                            }
+                        }
+                    }
+                }
+                draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals, app);
+
+                // 2. Drain overlay (from now onward).
+                let total = resource_ids.len();
+                if total > 0 {
+                    let drained = resource_ids.iter().filter(|id| {
+                        app.data.strata_by_resource_id.get(id)
+                            .and_then(|s| s.drain.as_deref())
+                            == Some("YES")
+                    }).count();
+                    if drained > 0 {
+                        draw_drain_overlay_for_row(info, options, job_row_y, row_height, drained == total, now_s);
+                    }
+                }
+
+                // 3. Jobs on top.
                 for job in jobs.iter() {
                     paint_job(
                         info,
@@ -1059,23 +1268,40 @@ pub(super) fn draw_level_n<'a>(
                         details_window,
                         all_clusters,
                         Some(key.as_str()),
+                        app.prefs.gantt_config.besteffort_truncate_to_now,
                     );
                 }
 
-                // Draw dead/absent/suspected intervals for this row from dead_resources.
-                let resource_ids = resource_ids_for_leaf(field, key, path_context, &app.strata_by_resource_id);
-                let mut seen: HashSet<DeadInterval> = HashSet::new();
-                let mut intervals: Vec<DeadInterval> = Vec::new();
-                for id in &resource_ids {
-                    if let Some(ivs) = app.dead_intervals.get(id) {
-                        for iv in ivs {
-                            if seen.insert(iv.clone()) {
-                                intervals.push(iv.clone());
+                // 4. Markers (generic — any file type can emit these).
+                if !app.data.markers.is_empty() {
+                    let chart_clip = Rect::from_min_max(
+                        pos2(info.canvas.min.x + gutter_width, job_row_y),
+                        pos2(info.canvas.max.x, job_row_y + row_height),
+                    );
+                    let chart_painter = info.painter.with_clip_rect(chart_clip);
+                    let r = (row_height * 0.35).max(4.0);
+                    for marker in app.data.markers.iter().filter(|m| m.resource_name == *key) {
+                        let x = info.point_from_s(options, marker.timestamp_s);
+                        let center = pos2(x, job_row_y + row_height * 0.5);
+                        let [rc, gc, bc, ac] = marker.color;
+                        let fill = Color32::from_rgba_unmultiplied(rc, gc, bc, ac);
+                        match marker.shape {
+                            MarkerShape::Circle => {
+                                chart_painter.circle_filled(center, r, fill);
+                                chart_painter.circle_stroke(center, r, Stroke::new(1.0, Color32::from_black_alpha(160)));
+                            }
+                            MarkerShape::Rectangle { end_timestamp_s } => {
+                                let x1 = info.point_from_s(options, end_timestamp_s);
+                                let bar = Rect::from_min_max(
+                                    pos2(x, job_row_y + row_height * 0.15),
+                                    pos2(x1.max(x + 2.0), job_row_y + row_height * 0.85),
+                                );
+                                chart_painter.rect_filled(bar, 2.0, fill);
+                                chart_painter.rect_stroke(bar, 2.0, Stroke::new(1.0, Color32::from_black_alpha(160)));
                             }
                         }
                     }
                 }
-                draw_dead_intervals_for_row(info, options, job_row_y, row_height, &intervals);
 
                 // Collect rows for job-ID label painting.
                 let mut sorted_jobs: Vec<&&Job> = jobs.iter().collect();
@@ -1234,6 +1460,7 @@ fn paint_job(
     details_window: &mut Vec<JobDetailsWindow>,
     all_cluster: &Vec<Cluster>,
     resource_label_for_state_tooltip: Option<&str>,
+    besteffort_truncate_to_now: bool,
 ) -> PaintResult {
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
@@ -1241,7 +1468,15 @@ fn paint_job(
     );
     let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
     let start_x = info.point_from_s(options, job.scheduled_start);
-    let stop_time = if job.stop_time > 0 { job.stop_time } else { job.scheduled_start + job.walltime };
+    let raw_stop = if job.stop_time > 0 { job.stop_time } else { job.scheduled_start + job.walltime };
+    let stop_time = if besteffort_truncate_to_now
+        && job.job_types.iter().any(|t| t == "besteffort")
+        && raw_stop > chrono::Utc::now().timestamp()
+    {
+        chrono::Utc::now().timestamp()
+    } else {
+        raw_stop
+    };
     let end_x = info.point_from_s(options, stop_time);
     let width = end_x - start_x;
 
@@ -1294,7 +1529,7 @@ fn paint_job(
     }
 
     let (hovered_color, normal_color) = if options.job_color.is_random() {
-        job.get_gantt_color()
+        get_job_gantt_colors(job.id)
     } else {
         job.state.get_color()
     };

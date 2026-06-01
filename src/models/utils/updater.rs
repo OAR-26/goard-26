@@ -14,61 +14,58 @@ use crate::models::utils::parser::get_current_jobs_for_period;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-use super::parser::{get_jobs_from_json, get_resources_from_json};
+use super::parser::{get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json};
 
 impl ApplicationContext {
     pub fn update_refresh_rate(&mut self, new_rate: u64) {
-        let mut rate = self.refresh_rate.lock().unwrap();
+        let mut rate = self.refresh.refresh_rate.lock().unwrap();
         *rate = new_rate;
     }
 
     #[allow(dead_code)]
     pub fn update_start_date(&mut self, new_start: DateTime<Local>) {
-        let mut start = self.start_date.lock().unwrap();
+        let mut start = self.refresh.start_date.lock().unwrap();
         *start = new_start;
     }
 
     #[allow(dead_code)]
     pub fn update_end_date(&mut self, new_end: DateTime<Local>) {
-        let mut end = self.end_date.lock().unwrap();
+        let mut end = self.refresh.end_date.lock().unwrap();
         *end = new_end;
     }
 
     #[allow(dead_code)]
     pub fn get_start_date(&self) -> DateTime<Local> {
-        *self.start_date.lock().unwrap()
+        *self.refresh.start_date.lock().unwrap()
     }
 
     #[allow(dead_code)]
     pub fn get_end_date(&self) -> DateTime<Local> {
-        *self.end_date.lock().unwrap()
+        *self.refresh.end_date.lock().unwrap()
     }
 
     pub fn set_localdate(&mut self, start: DateTime<Local>, end: DateTime<Local>) {
-        let mut start_date = self.start_date.lock().unwrap(); // Lock acquired
-        let mut end_date = self.end_date.lock().unwrap(); // Lock acquired
-        *start_date = start; // Modify data
-        *end_date = end; // Modify data
-    } // Both locks are automatically released when MutexGuards go out of scope
+        let mut start_date = self.refresh.start_date.lock().unwrap();
+        let mut end_date = self.refresh.end_date.lock().unwrap();
+        *start_date = start;
+        *end_date = end;
+    }
 
     pub fn instant_update(&mut self) {
-        let is_refreshing = self.is_refreshing.clone();
+        let is_refreshing = self.refresh.is_refreshing.clone();
 
-        // if the app is already refreshing, return
         if *is_refreshing.lock().unwrap() {
             return;
         }
-
-        // set refreshing to true
         *is_refreshing.lock().unwrap() = true;
 
-        // get dates
-        let start = *self.start_date.lock().unwrap();
-        let end = *self.end_date.lock().unwrap();
+        let start = *self.refresh.start_date.lock().unwrap();
+        let end = *self.refresh.end_date.lock().unwrap();
 
-        let jobs_sender = self.jobs_sender.clone();
-        let resources_sender = self.resources_sender.clone();
-        // Get the data in a different thread
+        let jobs_sender = self.refresh.jobs_sender.clone();
+        let resources_sender = self.refresh.resources_sender.clone();
+        let dead_intervals_sender = self.refresh.dead_intervals_sender.clone();
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             let is_refreshing_clone = is_refreshing.clone();
@@ -77,61 +74,60 @@ impl ApplicationContext {
                 if res {
                     let jobs = get_jobs_from_json("./data/data.json");
                     let resources = get_resources_from_json("./data/data.json");
+                    let dead_intervals = get_dead_intervals_from_json("./data/data.json");
                     jobs_sender.send(jobs).unwrap_or_else(|e| {
                         println!("Error while sending jobs: {}", e);
                     });
-
                     resources_sender.send(resources).unwrap_or_else(|e| {
                         println!("Error while sending resources: {}", e);
                     });
+                    dead_intervals_sender.send(dead_intervals).unwrap_or_else(|e| {
+                        println!("Error while sending dead intervals: {}", e);
+                    });
                 }
-
-                // set refreshing to false
                 *is_refreshing_clone.lock().unwrap() = false;
             });
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            // LOG DEBUG
-            // log::info!("instant_update: start_date: {:?}, end_date: {:?}", start, end);
             let jobs = mock_jobs();
             jobs_sender.send(jobs).unwrap();
-
             let strata = mock_stratas();
             resources_sender.send(strata).unwrap();
-            
-            // set refreshing to false
             *is_refreshing.lock().unwrap() = false;
         }
     }
 
-    // In a different thread, update the data every refresh_rate seconds
     pub fn update_periodically(&mut self) {
-        let rate = *self.refresh_rate.lock().unwrap();
-        let jobs_sender = self.jobs_sender.clone();
-        let resources_sender = self.resources_sender.clone();
-        let is_refreshing = self.is_refreshing.clone();
-        let start_date = self.start_date.clone();
-        let end_date = self.end_date.clone();
+        let refresh_rate = self.refresh.refresh_rate.clone();
+        let jobs_sender = self.refresh.jobs_sender.clone();
+        let resources_sender = self.refresh.resources_sender.clone();
+        let dead_intervals_sender = self.refresh.dead_intervals_sender.clone();
+        let is_refreshing = self.refresh.is_refreshing.clone();
+        let start_date = self.refresh.start_date.clone();
+        let end_date = self.refresh.end_date.clone();
 
-        // Get the data in a different thread
         #[cfg(not(target_arch = "wasm32"))]
         {
             thread::spawn(move || {
                 loop {
-                    // Check if already refreshing
+                    let rate = *refresh_rate.lock().unwrap();
+
+                    if rate == u64::MAX {
+                        thread::sleep(Duration::from_secs(5));
+                        continue;
+                    }
+
                     if *is_refreshing.lock().unwrap() {
                         thread::sleep(Duration::from_secs(rate));
                         continue;
                     }
 
-                    // Set refreshing to true
                     *is_refreshing.lock().unwrap() = true;
 
                     let start;
                     let end;
-
                     {
                         start = *start_date.lock().unwrap();
                         end = *end_date.lock().unwrap();
@@ -141,19 +137,20 @@ impl ApplicationContext {
                     if res {
                         let jobs = get_jobs_from_json("./data/data.json");
                         let resources = get_resources_from_json("./data/data.json");
+                        let dead_intervals = get_dead_intervals_from_json("./data/data.json");
 
                         jobs_sender.send(jobs).unwrap_or_else(|e| {
                             println!("Error while sending jobs: {}", e);
                         });
-
                         resources_sender.send(resources).unwrap_or_else(|e| {
                             println!("Error while sending resources: {}", e);
                         });
+                        dead_intervals_sender.send(dead_intervals).unwrap_or_else(|e| {
+                            println!("Error while sending dead intervals: {}", e);
+                        });
                     }
 
-                    // Set refreshing to false
                     *is_refreshing.lock().unwrap() = false;
-
                     thread::sleep(Duration::from_secs(rate));
                 }
             });
@@ -161,11 +158,8 @@ impl ApplicationContext {
 
         #[cfg(target_arch = "wasm32")]
         {
-            // LOG DEBUG
-            // log::info!("update_periodically: start_date: {:?}, end_date: {:?}", start, end);
             let jobs = mock_jobs();
             jobs_sender.send(jobs).unwrap();
-
             let strata = mock_stratas();
             resources_sender.send(strata).unwrap();
         }
@@ -177,12 +171,10 @@ impl ApplicationContext {
         self.update_end_date(end_date);
         self.is_loading = true;
 
-        // Clone necessary value
-        let sender = self.jobs_sender.clone();
+        let sender = self.refresh.jobs_sender.clone();
         let start = start_date;
         let end = end_date;
 
-        // Get the data in a different thread
         #[cfg(not(target_arch = "wasm32"))]
         {
             thread::spawn(move || {
@@ -196,8 +188,6 @@ impl ApplicationContext {
 
         #[cfg(target_arch = "wasm32")]
         {
-            // LOG DEBUG
-            // log::info!("update_period: start_date: {:?}, end_date: {:?}", start, end);
             let jobs = mock_jobs();
             sender.send(jobs).unwrap();
         }

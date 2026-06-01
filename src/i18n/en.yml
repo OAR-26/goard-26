@@ -18,6 +18,7 @@ app:
       refresh_30: "30 s"
       refresh_60: "1 min"
       refresh_300: "5 min"
+      refresh_never: "Never"
   options:
     title: "Options"
     save:

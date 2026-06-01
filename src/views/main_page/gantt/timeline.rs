@@ -74,11 +74,8 @@ pub(super) fn paint_timeline_text_on_top(
     fixed_timeline_y: f32,
     gutter_width: f32,
 ) {
-    let max_lines = info.usable_width() / 4.0;
-    let mut grid_spacing_minutes = 180;
-    while options.canvas_width_s / (grid_spacing_minutes as f32) > max_lines {
-        grid_spacing_minutes *= 10;
-    }
+    let max_lines = info.usable_width() / 13.0;
+    let grid_spacing_minutes = pick_grid_spacing(options.canvas_width_s, max_lines);
 
     let theme_colors = get_theme_colors(&info.ctx.style());
 
@@ -121,12 +118,8 @@ pub(super) fn paint_timeline(
 
     let alpha_multiplier = if info.ctx.style().visuals.dark_mode { 0.3 } else { 0.8 };
 
-    let max_lines = info.usable_width() / 4.0;
-    let mut grid_spacing_minutes = 180;
-
-    while options.canvas_width_s / (grid_spacing_minutes as f32) > max_lines {
-        grid_spacing_minutes *= 10;
-    }
+    let max_lines = info.usable_width() / 13.0;
+    let grid_spacing_minutes = pick_grid_spacing(options.canvas_width_s, max_lines);
 
     let num_tiny_lines = options.canvas_width_s / (grid_spacing_minutes as f32);
     let zoom_factor = remap_clamp(num_tiny_lines, (0.1 * max_lines)..=max_lines, 1.0..=0.0);
@@ -186,6 +179,19 @@ pub(super) fn paint_current_time_line(
         [pos2(line_x, canvas.min.y), pos2(line_x, canvas.max.y)],
         Stroke::new(2.0, Color32::RED),
     )
+}
+
+/// Predefined grid spacings in seconds. Labels appear at spacing×10 (medium) and spacing×20 (big).
+/// 180→labels@30min/1h | 360→labels@1h/2h | 720→labels@2h/4h | 1800→labels@5h/10h | …
+const GRID_SPACINGS: &[i64] = &[180, 360, 720, 1800, 7200, 86400, 864000];
+
+fn pick_grid_spacing(canvas_width_s: f32, max_lines: f32) -> i64 {
+    for &s in GRID_SPACINGS {
+        if canvas_width_s / (s as f32) <= max_lines {
+            return s;
+        }
+    }
+    *GRID_SPACINGS.last().unwrap()
 }
 
 fn grid_text(ts: i64) -> String {

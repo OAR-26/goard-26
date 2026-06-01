@@ -68,26 +68,111 @@ impl eframe::App for App {
         self.application_context.check_data_update();
         
         // Handle file import request
-        if self.application_context.request_file_import {
-            self.application_context.request_file_import = false;
+        if self.application_context.import.request_file_import {
+            self.application_context.import.request_file_import = false;
             self.trigger_file_import();
         }
         
-        // Check for imported file content
+        // File arrived from native picker → park it for type-selection dialog.
         {
             use crate::file_import;
             if let Some((file_content, file_path)) = file_import::take_file_content() {
-                if let Err(e) = self.application_context.import_data_from_json(&file_content, file_path) {
-                    #[cfg(target_arch = "wasm32")]
-                    web_sys::console::log_1(&format!("Failed to import data: {}", e).into());
-                    #[cfg(not(target_arch = "wasm32"))]
-                    eprintln!("Failed to import data: {}", e);
-                } else {
-                    #[cfg(target_arch = "wasm32")]
-                    web_sys::console::log_1(&"File imported successfully".into());
-                    #[cfg(not(target_arch = "wasm32"))]
-                    println!("File imported successfully");
+                use crate::models::data_structure::import_state::PendingImport;
+                self.application_context.import.pending_import = Some(PendingImport {
+                    content: file_content,
+                    path: file_path,
+                    selected_type_name: None,
+                });
+            }
+        }
+
+        // Import type-selection dialog — shown while a file is pending.
+        if self.application_context.import.pending_import.is_some() {
+            use crate::models::file_types::FileTypeRegistry;
+
+            let pending = self.application_context.import.pending_import.as_ref().unwrap();
+            let current_type = pending.selected_type_name.clone();
+            let file_label = pending.path.as_deref()
+                .and_then(|p| std::path::Path::new(p).file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("(unknown file)")
+                .to_string();
+
+            let registry = FileTypeRegistry::default();
+            let type_names: Vec<(String, String)> = registry
+                .all_types()
+                .map(|t| (t.name().to_string(), t.description().to_string()))
+                .collect();
+
+            let mut new_type: Option<Option<String>> = None;
+            let mut do_import = false;
+            let mut do_cancel = false;
+            let mut import_error: Option<String> = None;
+
+            egui::Window::new("Import File")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .min_width(300.0)
+                .show(ctx, |ui| {
+                    ui.label(format!("📄  {}", file_label));
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    ui.label("File Type:");
+                    ui.add_space(4.0);
+
+                    if ui.radio(current_type.is_none(), "Auto Detect").clicked() {
+                        new_type = Some(None);
+                    }
+                    for (name, desc) in &type_names {
+                        let selected = current_type.as_deref() == Some(name.as_str());
+                        let resp = ui.radio(selected, name.as_str()).on_hover_text(desc.as_str());
+                        if resp.clicked() {
+                            new_type = Some(Some(name.clone()));
+                        }
+                    }
+
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                        ui.add_space(8.0);
+                        let import_btn = egui::Button::new("Import ▶").fill(ui.visuals().selection.bg_fill);
+                        if ui.add(import_btn).clicked() {
+                            do_import = true;
+                        }
+                    });
+                });
+
+            // Apply radio clicks collected above.
+            if let Some(t) = new_type {
+                self.application_context.import.pending_import.as_mut().unwrap().selected_type_name = t;
+            }
+
+            if do_cancel {
+                self.application_context.import.pending_import = None;
+                self.application_context.import.pending_group_target = None;
+            } else if do_import {
+                let pending = self.application_context.import.pending_import.take().unwrap();
+                let result = self.application_context.import_data_from_json(
+                    &pending.content,
+                    pending.path,
+                    pending.selected_type_name.as_deref(),
+                );
+                if let Err(e) = result {
+                    import_error = Some(e);
                 }
+            }
+
+            if let Some(err) = import_error {
+                #[cfg(not(target_arch = "wasm32"))]
+                eprintln!("Import failed: {}", err);
             }
         }
 
@@ -98,7 +183,7 @@ impl eframe::App for App {
             .exact_height(18.0)
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if *self.application_context.is_refreshing.lock().unwrap() {
+                    if *self.application_context.refresh.is_refreshing.lock().unwrap() {
                         ui.add(egui::Spinner::new().size(12.0));
                         ui.label(egui::RichText::new(t!("app.refreshing")).small());
                     }
@@ -117,6 +202,6 @@ impl eframe::App for App {
                     .render(ui, &mut self.application_context);
             }
         });
-        ctx.request_repaint();
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
 }

@@ -9,7 +9,7 @@ use std::hash::Hash;
 use std::cmp::Ordering;
 use std::hash::Hasher;
 
-// Convert a job ID to a color (using hash)
+/// Convert a job ID to a color (using hash)
 pub fn convert_id_to_color(id: u32) -> egui::Color32 {
     let mut hasher = DefaultHasher::new();
     id.hash(&mut hasher);
@@ -20,6 +20,18 @@ pub fn convert_id_to_color(id: u32) -> egui::Color32 {
     let b = (hash & 0xFF) as u8;
 
     egui::Color32::from_rgb(r, g, b)
+}
+
+/// Returns `(base_color, darker_color)` for rendering a job bar.
+/// Job id 0 (synthetic all_resources sentinel) → transparent pair.
+pub fn get_job_gantt_colors(job_id: u32) -> (egui::Color32, egui::Color32) {
+    if job_id == 0 {
+        return (egui::Color32::TRANSPARENT, egui::Color32::TRANSPARENT);
+    }
+    let base = convert_id_to_color(job_id);
+    let darker = |c: u8| -> u8 { ((c as f32 * 0.8) as u8).max(1) };
+    let d = egui::Color32::from_rgb(darker(base.r()), darker(base.g()), darker(base.b()));
+    (base, d)
 }
 
 /// Extracts all host names from a collection of clusters

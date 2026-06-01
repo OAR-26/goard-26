@@ -1,0 +1,23 @@
+{
+  "name": "Energy Series",
+  "description": "Raw energy time series: array of {timestamp, energy, walltime} objects",
+  "file_extension": "json",
+  "detection": {
+    "strategy": "json_array_field_presence",
+    "required_fields": ["timestamp", "energy"]
+  },
+  "visualizations": ["energy_diagram"],
+  "supports_hierarchy_controls": false,
+  "primary_shape": "line",
+  "hierarchy": {
+    "mode": "none"
+  },
+  "schema": {
+    "timestamp_field": "timestamp",
+    "energy_field":    "energy",
+    "walltime_field":  "walltime"
+  },
+  "validation": {
+    "rules": []
+  }
+}

@@ -1,12 +1,13 @@
 mod canvas;
 mod interaction;
-mod jobs;
+pub(crate) mod jobs;
 mod labels;
 mod theme;
 mod timeline;
 mod types;
 mod energy_plot;
 mod energy_estimate;
+mod panels;
 
 use crate::models::data_structure::resource::ResourceState;
 use crate::models::utils::utils::{get_all_clusters, get_all_hosts, get_all_resources};
@@ -21,10 +22,11 @@ use crate::{
 use chrono::{Local, TimeZone};
 use eframe::egui;
 use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
-use std::collections::BTreeMap;
 
-use crate::models::data_structure::application_context::ClusterPreset;
-use std::collections::HashSet as StdHashSet;
+use panels::{
+    AdminAction, AdminPanelState, CreatePresetPanel, CreateViewPanel, EditPresetPanel,
+    EditViewPanel, EnergyPanelState, PresetPanelAction, ViewFormAction,
+};
 
 // ---------------------------------------------------------------------------
 // View hierarchy configuration (loaded from views.json)
@@ -40,6 +42,9 @@ struct GanttView {
     leaf_label_template: Option<String>,
     #[serde(default)]
     sort_by_label: bool,
+    /// Fields shown in the status bar (e.g. ["cluster","host"]). Defaults to [last level] if empty.
+    #[serde(default)]
+    summary_fields: Vec<String>,
     /// ID of the `LeafInfoPreset` that defines this view's tooltip label and fields.
     #[serde(default)]
     leaf_infos: Option<String>,
@@ -67,6 +72,7 @@ fn load_views_config() -> ViewsConfig {
                 filter: None,
                 leaf_label_template: Some("{host|short}".to_string()),
                 sort_by_label: false,
+                summary_fields: vec!["cluster".to_string(), "host".to_string()],
                 leaf_infos: None,
                 leaf_display_name: "Host".to_string(),
                 leaf_hover_details: true,
@@ -77,6 +83,7 @@ fn load_views_config() -> ViewsConfig {
                 filter: None,
                 leaf_label_template: Some("{type}/{vlan}".to_string()),
                 sort_by_label: false,
+                summary_fields: vec!["vlan".to_string()],
                 leaf_infos: None,
                 leaf_display_name: "VLAN".to_string(),
                 leaf_hover_details: false,
@@ -84,6 +91,9 @@ fn load_views_config() -> ViewsConfig {
         ],
         leaf_info_presets: vec![],
     };
+    #[cfg(target_arch = "wasm32")]
+    let content = include_str!("../../../../views.json").to_string();
+    #[cfg(not(target_arch = "wasm32"))]
     let Ok(content) = std::fs::read_to_string("views.json") else { return fallback; };
     let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else { return fallback; };
     if val.is_array() {
@@ -131,14 +141,8 @@ fn save_views_config(views: &[GanttView], presets: &[types::LeafInfoPreset]) {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum AdminMode {
-    New,
-    Modify,
-}
-
 use self::types::{gutter_stripes_total_w, Info, Options, GUTTER_WIDTH};
-use self::labels::short_host_label;
+
 
 fn compute_gutter_width(
     ctx: &egui::Context,
@@ -163,79 +167,33 @@ fn compute_gutter_width(
 pub struct GanttChart {
     options: Options,
     job_details_windows: Vec<JobDetailsWindow>,
-    // Kept so existing canvas signature compiles; no longer written to.
-    collapsed_jobs_level_1: BTreeMap<String, bool>,
-    collapsed_jobs_level_2: BTreeMap<(String, String), bool>,
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
+    last_data_source_index: Option<usize>,
 
     gantt_views: Vec<GanttView>,
     current_view_index: usize,
     leaf_info_presets: Vec<types::LeafInfoPreset>,
 
-    energy_filter_cluster: Option<String>,
-    energy_filter_owner: Option<String>,
-
     last_canvas_usable_width_px: f32,
-
-    admin_panel_open: bool,
-    admin_mode: Option<AdminMode>,
-    admin_selected_preset: Option<usize>,
-    admin_original_preset_name: Option<String>,
-    admin_preset_name: String,
-    admin_selected_clusters: StdHashSet<String>,
-
     pending_navigation_refresh: bool,
-
-    // Create-view panel state
-    create_view_open: bool,
-    cv_name: String,
-    cv_levels: Vec<String>,
-    cv_template: String,
-    cv_preset_id: Option<String>,
-    cv_sort_by_label: bool,
-    cv_filter_enabled: bool,
-    cv_filter_field: String,
-    cv_filter_value: String,
-    cv_filter_exclude: bool,
-    cv_error: Option<String>,
-
-    // Create-preset panel state
-    create_preset_open: bool,
-    cp_name: String,
-    cp_fields: Vec<String>,
-    cp_error: Option<String>,
-
-    // Edit-view panel state
-    edit_view_open: bool,
-    ev_idx: Option<usize>,
-    ev_name: String,
-    ev_levels: Vec<String>,
-    ev_template: String,
-    ev_preset_id: Option<String>,
-    ev_sort_by_label: bool,
-    ev_filter_enabled: bool,
-    ev_filter_field: String,
-    ev_filter_value: String,
-    ev_filter_exclude: bool,
-    ev_error: Option<String>,
-
     delete_view_confirm: Option<usize>,
-
-    // Edit presets
-    edit_preset_open: bool,
-    ep_idx: Option<usize>,
-    ep_name: String,
-    ep_fields: Vec<String>,
-    ep_error: Option<String>,
-
     delete_preset_confirm: Option<String>,
+
+    energy: EnergyPanelState,
+    admin: AdminPanelState,
+    create_view: CreateViewPanel,
+    create_preset: CreatePresetPanel,
+    edit_view: EditViewPanel,
+    edit_preset: EditPresetPanel,
 }
 
 impl Default for GanttChart {
     fn default() -> Self {
         let config = load_views_config();
+        let gantt_cfg = crate::models::data_structure::gantt_config::GanttConfig::load();
         let mut options = Options::default();
+        options.canvas_width_s = gantt_cfg.default_timespan_s as f32;
         if let Some(first) = config.views.first() {
             options.levels = first.levels.clone();
             options.resource_filter = first.filter.clone();
@@ -248,57 +206,22 @@ impl Default for GanttChart {
         GanttChart {
             options,
             job_details_windows: Vec::new(),
-            collapsed_jobs_level_1: BTreeMap::new(),
-            collapsed_jobs_level_2: BTreeMap::new(),
             initial_start_s: None,
             initial_end_s: None,
+            last_data_source_index: None,
             last_canvas_usable_width_px: 1.0,
-            admin_panel_open: false,
-            admin_mode: None,
-            admin_selected_preset: None,
-            admin_original_preset_name: None,
-            admin_preset_name: String::new(),
-            admin_selected_clusters: StdHashSet::new(),
-            energy_filter_cluster: None,
-            energy_filter_owner: None,
             pending_navigation_refresh: false,
+            delete_view_confirm: None,
+            delete_preset_confirm: None,
             gantt_views: config.views,
             current_view_index: 0,
             leaf_info_presets: config.leaf_info_presets,
-            create_view_open: false,
-            cv_name: String::new(),
-            cv_levels: Vec::new(),
-            cv_template: String::new(),
-            cv_preset_id: None,
-            cv_sort_by_label: false,
-            cv_filter_enabled: false,
-            cv_filter_field: String::new(),
-            cv_filter_value: String::new(),
-            cv_filter_exclude: false,
-            cv_error: None,
-            create_preset_open: false,
-            cp_name: String::new(),
-            cp_fields: Vec::new(),
-            cp_error: None,
-            edit_view_open: false,
-            ev_idx: None,
-            ev_name: String::new(),
-            ev_levels: Vec::new(),
-            ev_template: String::new(),
-            ev_preset_id: None,
-            ev_sort_by_label: false,
-            ev_filter_enabled: false,
-            ev_filter_field: String::new(),
-            ev_filter_value: String::new(),
-            ev_filter_exclude: false,
-            ev_error: None,
-            delete_view_confirm: None,
-            edit_preset_open: false,
-            ep_idx: None,
-            ep_name: String::new(),
-            ep_fields: Vec::new(),
-            ep_error: None,
-            delete_preset_confirm: None,
+            energy: EnergyPanelState::default(),
+            admin: AdminPanelState::default(),
+            create_view: CreateViewPanel::default(),
+            create_preset: CreatePresetPanel::default(),
+            edit_view: EditViewPanel::default(),
+            edit_preset: EditPresetPanel::default(),
         }
     }
 }
@@ -307,52 +230,188 @@ impl GanttChart {
     pub fn render_data_source_tabs(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         ui.add_space(4.0);
 
-        let data_source_names = app.get_all_data_source_names();
-        let current_index = app.current_data_source_index;
+        // Pre-collect everything needed so we don't borrow `app` inside the closure.
+        let current_index = app.import.current_data_source_index;
+        let current_group = app.import.current_group_index;
+        let stroke_color = ui.visuals().widgets.active.bg_stroke.color;
+        let text_color = ui.visuals().text_color();
+        let active_fill = ui.visuals().widgets.active.bg_fill;
+        let inactive_fill = ui.visuals().widgets.inactive.bg_fill;
+
+        // Which ds indices belong to at least one group.
+        let grouped_ds: std::collections::HashSet<usize> = app.import.groups.iter()
+            .flat_map(|g| g.member_indices.iter().copied())
+            .collect();
+
+        // Individual (ungrouped) sources.
+        let individual: Vec<(usize, String)> = app.import.imported_data_sources.iter()
+            .enumerate()
+            .filter(|(i, _)| !grouped_ds.contains(&(i + 1)))
+            .map(|(i, ds)| (i + 1, ds.name.clone()))
+            .collect();
+
+        // Groups — collect (gi, group_name, [(ds_idx, member_name)]).
+        let groups_info: Vec<(usize, String, Vec<(usize, String)>)> = app.import.groups.iter()
+            .enumerate()
+            .map(|(gi, g)| {
+                let members = g.member_indices.iter()
+                    .filter_map(|&i| app.import.imported_data_sources.get(i - 1).map(|ds| (i, ds.name.clone())))
+                    .collect();
+                (gi, g.name.clone(), members)
+            })
+            .collect();
+
+        let mut switch_to_ds: Option<usize> = None;
+        let mut switch_to_group: Option<usize> = None;
+        let mut close_ds: Option<usize> = None;
+        let mut close_group_idx: Option<usize> = None;
+        let mut group_target: Option<usize> = None;
+        let mut remove_from_group: Option<(usize, usize)> = None; // (group_idx, ds_idx)
 
         ui.horizontal(|ui| {
-            for (index, name) in data_source_names.iter().enumerate() {
-                let is_active = index == current_index;
-                let can_close = index != 0;
+            // Live Data tab.
+            let is_active = current_index == 0 && current_group.is_none();
+            let fill = if is_active { active_fill } else { inactive_fill };
+            let text = if is_active {
+                egui::RichText::new("Live Data").strong()
+            } else {
+                egui::RichText::new("Live Data")
+            };
+            let mut btn = egui::Button::new(text).fill(fill).frame(true);
+            if is_active {
+                btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
+            }
+            if ui.add(btn).clicked() {
+                switch_to_ds = Some(0);
+            }
+            ui.add_space(4.0);
 
-                let tab_color = if is_active {
-                    ui.visuals().widgets.active.bg_fill
-                } else {
-                    ui.visuals().widgets.inactive.bg_fill
-                };
-
-                let tab_text = if is_active {
+            // Individual ungrouped tabs.
+            for (ds_idx, name) in &individual {
+                let is_active = *ds_idx == current_index && current_group.is_none();
+                let fill = if is_active { active_fill } else { inactive_fill };
+                let text = if is_active {
                     egui::RichText::new(name).strong()
                 } else {
-                    egui::RichText::new(name)
+                    egui::RichText::new(name.as_str())
                 };
-
-                let mut tab_button = egui::Button::new(tab_text).fill(tab_color).frame(true);
+                let mut btn = egui::Button::new(text).fill(fill).frame(true);
                 if is_active {
-                    tab_button = tab_button.stroke(egui::Stroke::new(
-                        1.0,
-                        ui.visuals().widgets.active.bg_stroke.color,
-                    ));
+                    btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
                 }
-
                 ui.horizontal(|ui| {
-                    if ui.add(tab_button).clicked() {
-                        app.switch_to_data_source(index);
+                    if ui.add(btn).clicked() {
+                        switch_to_ds = Some(*ds_idx);
                     }
-                    if can_close {
-                        ui.add_space(-4.0);
-                        let close_btn = egui::Button::new("×")
-                            .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::new(1.0, ui.visuals().text_color()));
-                        if ui.add(close_btn).clicked() {
-                            app.close_imported_data_source(index);
-                        }
+                    // "+" — group with another file.
+                    let plus = egui::Button::new("+")
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::new(1.0, text_color))
+                        .min_size(egui::vec2(16.0, 16.0));
+                    if ui.add(plus).on_hover_text("Group with another file").clicked() {
+                        group_target = Some(*ds_idx);
+                    }
+                    // "×" — remove.
+                    ui.add_space(-4.0);
+                    let close = egui::Button::new("×")
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::new(1.0, text_color));
+                    if ui.add(close).clicked() {
+                        close_ds = Some(*ds_idx);
                     }
                 });
+                ui.add_space(4.0);
+            }
+
+            // Group tabs.
+            for (gi, group_name, members) in &groups_info {
+                let is_active = current_group == Some(*gi);
+                let fill = if is_active { active_fill } else { inactive_fill };
+                let popup_id = ui.make_persistent_id(("group_dd", *gi));
+
+                let text = if is_active {
+                    egui::RichText::new(group_name).strong()
+                } else {
+                    egui::RichText::new(group_name.as_str())
+                };
+
+                // Name button — activates the group.
+                let mut name_btn = egui::Button::new(text).fill(fill).frame(true);
+                if is_active {
+                    name_btn = name_btn.stroke(egui::Stroke::new(1.0, stroke_color));
+                }
+                let name_resp = ui.add(name_btn);
+                if name_resp.clicked() {
+                    switch_to_group = Some(*gi);
+                }
+
+                // Arrow button — toggles the member popup.
+                let arrow_resp = ui.small_button("v");
+                if arrow_resp.clicked() {
+                    ui.memory_mut(|m| m.toggle_popup(popup_id));
+                }
+
+                // Popup anchored below the full tab (name + arrow combined rect).
+                let tab_anchor = name_resp | arrow_resp;
+                egui::popup::popup_below_widget(
+                    ui, popup_id, &tab_anchor,
+                    egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+                    |ui| {
+                        ui.set_min_width(180.0);
+                        for (ds_idx, mn) in members {
+                            ui.horizontal(|ui| {
+                                ui.label(mn);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("🗑")
+                                            .on_hover_text("Delete file")
+                                            .clicked()
+                                        {
+                                            remove_from_group = Some((*gi, *ds_idx));
+                                            ui.memory_mut(|m| m.close_popup());
+                                        }
+                                    },
+                                );
+                            });
+                        }
+                    },
+                );
+
+                // "+" — add another file to this group.
+                let first_member = members.first().map(|(i, _)| *i);
+                let plus = egui::Button::new("+")
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::new(1.0, text_color))
+                    .min_size(egui::vec2(16.0, 16.0));
+                if ui.add(plus).on_hover_text("Add file to group").clicked() {
+                    if let Some(m) = first_member {
+                        group_target = Some(m);
+                    }
+                }
+
+                // "🗑" — delete the group and all its member files.
+                let close = egui::Button::new("🗑")
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::new(1.0, text_color));
+                if ui.add(close).on_hover_text("Delete group and all files").clicked() {
+                    close_group_idx = Some(*gi);
+                }
 
                 ui.add_space(4.0);
             }
         });
+
+        // Apply deferred actions (avoids re-borrow of `app` inside closure).
+        if let Some(i) = switch_to_ds               { app.switch_to_data_source(i); }
+        if let Some(gi) = switch_to_group           { app.switch_to_group(gi); }
+        if let Some(i) = close_ds                   { app.close_imported_data_source(i); }
+        if let Some(gi) = close_group_idx           { app.delete_group(gi); }
+        if let Some((gi, di)) = remove_from_group   { app.remove_ds_from_group(gi, di); }
+        if let Some(target) = group_target          {
+            app.import.pending_group_target = Some(target);
+            app.import.request_file_import = true;
+        }
 
         ui.add_space(8.0);
         ui.separator();
@@ -360,10 +419,41 @@ impl GanttChart {
     }
 
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        if self.initial_start_s.is_none() {
-            self.initial_start_s = Some(app.get_start_date().timestamp());
-            self.initial_end_s = Some(app.get_end_date().timestamp());
+        let ds_idx = app.import.current_data_source_index;
+        if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
+            let start_s = app.get_start_date().timestamp();
+            let end_s = app.get_end_date().timestamp();
+            self.initial_start_s = Some(start_s);
+            self.initial_end_s = Some(end_s);
+            self.last_data_source_index = Some(ds_idx);
+            let span_s = (end_s - start_s) as f32;
+            if span_s > 0.0 && span_s < self.options.canvas_width_s {
+                self.options.canvas_width_s = span_s.max(10.0);
+                self.options.sideways_pan_in_points = 0.0;
+            }
+
+            // Apply or restore aggregation levels when the data source changes.
+            use crate::models::file_types::FileTypeRegistry;
+            if ds_idx == 0 {
+                // Back to live data → restore the active view's preset levels.
+                if let Some(view) = self.gantt_views.get(self.current_view_index) {
+                    self.options.levels = view.levels.clone();
+                    self.options.resource_filter = view.filter.clone();
+                    self.options.leaf_label_template = view.leaf_label_template.clone();
+                }
+            } else {
+                let type_name = app.import.imported_data_sources
+                    .get(ds_idx - 1).map(|ds| ds.file_type_name.clone()).unwrap_or_default();
+                let registry = FileTypeRegistry::default();
+                if let Some(levels) = registry.find_by_name(&type_name).and_then(|t| t.hierarchy_levels()) {
+                    self.options.levels = levels;
+                    self.options.resource_filter = None;
+                    self.options.leaf_label_template = None;
+                }
+            }
         }
+
+        let supports_hierarchy = app.current_file_type_supports_hierarchy();
 
         // "View" dropdown in the top toolbar — mirrors the tab row below
         let current_view_name = self.gantt_views
@@ -371,70 +461,51 @@ impl GanttChart {
             .map(|v| v.name.as_str())
             .unwrap_or("View");
         let is_admin = app.is_admin();
-        ui.menu_button(format!("View: {}", current_view_name), |ui| {
-            ui.set_min_width(220.0);
-            for i in 0..self.gantt_views.len() {
-                let is_active = self.current_view_index == i;
-                let name = self.gantt_views[i].name.clone();
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(is_active, &name).clicked() {
-                        self.current_view_index = i;
-                        self.options.levels = self.gantt_views[i].levels.clone();
-                        self.options.resource_filter = self.gantt_views[i].filter.clone();
-                        self.options.leaf_label_template = self.gantt_views[i].leaf_label_template.clone();
-                        self.options.sort_by_label = self.gantt_views[i].sort_by_label;
-                        self.options.leaf_info_preset =
-                            resolve_leaf_preset(&self.leaf_info_presets, &self.gantt_views[i].leaf_infos)
-                                .cloned()
-                                .or_else(|| backward_compat_preset(&self.gantt_views[i]));
-                        ui.close_menu();
-                    }
-                    if is_admin {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("🗑").on_hover_text("Delete view").clicked() {
-                                self.delete_view_confirm = Some(i);
-                                ui.close_menu();
-                            }
-                            if ui.small_button("✏").on_hover_text("Edit view").clicked() {
-                                let v = &self.gantt_views[i];
-                                self.ev_idx = Some(i);
-                                self.ev_name = v.name.clone();
-                                self.ev_levels = v.levels.clone();
-                                self.ev_template = v.leaf_label_template.clone().unwrap_or_default();
-                                self.ev_preset_id = v.leaf_infos.clone();
-                                self.ev_sort_by_label = v.sort_by_label;
-                                self.ev_filter_enabled = v.filter.is_some();
-                                self.ev_filter_field = v.filter.as_ref().map(|f| f.field.clone()).unwrap_or_default();
-                                self.ev_filter_value = v.filter.as_ref().map(|f| f.value.clone()).unwrap_or_default();
-                                self.ev_filter_exclude = v.filter.as_ref().map(|f| f.exclude).unwrap_or(false);
-                                self.ev_error = None;
-                                self.edit_view_open = true;
-                                ui.close_menu();
-                            }
-                        });
-                    }
-                });
-            }
-            ui.separator();
-            let create_btn = egui::Button::new("+ Create view");
-            let create_btn = if is_admin { create_btn } else { create_btn.fill(egui::Color32::TRANSPARENT) };
-            let resp = ui.add_enabled(is_admin, create_btn);
-            let resp = if !is_admin { resp.on_hover_text("Admin access required") } else { resp };
-            if resp.clicked() {
-                self.cv_name.clear();
-                self.cv_levels.clear();
-                self.cv_template.clear();
-                self.cv_preset_id = None;
-                self.cv_sort_by_label = false;
-                self.cv_filter_enabled = false;
-                self.cv_filter_field.clear();
-                self.cv_filter_value.clear();
-                self.cv_filter_exclude = false;
-                self.cv_error = None;
-                self.create_view_open = true;
-                ui.close_menu();
-            }
-        });
+        if supports_hierarchy {
+            ui.menu_button(format!("View: {}", current_view_name), |ui| {
+                ui.set_min_width(220.0);
+                for i in 0..self.gantt_views.len() {
+                    let is_active = self.current_view_index == i;
+                    let name = self.gantt_views[i].name.clone();
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(is_active, &name).clicked() {
+                            self.current_view_index = i;
+                            self.options.levels = self.gantt_views[i].levels.clone();
+                            self.options.resource_filter = self.gantt_views[i].filter.clone();
+                            self.options.leaf_label_template = self.gantt_views[i].leaf_label_template.clone();
+                            self.options.sort_by_label = self.gantt_views[i].sort_by_label;
+                            self.options.leaf_info_preset =
+                                resolve_leaf_preset(&self.leaf_info_presets, &self.gantt_views[i].leaf_infos)
+                                    .cloned()
+                                    .or_else(|| backward_compat_preset(&self.gantt_views[i]));
+                            ui.close_menu();
+                        }
+                        if is_admin {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("🗑").on_hover_text("Delete view").clicked() {
+                                    self.delete_view_confirm = Some(i);
+                                    ui.close_menu();
+                                }
+                                if ui.small_button("✏").on_hover_text("Edit view").clicked() {
+                                    let v = self.gantt_views[i].clone();
+                                    self.edit_view.open_for(i, &v);
+                                    ui.close_menu();
+                                }
+                            });
+                        }
+                    });
+                }
+                ui.separator();
+                let create_btn = egui::Button::new("+ Create view");
+                let create_btn = if is_admin { create_btn } else { create_btn.fill(egui::Color32::TRANSPARENT) };
+                let resp = ui.add_enabled(is_admin, create_btn);
+                let resp = if !is_admin { resp.on_hover_text("Admin access required") } else { resp };
+                if resp.clicked() {
+                    self.create_view.reset_and_open();
+                    ui.close_menu();
+                }
+            });
+        }
 
         ui.menu_button(t!("app.gantt.settings.title"), |ui| {
             ui.set_max_height(500.0);
@@ -456,7 +527,7 @@ impl GanttChart {
             );
         }
         if response.clicked() && is_admin {
-            self.admin_panel_open = true;
+            self.admin.open = true;
         }
 
         ui.add_space(6.0);
@@ -519,20 +590,69 @@ impl View for GanttChart {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         self.render_data_source_tabs(ui, app);
 
-        if self.initial_start_s.is_none() {
-            self.initial_start_s = Some(app.get_start_date().timestamp());
-            self.initial_end_s = Some(app.get_end_date().timestamp());
+        let ds_idx = app.import.current_data_source_index;
+        if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
+            let start_s = app.get_start_date().timestamp();
+            let end_s = app.get_end_date().timestamp();
+            self.initial_start_s = Some(start_s);
+            self.initial_end_s = Some(end_s);
+            self.last_data_source_index = Some(ds_idx);
+            let span_s = (end_s - start_s) as f32;
+            if span_s > 0.0 && span_s < self.options.canvas_width_s {
+                self.options.canvas_width_s = span_s.max(10.0);
+                self.options.sideways_pan_in_points = 0.0;
+            }
         }
 
-        if app.current_data_source_index == 0 {
-            app.all_jobs.retain(|j| j.id != 0);
+        // Every frame: enforce the correct hierarchy levels regardless of what
+        // other code paths (tab clicks, view dropdown) may have set previously.
+        if ds_idx != 0 {
+            use crate::models::file_types::FileTypeRegistry;
+            let type_name = app.import.imported_data_sources
+                .get(ds_idx - 1).map(|ds| ds.file_type_name.as_str()).unwrap_or("");
+            if let Some(levels) = FileTypeRegistry::default()
+                .find_by_name(type_name)
+                .and_then(|t| t.hierarchy_levels())
+            {
+                self.options.levels = levels;
+                self.options.resource_filter = None;
+                self.options.leaf_label_template = None;
+            }
+        } else if let Some(view) = self.gantt_views.get(self.current_view_index) {
+            self.options.levels = view.levels.clone();
+            self.options.resource_filter = view.filter.clone();
+            self.options.leaf_label_template = view.leaf_label_template.clone();
+        }
+
+        // Keep toolbar in sync with current view.
+        let view_name = self.gantt_views.get(self.current_view_index)
+            .map(|v| v.name.clone())
+            .unwrap_or_default();
+        if app.prefs.current_gantt_view_name != view_name {
+            app.prefs.current_gantt_view_name = view_name;
+            app.prefs.current_gantt_view_levels = self.options.levels.clone();
+            app.prefs.current_gantt_view_summary_fields = {
+                let stored = self.gantt_views
+                    .get(self.current_view_index)
+                    .map(|v| v.summary_fields.clone())
+                    .unwrap_or_default();
+                if stored.is_empty() {
+                    self.options.levels.last().cloned().into_iter().collect()
+                } else {
+                    stored
+                }
+            };
+        }
+
+        if app.import.current_data_source_index == 0 {
+            app.data.all_jobs.retain(|j| j.id != 0);
         }
 
         let selected_cluster_names: Option<Vec<String>> = app
             .filters
             .selected_preset
             .as_ref()
-            .and_then(|n| app.cluster_presets.iter().find(|p| p.name == *n))
+            .and_then(|n| app.prefs.cluster_presets.iter().find(|p| p.name == *n))
             .map(|p| p.clusters.clone());
 
         let all_hosts = if let Some(cluster_names) = &selected_cluster_names {
@@ -561,8 +681,8 @@ impl View for GanttChart {
             get_all_resources(&app.get_current_clusters())
         };
 
-        if app.current_data_source_index == 0 {
-            app.all_jobs.push(Job {
+        if app.import.current_data_source_index == 0 {
+            app.data.all_jobs.push(Job {
                 id: 0,
                 owner: "all_resources".to_string(),
                 state: JobState::Unknown,
@@ -578,646 +698,100 @@ impl View for GanttChart {
                 start_time: 0,
                 stop_time: 0,
                 exit_code: None,
-                gantt_color: egui::Color32::TRANSPARENT,
                 main_resource_state: ResourceState::Unknown,
+                job_type: String::new(),
+                job_types: Vec::new(),
+                name: None,
+                project: String::new(),
             });
         }
 
-        // Admin panel
-        if self.admin_panel_open {
-            let mut open = self.admin_panel_open;
-            egui::Window::new("Admin configuration")
-                .open(&mut open)
-                .default_width(300.0)
-                .show(ui.ctx(), |ui| {
-                    ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.label("Cluster presets");
-                            ui.separator();
-
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .selectable_label(
-                                        self.admin_mode == Some(AdminMode::New),
-                                        "New Preset",
-                                    )
-                                    .clicked()
-                                {
-                                    self.admin_mode = Some(AdminMode::New);
-                                    self.admin_selected_preset = None;
-                                    self.admin_original_preset_name = None;
-                                    self.admin_preset_name.clear();
-                                    self.admin_selected_clusters.clear();
-                                }
-                                if ui
-                                    .selectable_label(
-                                        self.admin_mode == Some(AdminMode::Modify),
-                                        "Modify Preset",
-                                    )
-                                    .clicked()
-                                {
-                                    self.admin_mode = Some(AdminMode::Modify);
-                                    self.admin_selected_preset = None;
-                                    self.admin_original_preset_name = None;
-                                    self.admin_preset_name.clear();
-                                    self.admin_selected_clusters.clear();
-                                }
-                            });
-                            ui.separator();
-
-                            if self.admin_mode == Some(AdminMode::Modify) {
-                                egui::ComboBox::from_label("Select Preset")
-                                    .selected_text(
-                                        self.admin_selected_preset
-                                            .and_then(|i| app.cluster_presets.get(i))
-                                            .map(|p| p.name.clone())
-                                            .unwrap_or_else(|| "Select a preset".to_string()),
-                                    )
-                                    .show_ui(ui, |ui| {
-                                        for (i, preset) in app.cluster_presets.iter().enumerate() {
-                                            if ui
-                                                .selectable_value(
-                                                    &mut self.admin_selected_preset,
-                                                    Some(i),
-                                                    &preset.name,
-                                                )
-                                                .clicked()
-                                            {
-                                                self.admin_original_preset_name =
-                                                    Some(preset.name.clone());
-                                                self.admin_preset_name = preset.name.clone();
-                                                self.admin_selected_clusters =
-                                                    preset.clusters.iter().cloned().collect();
-                                            }
-                                        }
-                                    });
-                                ui.separator();
-                            }
-
-                            if self.admin_mode == Some(AdminMode::New)
-                                || (self.admin_mode == Some(AdminMode::Modify)
-                                    && self.admin_selected_preset.is_some())
-                            {
-                                ui.label("Name");
-                                ui.text_edit_singleline(&mut self.admin_preset_name);
-                                ui.separator();
-                                ui.label("Clusters to include");
-                                ui.vertical(|ui| {
-                                    for cluster in app.get_current_clusters() {
-                                        let mut checked = self
-                                            .admin_selected_clusters
-                                            .contains(&cluster.name);
-                                        if ui.checkbox(&mut checked, &cluster.name).changed() {
-                                            if checked {
-                                                self.admin_selected_clusters
-                                                    .insert(cluster.name.clone());
-                                            } else {
-                                                self.admin_selected_clusters
-                                                    .remove(&cluster.name);
-                                            }
-                                        }
-                                    }
-                                });
-                                ui.add_space(8.0);
-                                ui.horizontal(|ui| {
-                                    if ui.button("Save").clicked()
-                                        && !self.admin_preset_name.trim().is_empty()
-                                    {
-                                        if self.admin_mode == Some(AdminMode::Modify)
-                                            && self.admin_original_preset_name.as_ref()
-                                                != Some(&self.admin_preset_name)
-                                        {
-                                            if let Some(old_name) =
-                                                &self.admin_original_preset_name
-                                            {
-                                                app.remove_preset(old_name);
-                                            }
-                                        }
-                                        let preset = ClusterPreset {
-                                            name: self.admin_preset_name.clone(),
-                                            clusters: self
-                                                .admin_selected_clusters
-                                                .iter()
-                                                .cloned()
-                                                .collect(),
-                                        };
-                                        app.add_or_update_preset(preset);
-                                        self.admin_mode = None;
-                                        self.admin_selected_preset = None;
-                                        self.admin_original_preset_name = None;
-                                        self.admin_preset_name.clear();
-                                        self.admin_selected_clusters.clear();
-                                    }
-                                    if self.admin_mode == Some(AdminMode::Modify)
-                                        && self.admin_selected_preset.is_some()
-                                    {
-                                        if ui.button("Delete").clicked() {
-                                            if let Some(i) = self.admin_selected_preset {
-                                                if let Some(preset) =
-                                                    app.cluster_presets.get(i)
-                                                {
-                                                    let name = preset.name.clone();
-                                                    app.remove_preset(&name);
-                                                    self.admin_mode = None;
-                                                    self.admin_selected_preset = None;
-                                                    self.admin_original_preset_name = None;
-                                                    self.admin_preset_name.clear();
-                                                    self.admin_selected_clusters.clear();
-                                                }
-                                            }
-                                        }
-                                    }
-                                });
-                            }
-                        });
-                });
-            self.admin_panel_open = open;
+        // ── Dialog panels ─────────────────────────────────────────────────────
+        let cluster_names: Vec<String> = app.get_current_clusters()
+            .iter().map(|c| c.name.clone()).collect();
+        let presets_snap = app.prefs.cluster_presets.clone();
+        for action in self.admin.show(ui, &presets_snap, &cluster_names) {
+            match action {
+                AdminAction::SavePreset { preset, remove_old } => {
+                    if let Some(old) = remove_old { app.remove_preset(&old); }
+                    app.add_or_update_preset(preset);
+                }
+                AdminAction::DeletePreset(name) => app.remove_preset(&name),
+            }
         }
 
-        // ── Create-view panel ─────────────────────────────────────────────────
-        fn known_fields_sorted() -> Vec<(&'static str, &'static str)> {
-            let mut v: Vec<(&str, &str)> = vec![
-            // Hierarchy-level fields
-            ("site",                    "Site (derived from FQDN)"),
-            ("cluster",                 "Cluster"),
-            ("host",                    "Host / compute node"),
-            ("type",                    "OAR resource type"),
-            ("vlan",                    "VLAN ID"),
-            ("disk",                    "Disk identifier"),
-            ("nodeset",                 "Nodeset"),
-            ("subnet_address",          "Subnet address (full CIDR)"),
-            ("subnet_prefix",           "Subnet prefix length"),
-            ("slash_16",                "Subnet /16 block"),
-            ("slash_17",                "Subnet /17 block"),
-            ("slash_18",                "Subnet /18 block"),
-            ("slash_19",                "Subnet /19 block"),
-            ("slash_20",                "Subnet /20 block"),
-            ("slash_21",                "Subnet /21 block"),
-            ("slash_22",                "Subnet /22 block"),
-            // Tooltip-only fields
-            ("state",                   "OAR resource state"),
-            ("next_state",              "Next OAR state"),
-            ("production",              "Production flag (YES/NO)"),
-            ("network_address",         "Network address (FQDN)"),
-            ("ip",                      "IP address"),
-            ("comment",                 "Admin comment"),
-            ("nodemodel",               "Node model"),
-            ("cputype",                 "CPU type"),
-            ("cpufreq",                 "CPU frequency"),
-            ("core_count",              "Physical core count"),
-            ("thread_count",            "Thread count"),
-            ("memnode",                 "Node memory (MB)"),
-            ("memcore",                 "Memory per core (MB)"),
-            ("gpu_model",               "GPU model"),
-            ("gpu_compute_capability",  "GPU compute capability"),
-            ("chassis",                 "Chassis"),
-            ("resource_id",             "OAR resource ID"),
-            ("besteffort",              "Best-effort flag"),
-            ("deploy",                  "Deploy flag"),
-            ("drain",                   "Drain flag"),
-            ("desktop_computing",       "Desktop computing flag"),
-            // Additional Strata named fields
-            ("state_num",               "OAR state number"),
-            ("rconsole",                "Remote console"),
-            ("cluster_priority",        "Cluster priority"),
-            ("core",                    "Core index"),
-            ("suspended_jobs",          "Suspended jobs"),
-            ("eth_rate",                "Ethernet rate (Gbps)"),
-            ("gpudevice",               "GPU device info"),
-            ("cpuset",                  "CPU core set (ranges)"),
-            // Extra data.json fields (via catch-all)
-            ("available_upto",          "Available up to (timestamp)"),
-            ("chunks",                  "OAR chunks"),
-            ("cpu",                     "CPU ID"),
-            ("cpu_count",               "CPU count"),
-            ("cpuarch",                 "CPU architecture"),
-            ("cpucore",                 "Cores per CPU"),
-            ("disk_reservation_count",  "Disk reservation count"),
-            ("diskpath",                "Disk path"),
-            ("disktype",                "Disk type"),
-            ("eth_count",               "Ethernet interface count"),
-            ("eth_kavlan_count",        "Kavlan ethernet count"),
-            ("exotic",                  "Exotic resource flag"),
-            ("expiry_date",             "Expiry date"),
-            ("finaud_decision",         "Finaud decision"),
-            ("gpu",                     "GPU ID"),
-            ("gpu_compute_capability_major", "GPU compute capability (major)"),
-            ("gpu_count",               "GPU count"),
-            ("gpu_mem",                 "GPU memory (MB)"),
-            ("grub",                    "Grub flag"),
-            ("ib",                      "InfiniBand flag"),
-            ("ib_count",                "InfiniBand interface count"),
-            ("ib_rate",                 "InfiniBand rate (Gbps)"),
-            ("last_available_upto",     "Last available up to (timestamp)"),
-            ("last_job_date",           "Last job date"),
-            ("maintenance",             "Maintenance flag"),
-            ("max_walltime",            "Max walltime (s)"),
-            ("mic",                     "MIC (Xeon Phi) flag"),
-            ("myri",                    "Myrinet flag"),
-            ("myri_count",              "Myrinet interface count"),
-            ("myri_rate",               "Myrinet rate (Gbps)"),
-            ("next_finaud_decision",    "Next finaud decision"),
-            ("opa_count",               "OmniPath interface count"),
-            ("opa_rate",                "OmniPath rate (Gbps)"),
-            ("scheduler_priority",      "Scheduler priority"),
-            ("switch",                  "Switch identifier"),
-            ("virtual",                 "Virtualization flag"),
-            ("wattmeter",               "Wattmeter flag"),
-            ];
-            v.sort_unstable_by_key(|(f, _)| *f);
-            v
-        }
-        let known_fields = known_fields_sorted();
 
-        if self.create_view_open {
-            let mut still_open = true;
-            egui::Window::new("Create view")
-                .open(&mut still_open)
-                .resizable(true)
-                .default_width(520.0)
-                .show(ui.ctx(), |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.set_min_width(480.0);
 
-                        // Name
-                        ui.label("Name:");
-                        ui.text_edit_singleline(&mut self.cv_name);
-                        ui.add_space(6.0);
-
-                        // Leaf info preset
-                        ui.label("Leaf info preset (tooltip label & fields):");
-                        ui.horizontal(|ui| {
-                            let selected_name = self.cv_preset_id.as_deref()
-                                .and_then(|id| self.leaf_info_presets.iter().find(|p| p.id == id))
-                                .map(|p| p.name.as_str())
-                                .unwrap_or("(none)");
-                            egui::ComboBox::from_id_salt("cv_preset")
-                                .selected_text(selected_name)
-                                .width(300.0)
-                                .show_ui(ui, |ui| {
-                                    ui.set_min_width(300.0);
-                                    let snap: Vec<(usize, String, String)> = self.leaf_info_presets.iter()
-                                        .enumerate().map(|(i, p)| (i, p.id.clone(), p.name.clone())).collect();
-                                    ui.selectable_value(&mut self.cv_preset_id, None, "(none)");
-                                    let mut do_edit: Option<usize> = None;
-                                    let mut do_delete: Option<String> = None;
-                                    for (i, id, name) in &snap {
-                                        ui.horizontal(|ui| {
-                                            ui.selectable_value(&mut self.cv_preset_id, Some(id.clone()), name);
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if ui.small_button("🗑").on_hover_text("Delete").clicked() { do_delete = Some(id.clone()); }
-                                                if ui.small_button("✏").on_hover_text("Edit").clicked() { do_edit = Some(*i); }
-                                            });
-                                        });
-                                    }
-                                    if let Some(i) = do_edit {
-                                        let p = &self.leaf_info_presets[i];
-                                        self.ep_idx = Some(i);
-                                        self.ep_name = p.name.clone();
-                                        self.ep_fields = p.fields.clone();
-                                        self.ep_error = None;
-                                        self.edit_preset_open = true;
-                                    }
-                                    if let Some(id) = do_delete {
-                                        self.delete_preset_confirm = Some(id);
-                                    }
-                                });
-                            if ui.button("+").on_hover_text("Create new preset").clicked() {
-                                self.cp_name.clear();
-                                self.cp_fields.clear();
-                                self.cp_error = None;
-                                self.create_preset_open = true;
-                            }
-                        });
-                        ui.add_space(6.0);
-
-                        // Levels
-                        ui.label("Hierarchy levels (outermost → leaf):");
-                        let mut remove_idx: Option<usize> = None;
-                        let mut swap: Option<(usize, usize)> = None;
-                        for (i, level) in self.cv_levels.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{}. {}", i + 1, level));
-                                if i > 0 && ui.small_button("⬆").clicked() { swap = Some((i - 1, i)); }
-                                if i + 1 < self.cv_levels.len() && ui.small_button("⬇").clicked() { swap = Some((i, i + 1)); }
-                                if ui.small_button("🗑").clicked() { remove_idx = Some(i); }
-                            });
-                        }
-                        if let Some(i) = remove_idx { self.cv_levels.remove(i); }
-                        if let Some((a, b)) = swap { self.cv_levels.swap(a, b); }
-
-                        ui.add_space(4.0);
-                        ui.label("Add field:");
-                        ui.horizontal_wrapped(|ui| {
-                            for (field, desc) in &known_fields {
-                                if self.cv_levels.iter().any(|l| l == field) { continue; }
-                                if ui.button(*field).on_hover_text(*desc).clicked() {
-                                    self.cv_levels.push(field.to_string());
-                                }
-                            }
-                        });
-                        ui.add_space(6.0);
-
-                        // Leaf label template
-                        ui.label("Leaf label template (e.g. {host|short}, {type}/{vlan}):");
-                        ui.text_edit_singleline(&mut self.cv_template);
-                        ui.add_space(6.0);
-
-                        // Options
-                        ui.checkbox(&mut self.cv_sort_by_label, "Sort by label (use when levels are opaque IDs)");
-                        ui.add_space(6.0);
-
-                        // Filter
-                        ui.checkbox(&mut self.cv_filter_enabled, "Add resource filter");
-                        if self.cv_filter_enabled {
-                            ui.indent("filter_indent", |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label("Field:");
-                                    egui::ComboBox::from_id_salt("cv_filter_field")
-                                        .selected_text(if self.cv_filter_field.is_empty() { "(select)" } else { &self.cv_filter_field })
-                                        .show_ui(ui, |ui| {
-                                            for (f, desc) in &known_fields {
-                                                ui.selectable_value(&mut self.cv_filter_field, f.to_string(), format!("{} - {}", f, desc));
-                                            }
-                                        });
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Value:");
-                                    ui.text_edit_singleline(&mut self.cv_filter_value);
-                                });
-                                ui.checkbox(&mut self.cv_filter_exclude, "Exclude matching (denylist instead of allowlist)");
-                            });
-                        }
-                        ui.add_space(8.0);
-
-                        // Error
-                        if let Some(err) = &self.cv_error {
-                            ui.colored_label(egui::Color32::RED, err);
-                        }
-
-                        // Save
-                        if ui.button("Save view").clicked() {
-                            if self.cv_name.trim().is_empty() {
-                                self.cv_error = Some("Name required.".into());
-                            } else if self.cv_levels.is_empty() {
-                                self.cv_error = Some("At least one level required.".into());
-                            } else if self.cv_filter_enabled && (self.cv_filter_field.is_empty() || self.cv_filter_value.is_empty()) {
-                                self.cv_error = Some("Filter requires field and value.".into());
-                            } else {
-                                let new_view = GanttView {
-                                    name: self.cv_name.trim().to_string(),
-                                    levels: self.cv_levels.clone(),
-                                    leaf_label_template: if self.cv_template.trim().is_empty() { None } else { Some(self.cv_template.trim().to_string()) },
-                                    leaf_infos: self.cv_preset_id.clone(),
-                                    sort_by_label: self.cv_sort_by_label,
-                                    // backward-compat fields unused for new views
-                                    leaf_display_name: String::new(),
-                                    leaf_hover_details: false,
-                                    filter: if self.cv_filter_enabled {
-                                        Some(types::ResourceFilter {
-                                            field: self.cv_filter_field.clone(),
-                                            value: self.cv_filter_value.clone(),
-                                            exclude: self.cv_filter_exclude,
-                                        })
-                                    } else { None },
-                                };
-                                self.gantt_views.push(new_view);
-                                save_views_config(&self.gantt_views, &self.leaf_info_presets);
-                                self.cv_error = None;
-                                self.create_view_open = false;
-                            }
-                        }
-                    });
-                });
-            if !still_open { self.create_view_open = false; }
+        let presets_for_view = self.leaf_info_presets.clone();
+        for action in self.create_view.show(ui, &presets_for_view) {
+            match action {
+                ViewFormAction::Created(view) => {
+                    self.gantt_views.push(view);
+                    save_views_config(&self.gantt_views, &self.leaf_info_presets);
+                }
+                ViewFormAction::WantCreatePreset => self.create_preset.reset_and_open(),
+                ViewFormAction::WantEditPreset(i) => {
+                    if let Some(p) = self.leaf_info_presets.get(i).cloned() {
+                        self.edit_preset.open_for(i, &p);
+                    }
+                }
+                ViewFormAction::WantDeletePreset(id) => self.delete_preset_confirm = Some(id),
+                ViewFormAction::Applied { .. } => {}
+            }
         }
 
-        // ── Create-preset panel ───────────────────────────────────────────────
-        if self.create_preset_open {
-            let mut still_open = true;
-            egui::Window::new("Create info preset")
-                .open(&mut still_open)
-                .resizable(true)
-                .default_width(420.0)
-                .show(ui.ctx(), |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.set_min_width(380.0);
-
-                        ui.label("Preset name:");
-                        ui.text_edit_singleline(&mut self.cp_name);
-                        ui.add_space(6.0);
-
-                        ui.label("Fields to show in tooltip:");
-                        for (field, desc) in &known_fields {
-                            let mut checked = self.cp_fields.iter().any(|f| f == field);
-                            if ui.checkbox(&mut checked, *field).on_hover_text(*desc).changed() {
-                                if checked {
-                                    self.cp_fields.push(field.to_string());
-                                } else {
-                                    self.cp_fields.retain(|f| f != field);
-                                }
-                            }
-                        }
-                        ui.add_space(8.0);
-
-                        if let Some(err) = &self.cp_error {
-                            ui.colored_label(egui::Color32::RED, err);
-                        }
-
-                        if ui.button("Save preset").clicked() {
-                            let name = self.cp_name.trim().to_string();
-                            if name.is_empty() {
-                                self.cp_error = Some("Name required.".into());
-                            } else {
-                                let id = name.to_lowercase().replace(' ', "_");
-                                let preset = types::LeafInfoPreset {
-                                    id: id.clone(),
-                                    name,
-                                    fields: self.cp_fields.clone(),
-                                };
-                                self.leaf_info_presets.push(preset);
-                                self.cv_preset_id = Some(id);
-                                save_views_config(&self.gantt_views, &self.leaf_info_presets);
-                                self.create_preset_open = false;
-                            }
-                        }
-                    });
-                });
-            if !still_open { self.create_preset_open = false; }
+        for action in self.edit_view.show(ui, &presets_for_view) {
+            match action {
+                ViewFormAction::Applied { idx, view } => {
+                    if self.current_view_index == idx {
+                        self.options.levels = view.levels.clone();
+                        self.options.resource_filter = view.filter.clone();
+                        self.options.leaf_label_template = view.leaf_label_template.clone();
+                        self.options.sort_by_label = view.sort_by_label;
+                        self.options.leaf_info_preset =
+                            resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
+                                .cloned()
+                                .or_else(|| backward_compat_preset(&view));
+                    }
+                    self.gantt_views[idx] = view;
+                    save_views_config(&self.gantt_views, &self.leaf_info_presets);
+                }
+                ViewFormAction::WantCreatePreset => self.create_preset.reset_and_open(),
+                ViewFormAction::WantEditPreset(i) => {
+                    if let Some(p) = self.leaf_info_presets.get(i).cloned() {
+                        self.edit_preset.open_for(i, &p);
+                    }
+                }
+                ViewFormAction::WantDeletePreset(id) => self.delete_preset_confirm = Some(id),
+                ViewFormAction::Created(_) => {}
+            }
         }
 
-        // ── Edit-view window ─────────────────────────────────────────────────
-        if self.edit_view_open {
-            let mut still_open = true;
-            egui::Window::new("Edit view")
-                .open(&mut still_open)
-                .resizable(true)
-                .default_width(520.0)
-                .show(ui.ctx(), |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.set_min_width(480.0);
-
-                        ui.label("Name:");
-                        ui.text_edit_singleline(&mut self.ev_name);
-                        ui.add_space(6.0);
-
-                        ui.label("Leaf info preset:");
-                        ui.horizontal(|ui| {
-                            let selected_name = self.ev_preset_id.as_deref()
-                                .and_then(|id| self.leaf_info_presets.iter().find(|p| p.id == id))
-                                .map(|p| p.name.as_str())
-                                .unwrap_or("(none)");
-                            egui::ComboBox::from_id_salt("ev_preset")
-                                .selected_text(selected_name)
-                                .width(300.0)
-                                .show_ui(ui, |ui| {
-                                    ui.set_min_width(300.0);
-                                    let snap: Vec<(usize, String, String)> = self.leaf_info_presets.iter()
-                                        .enumerate().map(|(i, p)| (i, p.id.clone(), p.name.clone())).collect();
-                                    ui.selectable_value(&mut self.ev_preset_id, None, "(none)");
-                                    let mut do_edit: Option<usize> = None;
-                                    let mut do_delete: Option<String> = None;
-                                    for (i, id, name) in &snap {
-                                        ui.horizontal(|ui| {
-                                            ui.selectable_value(&mut self.ev_preset_id, Some(id.clone()), name);
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if ui.small_button("🗑").on_hover_text("Delete").clicked() { do_delete = Some(id.clone()); }
-                                                if ui.small_button("✏").on_hover_text("Edit").clicked() { do_edit = Some(*i); }
-                                            });
-                                        });
-                                    }
-                                    if let Some(i) = do_edit {
-                                        let p = &self.leaf_info_presets[i];
-                                        self.ep_idx = Some(i);
-                                        self.ep_name = p.name.clone();
-                                        self.ep_fields = p.fields.clone();
-                                        self.ep_error = None;
-                                        self.edit_preset_open = true;
-                                    }
-                                    if let Some(id) = do_delete {
-                                        self.delete_preset_confirm = Some(id);
-                                    }
-                                });
-                            if ui.button("+").on_hover_text("Create new preset").clicked() {
-                                self.cp_name.clear();
-                                self.cp_fields.clear();
-                                self.cp_error = None;
-                                self.create_preset_open = true;
-                            }
-                        });
-                        ui.add_space(6.0);
-
-                        ui.label("Hierarchy levels (outermost -> leaf):");
-                        let mut remove_idx: Option<usize> = None;
-                        let mut swap: Option<(usize, usize)> = None;
-                        for (i, level) in self.ev_levels.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{}. {}", i + 1, level));
-                                if i > 0 && ui.small_button("⬆").clicked() { swap = Some((i - 1, i)); }
-                                if i + 1 < self.ev_levels.len() && ui.small_button("⬇").clicked() { swap = Some((i, i + 1)); }
-                                if ui.small_button("🗑").clicked() { remove_idx = Some(i); }
-                            });
-                        }
-                        if let Some(i) = remove_idx { self.ev_levels.remove(i); }
-                        if let Some((a, b)) = swap { self.ev_levels.swap(a, b); }
-
-                        ui.add_space(4.0);
-                        ui.label("Add field:");
-                        ui.horizontal_wrapped(|ui| {
-                            for (field, desc) in &known_fields {
-                                if self.ev_levels.iter().any(|l| l == field) { continue; }
-                                if ui.button(*field).on_hover_text(*desc).clicked() {
-                                    self.ev_levels.push(field.to_string());
-                                }
-                            }
-                        });
-                        ui.add_space(6.0);
-
-                        ui.label("Leaf label template:");
-                        ui.text_edit_singleline(&mut self.ev_template);
-                        ui.add_space(6.0);
-
-                        ui.checkbox(&mut self.ev_sort_by_label, "Sort by label");
-                        ui.add_space(6.0);
-
-                        ui.checkbox(&mut self.ev_filter_enabled, "Resource filter");
-                        if self.ev_filter_enabled {
-                            ui.indent("ev_filter", |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label("Field:");
-                                    egui::ComboBox::from_id_salt("ev_filter_field")
-                                        .selected_text(if self.ev_filter_field.is_empty() { "(select)" } else { &self.ev_filter_field })
-                                        .show_ui(ui, |ui| {
-                                            for (f, desc) in &known_fields {
-                                                ui.selectable_value(&mut self.ev_filter_field, f.to_string(), format!("{} - {}", f, desc));
-                                            }
-                                        });
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Value:");
-                                    ui.text_edit_singleline(&mut self.ev_filter_value);
-                                });
-                                ui.checkbox(&mut self.ev_filter_exclude, "Exclude matching");
-                            });
-                        }
-                        ui.add_space(8.0);
-
-                        if let Some(err) = &self.ev_error {
-                            ui.colored_label(egui::Color32::RED, err);
-                        }
-
-                        ui.horizontal(|ui| {
-                            if ui.button("Apply").clicked() {
-                                if self.ev_name.trim().is_empty() {
-                                    self.ev_error = Some("Name required.".into());
-                                } else if self.ev_levels.is_empty() {
-                                    self.ev_error = Some("At least one level required.".into());
-                                } else if self.ev_filter_enabled && (self.ev_filter_field.is_empty() || self.ev_filter_value.is_empty()) {
-                                    self.ev_error = Some("Filter requires field and value.".into());
-                                } else if let Some(idx) = self.ev_idx {
-                                    self.gantt_views[idx] = GanttView {
-                                        name: self.ev_name.trim().to_string(),
-                                        levels: self.ev_levels.clone(),
-                                        leaf_label_template: if self.ev_template.trim().is_empty() { None } else { Some(self.ev_template.trim().to_string()) },
-                                        leaf_infos: self.ev_preset_id.clone(),
-                                        sort_by_label: self.ev_sort_by_label,
-                                        leaf_display_name: String::new(),
-                                        leaf_hover_details: false,
-                                        filter: if self.ev_filter_enabled {
-                                            Some(types::ResourceFilter {
-                                                field: self.ev_filter_field.clone(),
-                                                value: self.ev_filter_value.clone(),
-                                                exclude: self.ev_filter_exclude,
-                                            })
-                                        } else { None },
-                                    };
-                                    // Refresh current options if editing the active view
-                                    if self.current_view_index == idx {
-                                        let v = &self.gantt_views[idx];
-                                        self.options.levels = v.levels.clone();
-                                        self.options.resource_filter = v.filter.clone();
-                                        self.options.leaf_label_template = v.leaf_label_template.clone();
-                                        self.options.sort_by_label = v.sort_by_label;
-                                        self.options.leaf_info_preset =
-                                            resolve_leaf_preset(&self.leaf_info_presets, &v.leaf_infos)
-                                                .cloned()
-                                                .or_else(|| backward_compat_preset(v));
-                                    }
-                                    save_views_config(&self.gantt_views, &self.leaf_info_presets);
-                                    self.edit_view_open = false;
-                                }
-                            }
-                            if ui.button("Cancel").clicked() {
-                                self.edit_view_open = false;
-                            }
-                        });
-                    });
-                });
-            if !still_open { self.edit_view_open = false; }
+        if let Some(action) = self.create_preset.show(ui) {
+            if let PresetPanelAction::Saved(preset) = action {
+                let id = preset.id.clone();
+                self.leaf_info_presets.push(preset);
+                if self.create_view.open { self.create_view.set_preset_id(Some(id.clone())); }
+                if self.edit_view.open { self.edit_view.set_preset_id(Some(id)); }
+                save_views_config(&self.gantt_views, &self.leaf_info_presets);
+            }
         }
 
-        // ── Delete-view confirm ───────────────────────────────────────────────
+        if let Some(action) = self.edit_preset.show(ui) {
+            if let PresetPanelAction::Applied { idx, name, fields } = action {
+                self.leaf_info_presets[idx].name = name;
+                self.leaf_info_presets[idx].fields = fields;
+                let active_preset_id = self.gantt_views
+                    .get(self.current_view_index)
+                    .and_then(|v| v.leaf_infos.as_deref())
+                    .map(str::to_string);
+                if active_preset_id.as_deref() == Some(self.leaf_info_presets[idx].id.as_str()) {
+                    self.options.leaf_info_preset = Some(self.leaf_info_presets[idx].clone());
+                }
+                save_views_config(&self.gantt_views, &self.leaf_info_presets);
+            }
+        }
+
         if let Some(idx) = self.delete_view_confirm {
             let name = self.gantt_views.get(idx).map(|v| v.name.clone()).unwrap_or_default();
             egui::Window::new("Confirm delete view")
@@ -1242,69 +816,6 @@ impl View for GanttChart {
                 });
         }
 
-        // ── Manage presets window ─────────────────────────────────────────────
-        // ── Edit-preset window ────────────────────────────────────────────────
-        if self.edit_preset_open {
-            let mut still_open = true;
-            egui::Window::new("Edit preset")
-                .open(&mut still_open)
-                .resizable(true)
-                .default_width(420.0)
-                .show(ui.ctx(), |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.set_min_width(380.0);
-
-                        ui.label("Preset name:");
-                        ui.text_edit_singleline(&mut self.ep_name);
-                        ui.add_space(6.0);
-
-                        ui.label("Fields to show in tooltip:");
-                        for (field, desc) in &known_fields {
-                            let mut checked = self.ep_fields.iter().any(|f| f == field);
-                            if ui.checkbox(&mut checked, *field).on_hover_text(*desc).changed() {
-                                if checked {
-                                    self.ep_fields.push(field.to_string());
-                                } else {
-                                    self.ep_fields.retain(|f| f != field);
-                                }
-                            }
-                        }
-                        ui.add_space(8.0);
-
-                        if let Some(err) = &self.ep_error {
-                            ui.colored_label(egui::Color32::RED, err);
-                        }
-
-                        ui.horizontal(|ui| {
-                            if ui.button("Apply").clicked() {
-                                let name = self.ep_name.trim().to_string();
-                                if name.is_empty() {
-                                    self.ep_error = Some("Name required.".into());
-                                } else if let Some(idx) = self.ep_idx {
-                                    self.leaf_info_presets[idx].name = name;
-                                    self.leaf_info_presets[idx].fields = self.ep_fields.clone();
-                                    // Refresh options if the active view uses this preset
-                                    let active_preset_id = self.gantt_views
-                                        .get(self.current_view_index)
-                                        .and_then(|v| v.leaf_infos.as_deref())
-                                        .map(str::to_string);
-                                    if active_preset_id.as_deref() == self.leaf_info_presets[idx].id.as_str().into() {
-                                        self.options.leaf_info_preset = Some(self.leaf_info_presets[idx].clone());
-                                    }
-                                    save_views_config(&self.gantt_views, &self.leaf_info_presets);
-                                    self.edit_preset_open = false;
-                                }
-                            }
-                            if ui.button("Cancel").clicked() {
-                                self.edit_preset_open = false;
-                            }
-                        });
-                    });
-                });
-            if !still_open { self.edit_preset_open = false; }
-        }
-
-        // ── Delete-preset confirm ─────────────────────────────────────────────
         if self.delete_preset_confirm.is_some() {
             let id = self.delete_preset_confirm.clone().unwrap();
             let name = self.leaf_info_presets.iter()
@@ -1331,13 +842,21 @@ impl View for GanttChart {
         }
 
         let mut visible_range: Option<(i64, i64)> = None;
-        let mut energy_points: Vec<(i64, f64)> = Vec::new();
+        // Each entry: (label, computed points). Multiple entries when a group has >1 energy file.
+        let mut energy_series: Vec<(String, Vec<(i64, f64)>)> = Vec::new();
         let mut last_gantt_usable_width_px: f32 = 1.0;
         let mut last_gantt_gutter_width_px: f32 = GUTTER_WIDTH;
 
-        let plot_h = 270.0;
-        let sep_h = 12.0;
-        let gantt_h = (ui.available_height() - plot_h - sep_h).max(100.0);
+        let show_energy = app.show_energy_diagram();
+        let show_gantt = app.show_gantt();
+        let sep_h = 8.0; // draggable handle height
+
+        if show_gantt {
+        let gantt_h = if show_energy {
+            (ui.available_height() - self.energy.panel_height - sep_h).max(100.0)
+        } else {
+            ui.available_height().max(100.0)
+        };
 
         ui.allocate_ui(egui::vec2(ui.available_width(), gantt_h), |ui| {
             Frame::canvas(ui.style()).show(ui, |ui| {
@@ -1391,9 +910,7 @@ impl View for GanttChart {
                         fixed_timeline_y,
                         (min_s, max_s),
                         &mut self.job_details_windows,
-                        &mut self.collapsed_jobs_level_1,
-                        &mut self.collapsed_jobs_level_2,
-                        &app.all_clusters,
+                        &app.data.all_clusters,
                         gutter_width,
                     );
 
@@ -1427,140 +944,155 @@ impl View for GanttChart {
                     let visible_end_s = visible_start_s + self.options.canvas_width_s as i64;
                     visible_range = Some((visible_start_s, visible_end_s));
 
-                    let energy_jobs: Vec<Job> = app
-                        .filtered_jobs
-                        .iter()
-                        .filter(|job| {
-                            let cluster_ok = match &self.energy_filter_cluster {
-                                Some(cluster) => job.clusters.iter().any(|c| c == cluster),
-                                None => true,
-                            };
-                            let owner_ok = match &self.energy_filter_owner {
-                                Some(owner) => &job.owner == owner,
-                                None => true,
-                            };
-                            // Mirror the Gantt: keep job only if ≥1 assigned resource
-                            // would appear in the current view (valid leaf field + filter).
-                            let leaf_field = self.options.levels.last().map(|s| s.as_str()).unwrap_or("");
-                            let view_ok = job.assigned_resources.iter().any(|&rid| {
-                                let Some(s) = app.strata_by_resource_id.get(&rid) else { return false; };
-                                let leaf_val = jobs::resolve_field(s, leaf_field, &app.strata_by_host);
-                                if leaf_val.starts_with("(no ") { return false; }
-                                match &self.options.resource_filter {
+                    if show_energy {
+                        let energy_jobs: Vec<Job> = app
+                            .data.filtered_jobs
+                            .iter()
+                            .filter(|job| {
+                                let cluster_ok = match &self.energy.filter_cluster {
+                                    Some(cluster) => job.clusters.iter().any(|c| c == cluster),
                                     None => true,
-                                    Some(f) => {
-                                        let actual = jobs::strata_field_value(s, &f.field).unwrap_or_default();
-                                        let matches = actual.trim() == f.value.trim();
-                                        f.exclude != matches
+                                };
+                                let owner_ok = match &self.energy.filter_owner {
+                                    Some(owner) => &job.owner == owner,
+                                    None => true,
+                                };
+                                let leaf_field = self.options.levels.last().map(|s| s.as_str()).unwrap_or("");
+                                let view_ok = job.assigned_resources.iter().any(|&rid| {
+                                    let Some(s) = app.data.strata_by_resource_id.get(&rid) else { return false; };
+                                    let leaf_val = jobs::resolve_field(s, leaf_field, &app.data.strata_by_host);
+                                    if leaf_val.starts_with("(no ") { return false; }
+                                    match &self.options.resource_filter {
+                                        None => true,
+                                        Some(f) => {
+                                            let actual = jobs::strata_field_value(s, &f.field).unwrap_or_default();
+                                            let matches = actual.trim() == f.value.trim();
+                                            f.exclude != matches
+                                        }
                                     }
-                                }
-                            });
-                            cluster_ok && owner_ok && view_ok
-                        })
-                        .cloned()
-                        .collect();
+                                });
+                                cluster_ok && owner_ok && view_ok
+                            })
+                            .cloned()
+                            .collect();
 
-                    energy_points = energy_estimate::estimate_global_energy_series(
-                        &energy_jobs,
-                        visible_start_s,
-                        visible_end_s,
-                        10,
-                        300.0,
-                    );
+                        let raw_multi = app.get_current_energy_series_multi();
+                        let in_group = app.import.current_group_index.is_some();
+                        energy_series = if raw_multi.is_empty() {
+                            // No raw energy files — estimate from Gantt jobs.
+                            vec![("Estimated".to_string(),
+                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s))]
+                        } else if in_group {
+                            // Group with Gantt member + raw energy files: estimated series first, then raw.
+                            let gantt_name = app.import.imported_data_sources
+                                .get(app.import.current_data_source_index.saturating_sub(1))
+                                .map(|ds| ds.name.clone())
+                                .unwrap_or_else(|| "Gantt".to_string());
+                            let mut all = vec![(
+                                format!("{} (est.)", gantt_name),
+                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s),
+                            )];
+                            for (name, s) in &raw_multi {
+                                all.push((name.to_string(),
+                                    energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s)));
+                            }
+                            all
+                        } else {
+                            raw_multi.iter().map(|(name, s)| {
+                                (name.to_string(),
+                                 energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s))
+                            }).collect()
+                        };
+                    }
 
                     let start = Local.timestamp_opt(visible_start_s, 0).unwrap();
                     let end = Local.timestamp_opt(visible_end_s, 0).unwrap();
                     app.set_localdate(start, end);
 
                     if self.pending_navigation_refresh {
-                        let refreshing = *app
-                            .is_refreshing
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        if !refreshing {
-                            app.instant_update();
+                        let never = *app.refresh.refresh_rate.lock().unwrap_or_else(|p| p.into_inner()) == u64::MAX;
+                        if never {
                             self.pending_navigation_refresh = false;
+                        } else {
+                            let refreshing = *app
+                                .refresh.is_refreshing
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            if !refreshing {
+                                app.instant_update();
+                                self.pending_navigation_refresh = false;
+                            }
                         }
                     }
                 });
             });
         });
+        } else if show_energy {
+            // Energy-only source: no Gantt rows, compute visible range from stored time bounds.
+            let vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
+            let ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
+            visible_range = Some((vs, ve));
+            let raw_multi = app.get_current_energy_series_multi();
+            energy_series = if raw_multi.is_empty() {
+                vec![("Estimated".to_string(),
+                    energy_estimate::compute_energy_points(None, &[], vs, ve))]
+            } else {
+                raw_multi.iter().map(|(name, s)| {
+                    (name.to_string(),
+                     energy_estimate::compute_energy_points(Some(s), &[], vs, ve))
+                }).collect()
+            };
+        }
 
-        ui.add_space(6.0);
-        ui.separator();
-        ui.add_space(2.0);
+        if show_energy {
+            if show_gantt {
+                // Draggable resize handle between Gantt and energy diagram.
+                let (handle_rect, handle_resp) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), sep_h),
+                    egui::Sense::drag(),
+                );
+                if handle_resp.hovered() || handle_resp.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                }
+                if handle_resp.dragged() {
+                    // Drag up (negative delta) → energy gets taller; drag down → shorter.
+                    self.energy.panel_height = (self.energy.panel_height - handle_resp.drag_delta().y)
+                        .clamp(80.0, 700.0);
+                }
+                let stroke_color = if handle_resp.hovered() || handle_resp.dragged() {
+                    ui.visuals().widgets.hovered.bg_stroke.color
+                } else {
+                    ui.visuals().widgets.noninteractive.bg_stroke.color
+                };
+                ui.painter().hline(
+                    handle_rect.x_range(),
+                    handle_rect.center().y,
+                    egui::Stroke::new(if handle_resp.hovered() || handle_resp.dragged() { 2.0 } else { 1.0 }, stroke_color),
+                );
+            }
 
-        if let Some((vs, ve)) = visible_range {
-            let now_s = Local::now().timestamp();
+            if let Some((vs, ve)) = visible_range {
+                let now_s = Local::now().timestamp();
 
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Filtres énergie :");
-
-                egui::ComboBox::from_id_salt("energy_filter_cluster")
-                    .selected_text(
-                        self.energy_filter_cluster
-                            .clone()
-                            .unwrap_or_else(|| "Cluster: Tous".to_string()),
-                    )
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.energy_filter_cluster, None, "Cluster: Tous");
-                        for cluster in get_all_clusters(&app.get_current_clusters()) {
-                            ui.selectable_value(
-                                &mut self.energy_filter_cluster,
-                                Some(cluster.clone()),
-                                cluster,
-                            );
-                        }
-                    });
-
-                let mut owners: Vec<String> =
-                    app.filtered_jobs.iter().map(|j| j.owner.clone()).collect();
+                let y_axis_gutter = if show_gantt { last_gantt_gutter_width_px } else { 0.0 };
+                let cluster_names_energy = get_all_clusters(&app.get_current_clusters());
+                let mut owners: Vec<String> = app.data.filtered_jobs.iter()
+                    .map(|j| j.owner.clone()).collect();
                 owners.sort();
                 owners.dedup();
-
-                egui::ComboBox::from_id_salt("energy_filter_owner")
-                    .selected_text(
-                        self.energy_filter_owner
-                            .clone()
-                            .unwrap_or_else(|| "Owner: Tous".to_string()),
-                    )
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.energy_filter_owner, None, "Owner: Tous");
-                        for owner in owners {
-                            ui.selectable_value(
-                                &mut self.energy_filter_owner,
-                                Some(owner.clone()),
-                                owner,
-                            );
-                        }
-                    });
-
-                if ui.small_button("Reset").clicked() {
-                    self.energy_filter_cluster = None;
-                    self.energy_filter_owner = None;
+                if let Some((new_vs, new_ve)) = self.energy.show(
+                    ui, &energy_series, vs, ve, now_s, y_axis_gutter, show_gantt,
+                    &cluster_names_energy, &owners,
+                ) {
+                    let new_width_s = (new_ve - new_vs).max(1) as f32;
+                    self.options.canvas_width_s = new_width_s;
+                    let start_s = self.initial_start_s.unwrap();
+                    let canvas_w_px = last_gantt_usable_width_px.max(1.0);
+                    let pan_px =
+                        -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
+                    self.options.sideways_pan_in_points = pan_px;
+                    self.pending_navigation_refresh = true;
                 }
-            });
-
-            ui.add_space(4.0);
-
-            let maybe_new_range = energy_plot::ui_energy_global(
-                ui,
-                &energy_points,
-                vs,
-                ve,
-                now_s,
-                last_gantt_gutter_width_px,
-            );
-
-            if let Some((new_vs, new_ve)) = maybe_new_range {
-                let new_width_s = (new_ve - new_vs).max(1) as f32;
-                self.options.canvas_width_s = new_width_s;
-                let start_s = self.initial_start_s.unwrap();
-                let canvas_w_px = last_gantt_usable_width_px.max(1.0);
-                let pan_px =
-                    -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
-                self.options.sideways_pan_in_points = pan_px;
-                self.pending_navigation_refresh = true;
             }
         }
 

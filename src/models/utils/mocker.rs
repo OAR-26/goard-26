@@ -113,13 +113,6 @@ fn mock_job(id: u32) -> Job {
         .map(|&h| h.to_string())
         .collect();
 
-    // Generate gantt color
-    let gantt_color = egui::Color32::from_rgb(
-        random_index(255) as u8,
-        random_index(255) as u8,
-        random_index(255) as u8,
-    );
-
     // Generate main resource state
     let main_resource_state = match random_index(3) {
         0 => ResourceState::Alive,
@@ -145,10 +138,13 @@ fn mock_job(id: u32) -> Job {
         } else {
             None
         },
-        gantt_color,
         clusters,
         hosts,
         main_resource_state,
+        job_type: String::new(),
+        job_types: Vec::new(),
+        name: None,
+        project: String::new(),
     }
 }
 
@@ -253,6 +249,8 @@ fn mock_strata(id: u32) -> Strata {
         slash_22: None,
         disk: None,
         nodeset: None,
+        available_upto: None,
+        extra: std::collections::HashMap::new(),
     }
 }
 

@@ -1,0 +1,58 @@
+{
+  "name": "OAR Simulation",
+  "description": "OAR job scheduler simulation output (goard/Grid5000 format)",
+  "file_extension": "json",
+  "detection": {
+    "strategy": "field_presence",
+    "required_fields": ["resources", "jobs"]
+  },
+  "visualizations": ["gantt", "energy_diagram"],
+  "supports_hierarchy_controls": true,
+  "primary_shape": "rectangle",
+  "hierarchy": {
+    "mode": "live"
+  },
+  "schema": {
+    "resources_key": "resources",
+    "jobs_key": "jobs",
+    "dead_resources_key": "dead_resources"
+  },
+  "validation": {
+    "rules": [
+      { "field": "resources", "expected_type": "array",  "required": true },
+      { "field": "jobs",      "expected_type": "object", "required": true }
+    ]
+  },
+  "job_field_mappings": {
+    "id":                  "id",
+    "owner":               "owner",
+    "state":               "state",
+    "start_time":          "start_time",
+    "walltime":            "walltime",
+    "stop_time":           "stop_time",
+    "command":             "command",
+    "queue":               "queue_name",
+    "hosts":               "network_address",
+    "assigned_resources":  "resource_id",
+    "submission_time":     "submission_time",
+    "job_type":            "job_type",
+    "job_types":           "types",
+    "name":                "name",
+    "project":             "project",
+    "properties":          "properties"
+  },
+  "state_mappings": {
+    "job_states": {
+      "Running":    "Running",
+      "Waiting":    "Waiting",
+      "Terminated": "Terminated",
+      "Error":      "Error"
+    },
+    "resource_states": {
+      "Alive":     "Alive",
+      "Dead":      "Dead",
+      "Absent":    "Absent",
+      "Suspected": "Suspected"
+    }
+  }
+}

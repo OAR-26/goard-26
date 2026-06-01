@@ -1,7 +1,7 @@
 use crate::models::data_structure::job::{Job, JobState};
 use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::data_structure::strata::Strata;
-use crate::models::utils::utils::convert_id_to_color;
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
@@ -232,15 +232,17 @@ fn from_json_value(json: &Value) -> Job {
         stop_time: json["stop_time"].as_i64().unwrap_or(0),
         submission_time: json["submission_time"].as_i64().unwrap_or(0),
         exit_code: json["exit_code"].as_i64().map(|n| n as i32),
-        gantt_color: convert_id_to_color(
-            json["id"]
-                .as_str()
-                .unwrap_or("0")
-                .parse::<u32>()
-                .unwrap_or(0),
-        ),
         clusters: Vec::new(),
         hosts: Vec::new(),
         main_resource_state: ResourceState::Unknown,
+        job_type: json["type"].as_str().unwrap_or("").to_string(),
+        job_types: json["types"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        name: json["name"].as_str().map(|s| s.to_string()),
+        project: json["project"].as_str().unwrap_or("").to_string(),
     }
 }

@@ -47,7 +47,7 @@ impl Default for JobTable {
  */
 impl JobTable {
     pub fn ui(&mut self, ui: &mut Ui, app: &mut ApplicationContext) {
-        self.displayed_jobs_per_page = app.filtered_jobs.clone();
+        self.displayed_jobs_per_page = app.data.filtered_jobs.clone();
         self.sort_key
             .sort_jobs(&mut self.displayed_jobs_per_page, self.sort_ascending);
 
@@ -56,11 +56,11 @@ impl JobTable {
         ui.add_space(8.0);
 
         self.start_idx = self.page * self.jobs_per_page;
-        self.end_idx = (self.start_idx + self.jobs_per_page).min(app.filtered_jobs.len());
+        self.end_idx = (self.start_idx + self.jobs_per_page).min(app.data.filtered_jobs.len());
         let total_pages =
-            (app.filtered_jobs.len() as f32 / self.jobs_per_page as f32).ceil() as usize;
+            (app.data.filtered_jobs.len() as f32 / self.jobs_per_page as f32).ceil() as usize;
 
-        if self.start_idx >= app.filtered_jobs.len() {
+        if self.start_idx >= app.data.filtered_jobs.len() {
             self.reset_pagination();
             return;
         }
@@ -243,7 +243,7 @@ impl JobTable {
                                 }
                                 self.details_window.push(JobDetailsWindow::new(
                                     job.clone(),
-                                    get_tree_structure_for_job(job, &app.all_clusters),
+                                    get_tree_structure_for_job(job, &app.data.all_clusters),
                                 ));
                             }
                         });
