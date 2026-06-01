@@ -42,6 +42,7 @@ pub struct ApplicationContext {
     pub user_connected: Option<String>,
     pub is_loading: bool,
     pub filters: JobFilters,
+    pub live_data: bool,
 }
 
 impl ApplicationContext {
@@ -945,9 +946,9 @@ impl Default for ApplicationContext {
             user_connected: None,
             is_loading: false,
             filters: JobFilters::default(),
+            live_data: false,
         };
         context.prefs.cluster_presets = ApplicationContext::load_presets_from_file("presets.json");
-        context.update_periodically();
         context
     }
 }

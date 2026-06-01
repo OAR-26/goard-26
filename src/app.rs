@@ -21,18 +21,21 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Self {
-        let app = App {
+    pub fn new(live_data: bool) -> Self {
+        let mut application_context = ApplicationContext::default();
+        application_context.live_data = live_data;
+        if live_data {
+            application_context.update_periodically();
+        }
+        App {
             secret: Secret::default(),
             dashboard_view: Dashboard::default(),
             gantt_view: GanttChart::default(),
             authentification_view: Authentification::default(),
             menu: Menu::default(),
             tools: Tools::default(),
-            application_context: ApplicationContext::default(),
-        };
-
-        app
+            application_context,
+        }
     }
     
     fn trigger_file_import(&mut self) {

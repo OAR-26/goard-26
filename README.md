@@ -4,9 +4,10 @@ Goard (pronounced "guard") is a modern, blazing-fast dashboard application built
 
 ## Key Features
 
-- Real-time job monitoring
+- Real-time job monitoring (optional, enabled via `--live` flag)
+- File import for Simulations, offline/historical data analysis
 - Interactive dashboard view
-- Gantt chart visualization
+- Gantt chart visualization with different aggregation views
 - Period-based job filtering
 - Secure SSH-based data retrieval from HPC clusters
 - Loading state indicators
@@ -42,8 +43,15 @@ src/
     ```
 
 3. Launch the application:
+
+    **Import-only mode** (default — no live data, import files manually):
     ```bash
     cargo run --release
+    ```
+
+    **Live data mode** (connects to HPC cluster for real-time monitoring):
+    ```bash
+    cargo run --release -- --live
     ```
 
 #### Web Development

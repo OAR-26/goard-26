@@ -269,22 +269,24 @@ impl GanttChart {
         let mut remove_from_group: Option<(usize, usize)> = None; // (group_idx, ds_idx)
 
         ui.horizontal(|ui| {
-            // Live Data tab.
-            let is_active = current_index == 0 && current_group.is_none();
-            let fill = if is_active { active_fill } else { inactive_fill };
-            let text = if is_active {
-                egui::RichText::new("Live Data").strong()
-            } else {
-                egui::RichText::new("Live Data")
-            };
-            let mut btn = egui::Button::new(text).fill(fill).frame(true);
-            if is_active {
-                btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
+            // Live Data tab — only shown when live mode is active.
+            if app.live_data {
+                let is_active = current_index == 0 && current_group.is_none();
+                let fill = if is_active { active_fill } else { inactive_fill };
+                let text = if is_active {
+                    egui::RichText::new("Live Data").strong()
+                } else {
+                    egui::RichText::new("Live Data")
+                };
+                let mut btn = egui::Button::new(text).fill(fill).frame(true);
+                if is_active {
+                    btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
+                }
+                if ui.add(btn).clicked() {
+                    switch_to_ds = Some(0);
+                }
+                ui.add_space(4.0);
             }
-            if ui.add(btn).clicked() {
-                switch_to_ds = Some(0);
-            }
-            ui.add_space(4.0);
 
             // Individual ungrouped tabs.
             for (ds_idx, name) in &individual {

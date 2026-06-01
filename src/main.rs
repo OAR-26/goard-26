@@ -9,14 +9,12 @@ i18n!("src/i18n");
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
-    // Configure the native options
+    let live_data = std::env::args().any(|a| a == "--live");
     let options = eframe::NativeOptions::default();
-
-    // Start the native app
     eframe::run_native(
         &t!("app.title"),
         options,
-        Box::new(|_cc| Ok(Box::new(app::App::new()))),
+        Box::new(move |_cc| Ok(Box::new(app::App::new(live_data)))),
     )
 }
 
@@ -46,7 +44,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|_cc| Ok(Box::new(app::App::new()))),
+                Box::new(|_cc| Ok(Box::new(app::App::new(false)))),
             )
             .await;
 
