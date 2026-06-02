@@ -13,6 +13,7 @@ pub struct RefreshCoordinator {
     pub end_date: Arc<Mutex<DateTime<Local>>>,
     pub is_refreshing: Arc<Mutex<bool>>,
     pub refresh_rate: Arc<Mutex<u64>>,
+    pub thread_started: bool,
 
     pub jobs_sender: Sender<Vec<Job>>,
     pub jobs_receiver: Receiver<Vec<Job>>,
@@ -32,6 +33,7 @@ impl RefreshCoordinator {
             end_date: Arc::new(Mutex::new(now + chrono::Duration::hours(1))),
             is_refreshing: Arc::new(Mutex::new(false)),
             refresh_rate: Arc::new(Mutex::new(30)),
+            thread_started: false,
             jobs_sender,
             jobs_receiver,
             resources_sender,

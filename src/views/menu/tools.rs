@@ -142,42 +142,44 @@ impl Tools {
                     app.prefs.theme_toggle_requested = true;
                 }
 
-                // Menu Refresh Rate (adjacent to theme on the right)
-                ui.menu_button(
-                    "🕓 ".to_string() + &t!("app.menu.refresh_rate.button"),
-                    |ui| {
-                        ui.set_min_width(70.0);
+                // Refresh rate + manual refresh — only relevant in live mode.
+                if app.live_data {
+                    ui.menu_button(
+                        "🕓 ".to_string() + &t!("app.menu.refresh_rate.button"),
+                        |ui| {
+                            ui.set_min_width(70.0);
 
-                        let refresh_rates = vec![
-                            (30, t!("app.menu.refresh_rate.refresh_30")),
-                            (60, t!("app.menu.refresh_rate.refresh_60")),
-                            (300, t!("app.menu.refresh_rate.refresh_300")),
-                            (u64::MAX, t!("app.menu.refresh_rate.refresh_never")),
-                        ];
+                            let refresh_rates = vec![
+                                (30, t!("app.menu.refresh_rate.refresh_30")),
+                                (60, t!("app.menu.refresh_rate.refresh_60")),
+                                (300, t!("app.menu.refresh_rate.refresh_300")),
+                                (u64::MAX, t!("app.menu.refresh_rate.refresh_never")),
+                            ];
 
-                        for (rate, label) in refresh_rates {
-                            let selected = *app.refresh.refresh_rate.lock().unwrap() == rate;
-                            let display_label = if selected {
-                                format!("{} ✔", label)
-                            } else {
-                                label.to_string()
-                            };
-                            if ui.selectable_label(selected, display_label).clicked() {
-                                app.update_refresh_rate(rate);
-                                ui.close_menu();
+                            for (rate, label) in refresh_rates {
+                                let selected = *app.refresh.refresh_rate.lock().unwrap() == rate;
+                                let display_label = if selected {
+                                    format!("{} ✔", label)
+                                } else {
+                                    label.to_string()
+                                };
+                                if ui.selectable_label(selected, display_label).clicked() {
+                                    app.update_refresh_rate(rate);
+                                    ui.close_menu();
+                                }
                             }
-                        }
-                    },
-                );
+                        },
+                    );
 
-                let refresh_btn = egui::Button::new("⟳");
-                let refresh_btn_response = if *app.refresh.is_refreshing.lock().unwrap() {
-                    ui.add_enabled(false, refresh_btn)
-                } else {
-                    ui.add(refresh_btn)
-                };
-                if refresh_btn_response.clicked() {
-                    app.instant_update();
+                    let refresh_btn = egui::Button::new("⟳");
+                    let refresh_btn_response = if *app.refresh.is_refreshing.lock().unwrap() {
+                        ui.add_enabled(false, refresh_btn)
+                    } else {
+                        ui.add(refresh_btn)
+                    };
+                    if refresh_btn_response.clicked() {
+                        app.instant_update();
+                    }
                 }
             });
 

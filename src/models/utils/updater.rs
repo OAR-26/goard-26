@@ -100,6 +100,12 @@ impl ApplicationContext {
     }
 
     pub fn update_periodically(&mut self) {
+        if self.refresh.thread_started {
+            // Thread already running — just unpause it.
+            *self.refresh.refresh_rate.lock().unwrap() = 30;
+            return;
+        }
+        self.refresh.thread_started = true;
         let refresh_rate = self.refresh.refresh_rate.clone();
         let jobs_sender = self.refresh.jobs_sender.clone();
         let resources_sender = self.refresh.resources_sender.clone();

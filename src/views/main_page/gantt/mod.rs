@@ -267,6 +267,7 @@ impl GanttChart {
         let mut close_group_idx: Option<usize> = None;
         let mut group_target: Option<usize> = None;
         let mut remove_from_group: Option<(usize, usize)> = None; // (group_idx, ds_idx)
+        let mut disable_live = false;
 
         ui.horizontal(|ui| {
             // Live Data tab — only shown when live mode is active.
@@ -282,9 +283,17 @@ impl GanttChart {
                 if is_active {
                     btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
                 }
-                if ui.add(btn).clicked() {
-                    switch_to_ds = Some(0);
-                }
+                ui.horizontal(|ui| {
+                    if ui.add(btn).clicked() {
+                        switch_to_ds = Some(0);
+                    }
+                    let close = egui::Button::new("×")
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::new(1.0, text_color));
+                    if ui.add(close).on_hover_text("Disable live data").clicked() {
+                        disable_live = true;
+                    }
+                });
                 ui.add_space(4.0);
             }
 
@@ -405,6 +414,31 @@ impl GanttChart {
         });
 
         // Apply deferred actions (avoids re-borrow of `app` inside closure).
+        if disable_live {
+            app.live_data = false;
+            *app.refresh.refresh_rate.lock().unwrap() = u64::MAX;
+            *app.refresh.is_refreshing.lock().unwrap() = false;
+            // Drain in-flight channel messages so they don't land after re-enable.
+            while app.refresh.jobs_receiver.try_recv().is_ok() {}
+            while app.refresh.resources_receiver.try_recv().is_ok() {}
+            while app.refresh.dead_intervals_receiver.try_recv().is_ok() {}
+            app.data.all_jobs.clear();
+            app.data.swap_all_jobs.clear();
+            app.data.all_clusters.clear();
+            app.data.swap_all_clusters.clear();
+            app.data.strata_by_resource_id.clear();
+            app.data.strata_by_host.clear();
+            app.data.strata_by_resource_id_live.clear();
+            app.data.strata_by_host_live.clear();
+            app.data.markers.clear();
+            if app.import.current_data_source_index == 0 {
+                if !app.import.imported_data_sources.is_empty() {
+                    app.switch_to_data_source(1);
+                } else {
+                    app.filter_jobs();
+                }
+            }
+        }
         if let Some(i) = switch_to_ds               { app.switch_to_data_source(i); }
         if let Some(gi) = switch_to_group           { app.switch_to_group(gi); }
         if let Some(i) = close_ds                   { app.close_imported_data_source(i); }

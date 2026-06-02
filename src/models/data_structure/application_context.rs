@@ -48,6 +48,7 @@ pub struct ApplicationContext {
 impl ApplicationContext {
     pub fn check_job_update(&mut self) {
         if let Ok(new_jobs) = self.refresh.jobs_receiver.try_recv() {
+            if !self.live_data { return; }
             self.data.swap_all_jobs = new_jobs;
             if self.import.current_data_source_index == 0 {
                 self.is_loading = false;
@@ -57,6 +58,7 @@ impl ApplicationContext {
 
     pub fn check_ressource_update(&mut self) {
         if let Ok(new_resources) = self.refresh.resources_receiver.try_recv() {
+            if !self.live_data { return; }
             // Always keep live-only caches current so switching back to live is instant.
             self.data.strata_by_resource_id_live.clear();
             for r in new_resources.iter() {
@@ -395,7 +397,7 @@ impl ApplicationContext {
     }
 
     pub fn check_dead_intervals_update(&mut self) {
-        if self.import.current_data_source_index != 0 {
+        if !self.live_data || self.import.current_data_source_index != 0 {
             return;
         }
         if let Ok(intervals) = self.refresh.dead_intervals_receiver.try_recv() {
@@ -807,6 +809,15 @@ impl ApplicationContext {
                 self.import.current_data_source_index -= 1;
             } else if self.import.current_data_source_index == index {
                 self.import.current_data_source_index = 0;
+                if !self.live_data {
+                    self.data.all_jobs.clear();
+                    self.data.swap_all_jobs.clear();
+                    self.data.all_clusters.clear();
+                    self.data.swap_all_clusters.clear();
+                    self.data.strata_by_resource_id.clear();
+                    self.data.strata_by_host.clear();
+                    self.data.markers.clear();
+                }
             }
             self.filter_jobs();
             return true;

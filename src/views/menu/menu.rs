@@ -47,7 +47,15 @@ impl View for Menu {
                         app.import.request_file_import = true;
                         ui.close_menu();
                     }
-                    
+
+                    ui.add_enabled_ui(!app.live_data, |ui| {
+                        if ui.button("📡 Live Data").clicked() {
+                            app.live_data = true;
+                            app.update_periodically();
+                            ui.close_menu();
+                        }
+                    });
+
                     ui.separator();
 
                     if app.user_connected.is_some() {
