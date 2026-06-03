@@ -1,96 +1,72 @@
 # Goard
 
-Goard (pronounced "guard") is a modern, blazing-fast dashboard application built with Rust, powered by Eframe and Egui libraries. This elegantly structured MVC project delivers stunning data visualization through an interactive dashboard and Gantt chart interface.
+Goard (pronounced "guard") is a desktop/web dashboard for monitoring HPC cluster jobs, built with Rust + egui/eframe. It supports real-time job tracking via SSH and offline analysis through JSON file imports.
 
 ## Key Features
 
 - Real-time job monitoring (optional, enabled via `--live` flag)
-- File import for Simulations, offline/historical data analysis
-- Interactive dashboard view
-- Gantt chart visualization with different aggregation views
-- Period-based job filtering
-- Secure SSH-based data retrieval from HPC clusters
-- Loading state indicators
-- Responsive UI with resizable components
+- File import for offline/historical analysis (OAR, Energy Series, Event formats)
+- File grouping: overlay energy measurements on Gantt job data
+- Interactive dashboard view (metrics + job table)
+- Interactive Gantt chart with configurable hierarchy views
+- Energy consumption diagram (estimated or measured)
+- Multi-criteria job filtering + cluster presets
+- Light/dark theme, i18n (EN/FR), adjustable font size
+- WASM build with PWA/offline support
 
-## Project Architecture
+## Documentation
 
-```
-src/
-├── main.rs         # Entry point & application bootstrap
-├── app.rs          # Core application state management
-├── models/         # Data structures & business logic
-├── views/          # UI components & layouts
-```
+- **[UserManuel.md](UserManuel.md)** — end-user guide: all UI features, import, filters, views, admin
+- **[DevManuel.md](DevManuel.md)** — developer guide: architecture, state model, adding file types, editing `views.json`, config files
 
 ## Getting Started
 
 ### Prerequisites
 
-- Rust and Cargo installed
-- SSH access to HPC cluster
+- Rust and Cargo
 - Git
+- SSH access to an HPC cluster *(only required for `--live` mode)*
 
 ### Quick Start
 
-#### Testing Locally
+#### Native
 
-1. Set up SSH access to your HPC cluster (default configuration: "grenoble.g5k").
+```bash
+rustup update
+```
 
-2. Ensure you have the latest stable Rust:
-    ```bash
-    rustup update
-    ```
+**Import-only mode** (default — no live data, import JSON files manually):
+```bash
+cargo run --release
+```
 
-3. Launch the application:
+**Live data mode** (connects to HPC cluster for real-time monitoring):
+```bash
+cargo run --release -- --live
+```
 
-    **Import-only mode** (default — no live data, import files manually):
-    ```bash
-    cargo run --release
-    ```
+#### Web (WASM)
 
-    **Live data mode** (connects to HPC cluster for real-time monitoring):
-    ```bash
-    cargo run --release -- --live
-    ```
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install --locked trunk
+trunk serve
+```
+Access at `http://127.0.0.1:8080/index.html#dev`
 
-#### Web Development
-
-Build and run as a web application using WebAssembly:
-
-1. Add WASM target:
-    ```bash
-    rustup target add wasm32-unknown-unknown
-    ```
-
-2. Install Trunk:
-    ```bash
-    cargo install --locked trunk
-    ```
-
-3. Serve locally:
-    ```bash
-    trunk serve
-    ```
-    Access at `http://127.0.0.1:8080/index.html#dev`
-
-> Append `#dev` to skip PWA caching during development
+> Append `#dev` to skip PWA caching during development.
 
 #### Web Deployment
 
-1. Build for production:
-    ```bash
-    trunk build --release
-    ```
+```bash
+trunk build --release
+```
 
-2. Deploy the generated `dist` directory to your preferred hosting platform
+Deploy the generated `dist/` directory to any static hosting platform.
 
-> The app supports offline functionality through service worker caching!
-
+> The app supports offline functionality through service worker caching.
 
 ## Contributing
-
-We welcome contributions! Here's how you can help:
 
 - Report bugs
 - Propose features
@@ -99,8 +75,3 @@ We welcome contributions! Here's how you can help:
 ## License
 
 This project is open source and available under the LGPL-2.1 license.
-
-## Support
-
-Star this repo if you find it helpful!
-
