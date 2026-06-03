@@ -704,6 +704,9 @@ impl ApplicationContext {
             if !self.data.strata_by_resource_id_live.is_empty() {
                 self.data.strata_by_resource_id = self.data.strata_by_resource_id_live.clone();
                 self.data.strata_by_host = self.data.strata_by_host_live.clone();
+            } else {
+                self.data.strata_by_resource_id.clear();
+                self.data.strata_by_host.clear();
             }
             self.data.dead_intervals = get_dead_intervals_from_json("./data/data.json");
             let live_now = Local::now();

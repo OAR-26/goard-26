@@ -1,0 +1,17 @@
+[
+  { "timestamp": 1779284400, "energy": 3120.4, "walltime": 300 },
+  { "timestamp": 1779284700, "energy": 2875.1, "walltime": 300 },
+  { "timestamp": 1779285000, "energy": 2650.8, "walltime": 300 },
+  { "timestamp": 1779285300, "energy": 4210.6, "walltime": 300 },
+  { "timestamp": 1779285600, "energy": 1980.3, "walltime": 300 },
+  { "timestamp": 1779285900, "energy": 3565.9, "walltime": 300 },
+  { "timestamp": 1779286200, "energy": 4422.7, "walltime": 300 },
+  { "timestamp": 1779286500, "energy": 1740.5, "walltime": 300 },
+  { "timestamp": 1779286800, "energy": 2955.2, "walltime": 300 },
+  { "timestamp": 1779287100, "energy": 2288.4, "walltime": 300 },
+  { "timestamp": 1779287400, "energy": 3895.0, "walltime": 300 },
+  { "timestamp": 1779287700, "energy": 2560.6, "walltime": 300 },
+  { "timestamp": 1779288000, "energy": 4188.9, "walltime": 300 },
+  { "timestamp": 1779288300, "energy": 2075.7, "walltime": 300 },
+  { "timestamp": 1779288600, "energy": 3342.1, "walltime": 300 }
+]

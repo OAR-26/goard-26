@@ -52,6 +52,8 @@ impl View for Menu {
                         if ui.button("📡 Live Data").clicked() {
                             app.live_data = true;
                             app.update_periodically();
+                            app.switch_to_data_source(0);
+                            app.instant_update();
                             ui.close_menu();
                         }
                     });

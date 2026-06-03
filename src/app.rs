@@ -21,11 +21,22 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(live_data: bool) -> Self {
+    pub fn new(live_data: bool, import_paths: Vec<String>) -> Self {
         let mut application_context = ApplicationContext::default();
         application_context.live_data = live_data;
         if live_data {
             application_context.update_periodically();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        for path in &import_paths {
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    if let Err(e) = application_context.import_data_from_json(&content, Some(path.clone()), None) {
+                        eprintln!("Failed to import {}: {}", path, e);
+                    }
+                }
+                Err(e) => eprintln!("Cannot read {}: {}", path, e),
+            }
         }
         App {
             secret: Secret::default(),

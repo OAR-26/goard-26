@@ -9,12 +9,16 @@ i18n!("src/i18n");
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
-    let live_data = std::env::args().any(|a| a == "--live");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let live_data = args.iter().any(|a| a == "--live");
+    let import_paths: Vec<String> = args.into_iter()
+        .filter(|a| !a.starts_with("--"))
+        .collect();
     let options = eframe::NativeOptions::default();
     eframe::run_native(
         &t!("app.title"),
         options,
-        Box::new(move |_cc| Ok(Box::new(app::App::new(live_data)))),
+        Box::new(move |_cc| Ok(Box::new(app::App::new(live_data, import_paths)))),
     )
 }
 
@@ -44,7 +48,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|_cc| Ok(Box::new(app::App::new(false)))),
+                Box::new(|_cc| Ok(Box::new(app::App::new(false, Vec::new())))),
             )
             .await;
 

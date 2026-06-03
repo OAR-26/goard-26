@@ -1,0 +1,11 @@
+[
+  { "timestamp": 1779198349, "energy": 1820.5, "walltime": 120 },
+  { "timestamp": 1779198354, "energy": 2410.7, "walltime": 100 },
+  { "timestamp": 1779198359, "energy": 3155.2, "walltime": 300 },
+  { "timestamp": 1779198367, "energy": 4288.4, "walltime": 100 },
+  { "timestamp": 1779198467, "energy": 3910.8, "walltime": 282 },
+  { "timestamp": 1779198547, "energy": 2766.3, "walltime": 100 },
+  { "timestamp": 1779198551, "energy": 2480.9, "walltime": 100 },
+  { "timestamp": 1779198627, "energy": 3375.0, "walltime": 250 },
+  { "timestamp": 1779198642, "energy": 1120.6, "walltime": 0 }
+]
