@@ -174,6 +174,8 @@ pub struct GanttChart {
     tab_view_state: std::collections::HashMap<usize, (f32, f32)>,
     /// Saved visible (start_s, end_s) per data-source index (energy-only tabs).
     energy_visible: std::collections::HashMap<usize, (i64, i64)>,
+    /// Saved current_view_index per data-source index.
+    tab_view_index: std::collections::HashMap<usize, usize>,
 
     gantt_views: Vec<GanttView>,
     current_view_index: usize,
@@ -215,6 +217,7 @@ impl Default for GanttChart {
             last_data_source_index: None,
             tab_view_state: std::collections::HashMap::new(),
             energy_visible: std::collections::HashMap::new(),
+            tab_view_index: std::collections::HashMap::new(),
             last_canvas_usable_width_px: 1.0,
             pending_navigation_refresh: false,
             delete_view_confirm: None,
@@ -463,9 +466,10 @@ impl GanttChart {
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         let ds_idx = app.import.current_data_source_index;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
-            // Save zoom/pan for the tab we are leaving.
+            // Save zoom/pan and view index for the tab we are leaving.
             if let Some(old_idx) = self.last_data_source_index {
                 self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points));
+                self.tab_view_index.insert(old_idx, self.current_view_index);
             }
 
             let start_s = app.get_start_date().timestamp();
@@ -485,6 +489,11 @@ impl GanttChart {
                 self.options.sideways_pan_in_points = saved_pan;
             }
 
+            // Restore view index if this tab was visited before.
+            if let Some(&saved_view) = self.tab_view_index.get(&ds_idx) {
+                self.current_view_index = saved_view.min(self.gantt_views.len().saturating_sub(1));
+            }
+
             // Apply or restore aggregation levels when the data source changes.
             use crate::models::file_types::FileTypeRegistry;
             if ds_idx == 0 {
@@ -493,15 +502,29 @@ impl GanttChart {
                     self.options.levels = view.levels.clone();
                     self.options.resource_filter = view.filter.clone();
                     self.options.leaf_label_template = view.leaf_label_template.clone();
+                    self.options.sort_by_label = view.sort_by_label;
+                    self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
+                        .cloned()
+                        .or_else(|| backward_compat_preset(view));
                 }
             } else {
                 let type_name = app.import.imported_data_sources
                     .get(ds_idx - 1).map(|ds| ds.file_type_name.clone()).unwrap_or_default();
                 let registry = FileTypeRegistry::default();
                 if let Some(levels) = registry.find_by_name(&type_name).and_then(|t| t.hierarchy_levels()) {
+                    // File type has its own fixed hierarchy — ignore view index.
                     self.options.levels = levels;
                     self.options.resource_filter = None;
                     self.options.leaf_label_template = None;
+                } else if let Some(view) = self.gantt_views.get(self.current_view_index) {
+                    // OAR-style file — apply the restored view.
+                    self.options.levels = view.levels.clone();
+                    self.options.resource_filter = view.filter.clone();
+                    self.options.leaf_label_template = view.leaf_label_template.clone();
+                    self.options.sort_by_label = view.sort_by_label;
+                    self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
+                        .cloned()
+                        .or_else(|| backward_compat_preset(view));
                 }
             }
         }
@@ -645,9 +668,10 @@ impl View for GanttChart {
 
         let ds_idx = app.import.current_data_source_index;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
-            // Save zoom/pan for the tab we are leaving (UI-click switches land here).
+            // Save zoom/pan and view index for the tab we are leaving (UI-click switches land here).
             if let Some(old_idx) = self.last_data_source_index {
                 self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points));
+                self.tab_view_index.insert(old_idx, self.current_view_index);
             }
 
             let start_s = app.get_start_date().timestamp();
@@ -665,6 +689,21 @@ impl View for GanttChart {
             if let Some(&(saved_width, saved_pan)) = self.tab_view_state.get(&ds_idx) {
                 self.options.canvas_width_s = saved_width;
                 self.options.sideways_pan_in_points = saved_pan;
+            }
+
+            // Restore view index if this tab was visited before.
+            if let Some(&saved_view) = self.tab_view_index.get(&ds_idx) {
+                self.current_view_index = saved_view.min(self.gantt_views.len().saturating_sub(1));
+                // Apply the view's options (file types with own hierarchy override this every frame).
+                if let Some(view) = self.gantt_views.get(self.current_view_index) {
+                    self.options.levels = view.levels.clone();
+                    self.options.resource_filter = view.filter.clone();
+                    self.options.leaf_label_template = view.leaf_label_template.clone();
+                    self.options.sort_by_label = view.sort_by_label;
+                    self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
+                        .cloned()
+                        .or_else(|| backward_compat_preset(view));
+                }
             }
         }
 
