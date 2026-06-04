@@ -1,5 +1,3 @@
-use serde_json::Value;
-
 /// RGB color parsed from a hex string like "#88ffff".
 #[derive(Debug, Clone, Copy)]
 pub struct RgbColor(pub u8, pub u8, pub u8);
@@ -29,59 +27,44 @@ pub struct StateColors {
 impl Default for StateColors {
     fn default() -> Self {
         Self {
-            absent:   RgbColor(30,  100, 220),
+            absent:    RgbColor(30,  100, 220),
             suspected: RgbColor(220, 30,  30),
-            dead:     RgbColor(120, 120, 120),
-            standby:  RgbColor(0x88, 0xff, 0xff),
+            dead:      RgbColor(120, 120, 120),
+            standby:   RgbColor(0x88, 0xff, 0xff),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct GanttConfig {
-    /// Truncate open-ended Absent intervals to now when Standby applies.
     pub standby_truncate_to_now: bool,
-    /// Hide the future portion of besteffort jobs.
     pub besteffort_truncate_to_now: bool,
-    /// Minimum interval duration in seconds before it is rendered (0 = always render).
     pub min_state_duration_s: i64,
-    /// Default gantt width in seconds on first load.
     pub default_timespan_s: i64,
-    /// Hatch colors for dark mode.
     pub state_colors: StateColors,
-    /// Hatch colors for light mode (darker so they're visible).
     pub state_colors_light: StateColors,
-    /// Minimum RGB component value for random job colors (0–255). Higher = lighter colors.
     pub job_color_min: u8,
 
-    // ── Gantt row sizing ──────────────────────────────────────────────────────
     pub gantt_row_height: f32,
     pub gantt_row_height_min: f32,
     pub gantt_row_height_max: f32,
 
-    // ── Energy panel ─────────────────────────────────────────────────────────
     pub energy_panel_height: f32,
     pub energy_watts_per_resource: f64,
     pub energy_series_colors: Vec<RgbColor>,
     pub now_line_color: RgbColor,
 
-    // ── Zoom limits ───────────────────────────────────────────────────────────
     pub zoom_max_seconds: f32,
     pub zoom_min_seconds: f32,
 
-    // ── Interaction sensitivity ───────────────────────────────────────────────
     pub scroll_zoom_sensitivity: f32,
     pub drag_zoom_sensitivity: f32,
     pub zoom_animation_duration: f64,
 
-    // ── Layout ────────────────────────────────────────────────────────────────
     pub gutter_max_width: f32,
     pub job_label_min_width: f32,
     pub hatch_spacing: f32,
 
-    // ── Live data time window ─────────────────────────────────────────────────
-    pub live_window_hours_before: i64,
-    pub live_window_hours_after: i64,
 }
 
 impl Default for GanttConfig {
@@ -129,8 +112,6 @@ impl Default for GanttConfig {
             job_label_min_width: 30.0,
             hatch_spacing: 10.0,
 
-            live_window_hours_before: 1,
-            live_window_hours_after: 1,
         }
     }
 }
@@ -138,25 +119,39 @@ impl Default for GanttConfig {
 impl GanttConfig {
     pub fn load() -> Self {
         #[cfg(target_arch = "wasm32")]
-        let content = include_str!("../../../config.json").to_string();
+        let content = include_str!("../../../config.toml").to_string();
         #[cfg(not(target_arch = "wasm32"))]
-        let content = match std::fs::read_to_string("config.json") {
+        let content = match std::fs::read_to_string("config.toml") {
             Ok(c) => c,
             Err(_) => return Self::default(),
         };
-        let val: Value = match serde_json::from_str(&content) {
+        let val: toml::Value = match toml::from_str(&content) {
             Ok(v) => v,
             Err(_) => return Self::default(),
         };
         let def = Self::default();
 
+        let f64 = |key: &str| -> Option<f64> {
+            val.get(key).and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+        };
+        let i64 = |key: &str| -> Option<i64> {
+            val.get(key).and_then(|v| v.as_integer())
+        };
+        let bool = |key: &str| -> Option<bool> {
+            val.get(key).and_then(|v| v.as_bool())
+        };
+        let str_ = |key: &str| -> Option<&str> {
+            val.get(key).and_then(|v| v.as_str())
+        };
+
         let parse_colors = |key: &str, fallback: &StateColors| -> StateColors {
-            let colors = val.get(key);
+            let tbl = val.get(key).and_then(|v| v.as_table());
+            let get = |k: &str| tbl.and_then(|t| t.get(k)).and_then(|v| v.as_str()).and_then(RgbColor::from_hex);
             StateColors {
-                absent:    colors.and_then(|c| c.get("Absent")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(fallback.absent),
-                suspected: colors.and_then(|c| c.get("Suspected")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(fallback.suspected),
-                dead:      colors.and_then(|c| c.get("Dead")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(fallback.dead),
-                standby:   colors.and_then(|c| c.get("Standby")).and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(fallback.standby),
+                absent:    get("Absent").unwrap_or(fallback.absent),
+                suspected: get("Suspected").unwrap_or(fallback.suspected),
+                dead:      get("Dead").unwrap_or(fallback.dead),
+                standby:   get("Standby").unwrap_or(fallback.standby),
             }
         };
 
@@ -164,18 +159,18 @@ impl GanttConfig {
         let state_colors_light = parse_colors("state_colors_light",  &def.state_colors_light);
 
         Self {
-            standby_truncate_to_now:    val.get("standby_truncate_state_to_now").and_then(|v| v.as_bool()).unwrap_or(def.standby_truncate_to_now),
-            besteffort_truncate_to_now: val.get("besteffort_truncate_job_to_now").and_then(|v| v.as_bool()).unwrap_or(def.besteffort_truncate_to_now),
-            min_state_duration_s:       val.get("min_state_duration").and_then(|v| v.as_i64()).unwrap_or(def.min_state_duration_s),
-            default_timespan_s:         val.get("default_timespan").and_then(|v| v.as_i64()).unwrap_or(def.default_timespan_s),
-            job_color_min:              val.get("job_color_min").and_then(|v| v.as_u64()).map(|v| v.min(255) as u8).unwrap_or(def.job_color_min),
+            standby_truncate_to_now:    bool("standby_truncate_state_to_now").unwrap_or(def.standby_truncate_to_now),
+            besteffort_truncate_to_now: bool("besteffort_truncate_job_to_now").unwrap_or(def.besteffort_truncate_to_now),
+            min_state_duration_s:       i64("min_state_duration").unwrap_or(def.min_state_duration_s),
+            default_timespan_s:         i64("default_timespan").unwrap_or(def.default_timespan_s),
+            job_color_min:              i64("job_color_min").map(|v| v.clamp(0, 255) as u8).unwrap_or(def.job_color_min),
 
-            gantt_row_height:           val.get("gantt_row_height").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.gantt_row_height),
-            gantt_row_height_min:       val.get("gantt_row_height_min").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.gantt_row_height_min),
-            gantt_row_height_max:       val.get("gantt_row_height_max").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.gantt_row_height_max),
+            gantt_row_height:           f64("gantt_row_height").map(|v| v as f32).unwrap_or(def.gantt_row_height),
+            gantt_row_height_min:       f64("gantt_row_height_min").map(|v| v as f32).unwrap_or(def.gantt_row_height_min),
+            gantt_row_height_max:       f64("gantt_row_height_max").map(|v| v as f32).unwrap_or(def.gantt_row_height_max),
 
-            energy_panel_height:        val.get("energy_panel_height").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.energy_panel_height),
-            energy_watts_per_resource:  val.get("energy_watts_per_resource").and_then(|v| v.as_f64()).unwrap_or(def.energy_watts_per_resource),
+            energy_panel_height:        f64("energy_panel_height").map(|v| v as f32).unwrap_or(def.energy_panel_height),
+            energy_watts_per_resource:  f64("energy_watts_per_resource").unwrap_or(def.energy_watts_per_resource),
             energy_series_colors: {
                 val.get("energy_series_colors")
                     .and_then(|v| v.as_array())
@@ -183,21 +178,18 @@ impl GanttConfig {
                     .filter(|v| !v.is_empty())
                     .unwrap_or(def.energy_series_colors)
             },
-            now_line_color:             val.get("now_line_color").and_then(|v| v.as_str()).and_then(RgbColor::from_hex).unwrap_or(def.now_line_color),
+            now_line_color:             str_("now_line_color").and_then(RgbColor::from_hex).unwrap_or(def.now_line_color),
 
-            zoom_max_seconds:           val.get("zoom_max_seconds").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.zoom_max_seconds),
-            zoom_min_seconds:           val.get("zoom_min_seconds").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.zoom_min_seconds),
+            zoom_max_seconds:           f64("zoom_max_seconds").map(|v| v as f32).unwrap_or(def.zoom_max_seconds),
+            zoom_min_seconds:           f64("zoom_min_seconds").map(|v| v as f32).unwrap_or(def.zoom_min_seconds),
 
-            scroll_zoom_sensitivity:    val.get("scroll_zoom_sensitivity").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.scroll_zoom_sensitivity),
-            drag_zoom_sensitivity:      val.get("drag_zoom_sensitivity").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.drag_zoom_sensitivity),
-            zoom_animation_duration:    val.get("zoom_animation_duration").and_then(|v| v.as_f64()).unwrap_or(def.zoom_animation_duration),
+            scroll_zoom_sensitivity:    f64("scroll_zoom_sensitivity").map(|v| v as f32).unwrap_or(def.scroll_zoom_sensitivity),
+            drag_zoom_sensitivity:      f64("drag_zoom_sensitivity").map(|v| v as f32).unwrap_or(def.drag_zoom_sensitivity),
+            zoom_animation_duration:    f64("zoom_animation_duration").unwrap_or(def.zoom_animation_duration),
 
-            gutter_max_width:           val.get("gutter_max_width").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.gutter_max_width),
-            job_label_min_width:        val.get("job_label_min_width").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.job_label_min_width),
-            hatch_spacing:              val.get("hatch_spacing").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(def.hatch_spacing),
-
-            live_window_hours_before:   val.get("live_window_hours_before").and_then(|v| v.as_i64()).unwrap_or(def.live_window_hours_before),
-            live_window_hours_after:    val.get("live_window_hours_after").and_then(|v| v.as_i64()).unwrap_or(def.live_window_hours_after),
+            gutter_max_width:           f64("gutter_max_width").map(|v| v as f32).unwrap_or(def.gutter_max_width),
+            job_label_min_width:        f64("job_label_min_width").map(|v| v as f32).unwrap_or(def.job_label_min_width),
+            hatch_spacing:              f64("hatch_spacing").map(|v| v as f32).unwrap_or(def.hatch_spacing),
 
             state_colors,
             state_colors_light,

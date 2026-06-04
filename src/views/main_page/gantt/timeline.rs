@@ -177,7 +177,7 @@ pub(super) fn paint_current_time_line(
 
     egui::Shape::line_segment(
         [pos2(line_x, canvas.min.y), pos2(line_x, canvas.max.y)],
-        Stroke::new(2.0, Color32::RED),
+        Stroke::new(2.0, options.now_line_color),
     )
 }
 

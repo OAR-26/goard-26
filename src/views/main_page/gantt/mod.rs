@@ -217,8 +217,10 @@ impl Default for GanttChart {
         energy_panel.series_colors = gantt_cfg.energy_series_colors.iter()
             .map(|c| [c.0, c.1, c.2])
             .collect();
-        energy_panel.now_line_color = egui::Color32::from_rgb(
+        let now_color = egui::Color32::from_rgb(
             gantt_cfg.now_line_color.0, gantt_cfg.now_line_color.1, gantt_cfg.now_line_color.2);
+        energy_panel.now_line_color = now_color;
+        options.now_line_color = now_color;
         if let Some(first) = config.views.first() {
             options.levels = first.levels.clone();
             options.resource_filter = first.filter.clone();
@@ -498,10 +500,16 @@ impl GanttChart {
             self.initial_start_s = Some(start_s);
             self.initial_end_s = Some(end_s);
             self.last_data_source_index = Some(ds_idx);
-            let span_s = (end_s - start_s) as f32;
-            if span_s > 0.0 && span_s < self.options.canvas_width_s {
-                self.options.canvas_width_s = span_s.max(10.0);
-                self.options.sideways_pan_in_points = 0.0;
+            // For imported files, clamp the visible window to the data span so the
+            // canvas doesn't show empty space beyond the file's time range.
+            // For live data (ds_idx == 0), the load window is only ±N hours but the
+            // user may want a wider default_timespan — don't clamp.
+            if ds_idx != 0 {
+                let span_s = (end_s - start_s) as f32;
+                if span_s > 0.0 && span_s < self.options.canvas_width_s {
+                    self.options.canvas_width_s = span_s.max(10.0);
+                    self.options.sideways_pan_in_points = 0.0;
+                }
             }
 
             // Restore zoom/pan if this tab was visited before; overrides span-based defaults.
@@ -709,10 +717,16 @@ impl View for GanttChart {
             self.initial_start_s = Some(start_s);
             self.initial_end_s = Some(end_s);
             self.last_data_source_index = Some(ds_idx);
-            let span_s = (end_s - start_s) as f32;
-            if span_s > 0.0 && span_s < self.options.canvas_width_s {
-                self.options.canvas_width_s = span_s.max(10.0);
-                self.options.sideways_pan_in_points = 0.0;
+            // For imported files, clamp the visible window to the data span so the
+            // canvas doesn't show empty space beyond the file's time range.
+            // For live data (ds_idx == 0), the load window is only ±N hours but the
+            // user may want a wider default_timespan — don't clamp.
+            if ds_idx != 0 {
+                let span_s = (end_s - start_s) as f32;
+                if span_s > 0.0 && span_s < self.options.canvas_width_s {
+                    self.options.canvas_width_s = span_s.max(10.0);
+                    self.options.sideways_pan_in_points = 0.0;
+                }
             }
 
             // Restore zoom/pan if this tab was visited before.

@@ -760,10 +760,8 @@ impl ApplicationContext {
             }
             self.data.dead_intervals = get_dead_intervals_from_json("./data/data.json");
             let live_now = Local::now();
-            self.set_localdate(
-                live_now - chrono::Duration::hours(self.prefs.gantt_config.live_window_hours_before),
-                live_now + chrono::Duration::hours(self.prefs.gantt_config.live_window_hours_after),
-            );
+            let half = chrono::Duration::seconds(self.prefs.gantt_config.default_timespan_s / 2);
+            self.set_localdate(live_now - half, live_now + half);
             let now = chrono::Utc::now().timestamp();
             self.data.standby_upto.clear();
             self.data.markers.clear();
@@ -1017,6 +1015,11 @@ impl Default for ApplicationContext {
             live_data: false,
         };
         context.prefs.cluster_presets = ApplicationContext::load_presets_from_file("presets.json");
+        // Center the initial live-data window on now using default_timespan so
+        // the "now" line appears at the center of the Gantt on first load.
+        let half = chrono::Duration::seconds(context.prefs.gantt_config.default_timespan_s / 2);
+        *context.refresh.start_date.lock().unwrap() = now - half;
+        *context.refresh.end_date.lock().unwrap()   = now + half;
         context
     }
 }

@@ -1,0 +1,99 @@
+# ── General behaviour ─────────────────────────────────────────────────────────
+
+# Truncate open-ended Absent intervals to 'now' when a Standby period applies
+standby_truncate_state_to_now = true
+
+# Hide the future portion of besteffort jobs so they don't extend past now
+besteffort_truncate_job_to_now = true
+
+# Minimum interval duration in seconds before it is drawn (0 = always draw)
+min_state_duration = 2
+
+# Initial Gantt horizontal window width in seconds (21600 = 6 h)
+default_timespan = 86400
+
+# ── Job colors ────────────────────────────────────────────────────────────────
+
+# Minimum RGB component for random job colors (0–255).
+# 0 = full range, 255 = white. 70–140 recommended for dark/light balance.
+job_color_min = 70
+
+# ── Gantt row sizing ──────────────────────────────────────────────────────────
+
+# Default row height in pixels on first load
+gantt_row_height = 20
+
+# Minimum row height reachable by vertical zoom (Alt+scroll)
+gantt_row_height_min = 8
+
+# Maximum row height reachable by vertical zoom (Alt+scroll)
+gantt_row_height_max = 80
+
+# ── Energy panel ──────────────────────────────────────────────────────────────
+
+# Default height of the energy diagram panel in pixels
+energy_panel_height = 270
+
+# Estimated watts per assigned resource when no measured energy file is loaded
+energy_watts_per_resource = 300
+
+# Color palette (hex) for multi-series energy lines. Cycles if more series than entries.
+energy_series_colors = [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#bcbd22",
+]
+
+# Color of the vertical 'now' marker line on the energy plot
+now_line_color = "#dc0000"
+
+# ── Zoom limits ───────────────────────────────────────────────────────────────
+
+# Maximum number of seconds visible in the Gantt window (zoom-out limit). 172800 = 2 days.
+zoom_max_seconds = 172800
+
+# Minimum number of seconds visible in the Gantt window (zoom-in limit)
+zoom_min_seconds = 5
+
+# ── Interaction sensitivity ───────────────────────────────────────────────────
+
+# Horizontal zoom speed for Ctrl+scroll. Higher = faster zoom.
+scroll_zoom_sensitivity = 0.0025
+
+# Horizontal zoom speed for right-click drag. Higher = faster zoom.
+drag_zoom_sensitivity = 0.01
+
+# Duration in seconds of the 'Center on now' zoom animation
+zoom_animation_duration = 0.75
+
+# ── Layout ────────────────────────────────────────────────────────────────────
+
+# Maximum width in pixels of the resource-label column on the left
+gutter_max_width = 650
+
+# Minimum job bar width in pixels before the job ID label is hidden
+job_label_min_width = 30
+
+# Spacing in pixels between diagonal lines in dead/absent interval overlays
+hatch_spacing = 10
+
+# ── Resource state colors (dark mode) ────────────────────────────────────────
+
+[state_colors]
+Absent    = "#1e64dc"
+Suspected = "#dc1e1e"
+Dead      = "#787878"
+Standby   = "#88ffff"
+
+# ── Resource state colors (light mode) ───────────────────────────────────────
+
+[state_colors_light]
+Absent    = "#1040a0"
+Suspected = "#a01010"
+Dead      = "#404040"
+Standby   = "#008888"

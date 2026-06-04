@@ -106,6 +106,7 @@ pub struct Options {
     pub zoom_animation_duration: f64,
     pub hatch_spacing: f32,
     pub job_label_min_width: f32,
+    pub now_line_color: egui::Color32,
 }
 
 impl Default for Options {
@@ -142,6 +143,7 @@ impl Default for Options {
             zoom_animation_duration: 0.75,
             hatch_spacing: 10.0,
             job_label_min_width: 30.0,
+            now_line_color: egui::Color32::RED,
         }
     }
 }
