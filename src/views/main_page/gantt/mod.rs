@@ -170,6 +170,10 @@ pub struct GanttChart {
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
     last_data_source_index: Option<usize>,
+    /// Saved (canvas_width_s, sideways_pan_in_points) per data-source index (Gantt tabs).
+    tab_view_state: std::collections::HashMap<usize, (f32, f32)>,
+    /// Saved visible (start_s, end_s) per data-source index (energy-only tabs).
+    energy_visible: std::collections::HashMap<usize, (i64, i64)>,
 
     gantt_views: Vec<GanttView>,
     current_view_index: usize,
@@ -209,6 +213,8 @@ impl Default for GanttChart {
             initial_start_s: None,
             initial_end_s: None,
             last_data_source_index: None,
+            tab_view_state: std::collections::HashMap::new(),
+            energy_visible: std::collections::HashMap::new(),
             last_canvas_usable_width_px: 1.0,
             pending_navigation_refresh: false,
             delete_view_confirm: None,
@@ -457,6 +463,11 @@ impl GanttChart {
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         let ds_idx = app.import.current_data_source_index;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
+            // Save zoom/pan for the tab we are leaving.
+            if let Some(old_idx) = self.last_data_source_index {
+                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points));
+            }
+
             let start_s = app.get_start_date().timestamp();
             let end_s = app.get_end_date().timestamp();
             self.initial_start_s = Some(start_s);
@@ -466,6 +477,12 @@ impl GanttChart {
             if span_s > 0.0 && span_s < self.options.canvas_width_s {
                 self.options.canvas_width_s = span_s.max(10.0);
                 self.options.sideways_pan_in_points = 0.0;
+            }
+
+            // Restore zoom/pan if this tab was visited before; overrides span-based defaults.
+            if let Some(&(saved_width, saved_pan)) = self.tab_view_state.get(&ds_idx) {
+                self.options.canvas_width_s = saved_width;
+                self.options.sideways_pan_in_points = saved_pan;
             }
 
             // Apply or restore aggregation levels when the data source changes.
@@ -628,6 +645,11 @@ impl View for GanttChart {
 
         let ds_idx = app.import.current_data_source_index;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
+            // Save zoom/pan for the tab we are leaving (UI-click switches land here).
+            if let Some(old_idx) = self.last_data_source_index {
+                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points));
+            }
+
             let start_s = app.get_start_date().timestamp();
             let end_s = app.get_end_date().timestamp();
             self.initial_start_s = Some(start_s);
@@ -637,6 +659,12 @@ impl View for GanttChart {
             if span_s > 0.0 && span_s < self.options.canvas_width_s {
                 self.options.canvas_width_s = span_s.max(10.0);
                 self.options.sideways_pan_in_points = 0.0;
+            }
+
+            // Restore zoom/pan if this tab was visited before.
+            if let Some(&(saved_width, saved_pan)) = self.tab_view_state.get(&ds_idx) {
+                self.options.canvas_width_s = saved_width;
+                self.options.sideways_pan_in_points = saved_pan;
             }
         }
 
@@ -1064,9 +1092,10 @@ impl View for GanttChart {
             });
         });
         } else if show_energy {
-            // Energy-only source: no Gantt rows, compute visible range from stored time bounds.
-            let vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
-            let ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
+            // Energy-only source: use saved visible range if available, else full data bounds.
+            let default_vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
+            let default_ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
+            let (vs, ve) = self.energy_visible.get(&ds_idx).copied().unwrap_or((default_vs, default_ve));
             visible_range = Some((vs, ve));
             let raw_multi = app.get_current_energy_series_multi();
             energy_series = if raw_multi.is_empty() {
@@ -1120,14 +1149,20 @@ impl View for GanttChart {
                     ui, &energy_series, vs, ve, now_s, y_axis_gutter, show_gantt,
                     &cluster_names_energy, &owners,
                 ) {
-                    let new_width_s = (new_ve - new_vs).max(1) as f32;
-                    self.options.canvas_width_s = new_width_s;
-                    let start_s = self.initial_start_s.unwrap();
-                    let canvas_w_px = last_gantt_usable_width_px.max(1.0);
-                    let pan_px =
-                        -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
-                    self.options.sideways_pan_in_points = pan_px;
-                    self.pending_navigation_refresh = true;
+                    if show_gantt {
+                        // Gantt + energy: sync Gantt canvas to new range.
+                        let new_width_s = (new_ve - new_vs).max(1) as f32;
+                        self.options.canvas_width_s = new_width_s;
+                        let start_s = self.initial_start_s.unwrap();
+                        let canvas_w_px = last_gantt_usable_width_px.max(1.0);
+                        let pan_px =
+                            -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
+                        self.options.sideways_pan_in_points = pan_px;
+                        self.pending_navigation_refresh = true;
+                    } else {
+                        // Energy-only: persist visible range directly.
+                        self.energy_visible.insert(ds_idx, (new_vs, new_ve));
+                    }
                 }
             }
         }

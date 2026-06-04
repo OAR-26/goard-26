@@ -145,12 +145,7 @@ pub fn ui_energy_global(
                 });
             }
 
-            let (vx0, vx1) = if gantt_synced {
-                (visible_start_s as f64, visible_end_s as f64)
-            } else {
-                let cur = plot_ui.plot_bounds();
-                (cur.min()[0], cur.max()[0])
-            };
+            let (vx0, vx1) = (visible_start_s as f64, visible_end_s as f64);
 
             // Y that fits visible X window across all series.
             let mut y_min = f64::INFINITY;
