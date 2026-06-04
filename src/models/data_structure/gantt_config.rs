@@ -65,6 +65,20 @@ pub struct GanttConfig  {
     pub job_label_min_width: f32,
     pub hatch_spacing: f32,
     pub ssh_host: String,
+    /// Navigation step buttons: (n, unit) pairs, smallest to largest.
+    /// Each entry produces one ◀/▶ button pair.
+    pub nav_steps: Vec<(i64, String)>,
+}
+
+pub fn unit_seconds(unit: &str) -> i64 {
+    match unit { "minute" => 60, "hour" => 3_600, "week" => 7 * 86_400, _ => 86_400 }
+}
+
+impl GanttConfig {
+    /// Compute step durations in seconds, smallest to largest.
+    pub fn nav_steps_s(&self) -> Vec<i64> {
+        self.nav_steps.iter().map(|(n, u)| n * unit_seconds(u)).collect()
+    }
 }
 
 impl Default for GanttConfig {
@@ -112,6 +126,7 @@ impl Default for GanttConfig {
             job_label_min_width: 30.0,
             hatch_spacing: 10.0,
             ssh_host: "grenoble.g5k".to_string(),
+            nav_steps: vec![(1, "day".to_string()), (1, "week".to_string())],
         }
     }
 }
@@ -191,6 +206,17 @@ impl GanttConfig {
             job_label_min_width:        f64("job_label_min_width").map(|v| v as f32).unwrap_or(def.job_label_min_width),
             hatch_spacing:              f64("hatch_spacing").map(|v| v as f32).unwrap_or(def.hatch_spacing),
             ssh_host:                   str_("ssh_host").map(|s| s.to_string()).unwrap_or(def.ssh_host),
+            nav_steps: {
+                val.get("nav_steps")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|entry| {
+                        let n = entry.get("n").and_then(|v| v.as_integer())?;
+                        let unit = entry.get("unit").and_then(|v| v.as_str())?.to_string();
+                        Some((n, unit))
+                    }).collect::<Vec<_>>())
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or(def.nav_steps)
+            },
 
             state_colors,
             state_colors_light,
@@ -202,6 +228,9 @@ impl GanttConfig {
         fn hex(c: RgbColor) -> String { format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2) }
         let series: String = self.energy_series_colors.iter()
             .map(|&c| format!("    \"{}\",\n", hex(c)))
+            .collect();
+        let nav_steps_toml: String = self.nav_steps.iter()
+            .map(|(n, u)| format!("\n[[nav_steps]]\nn    = {}\nunit = \"{}\"\n", n, u))
             .collect();
         let content = format!(
 "# ── SSH (live data only) ──────────────────────────────────────────────────────
@@ -285,6 +314,12 @@ job_label_min_width = {job_label_min}
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
 hatch_spacing = {hatch_spacing}
 
+# ── Navigation ────────────────────────────────────────────────────────────────
+# Each [[nav_steps]] entry adds one ◀/▶ button pair.
+# Buttons render: ◀ stepN … ◀ step1 | step1 ▶ … stepN ▶
+# unit: minute | hour | day | week
+{nav_steps_toml}
+
 # ── Resource state colors (dark mode) ────────────────────────────────────────
 
 [state_colors]
@@ -322,6 +357,7 @@ Standby   = \"{standby_light}\"
             gutter_max           = self.gutter_max_width,
             job_label_min        = self.job_label_min_width,
             hatch_spacing        = self.hatch_spacing,
+            nav_steps_toml       = nav_steps_toml,
             absent_dark          = hex(self.state_colors.absent),
             suspected_dark       = hex(self.state_colors.suspected),
             dead_dark            = hex(self.state_colors.dead),

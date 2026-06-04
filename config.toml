@@ -21,7 +21,7 @@ default_timespan = 3600
 
 # Minimum RGB component for random job colors (0–255).
 # 0 = full range, 255 = white. 70–140 recommended for dark/light balance.
-job_color_min = 50
+job_color_min = 85
 
 # ── Gantt row sizing ──────────────────────────────────────────────────────────
 
@@ -86,6 +86,28 @@ job_label_min_width = 30
 
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
 hatch_spacing = 10
+
+# ── Navigation ────────────────────────────────────────────────────────────────
+# Each [[nav_steps]] entry adds one ◀/▶ button pair.
+# Buttons render: ◀ stepN … ◀ step1 | step1 ▶ … stepN ▶
+# unit: minute | hour | day | week
+
+[[nav_steps]]
+n    = 1
+unit = "hour"
+
+[[nav_steps]]
+n    = 6
+unit = "hour"
+
+[[nav_steps]]
+n    = 1
+unit = "day"
+
+[[nav_steps]]
+n    = 1
+unit = "week"
+
 
 # ── Resource state colors (dark mode) ────────────────────────────────────────
 

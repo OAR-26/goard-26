@@ -6,12 +6,12 @@ use crate::models::data_structure::{
 };
 use crate::views::components::gantt_job_color::{JobColor, JobColorEnum};
 
-pub struct ConfigPanel {
+pub struct SettingsPanel {
     pub open: bool,
     draft: Option<(GanttConfig, JobColorEnum)>,
 }
 
-impl Default for ConfigPanel {
+impl Default for SettingsPanel {
     fn default() -> Self {
         Self { open: false, draft: None }
     }
@@ -39,7 +39,7 @@ fn color_row(ui: &mut egui::Ui, label: &str, c: &mut RgbColor) {
     });
 }
 
-impl ConfigPanel {
+impl SettingsPanel {
     pub fn show(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         if !self.open { return; }
 
@@ -52,7 +52,7 @@ impl ConfigPanel {
         let mut cancel = false;
         let mut still_open = self.open;
 
-        egui::Window::new("⚙ Configuration")
+        egui::Window::new("⚙ Settings")
             .open(&mut still_open)
             .default_width(420.0)
             .resizable(true)
@@ -171,6 +171,34 @@ impl ConfigPanel {
                         ui.add(egui::DragValue::new(&mut cfg.zoom_animation_duration)
                             .range(0.1..=3.0).speed(0.05));
                     });
+                    ui.add_space(6.0);
+
+                    // ── Navigation ───────────────────────────────────────────
+                    ui.heading("Navigation");
+                    // Dynamic list — each entry = one ◀/▶ button pair, smallest to largest.
+                    const UNITS: &[&str] = &["minute", "hour", "day", "week"];
+                    let mut remove_step: Option<usize> = None;
+                    let mut swap_step: Option<(usize, usize)> = None;
+                    for (i, (n, unit)) in cfg.nav_steps.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("Step {}:", i + 1));
+                            ui.add(egui::DragValue::new(n).range(1..=9999));
+                            egui::ComboBox::from_id_salt(("nav_unit", i))
+                                .selected_text(unit.as_str())
+                                .show_ui(ui, |ui| {
+                                    for &u in UNITS {
+                                        ui.selectable_value(unit, u.to_string(), u);
+                                    }
+                                });
+                            if i > 0 && ui.small_button("⬆").clicked() { swap_step = Some((i-1, i)); }
+                            if ui.small_button("🗑").clicked() { remove_step = Some(i); }
+                        });
+                    }
+                    if let Some((a, b)) = swap_step { cfg.nav_steps.swap(a, b); }
+                    if let Some(i) = remove_step { cfg.nav_steps.remove(i); }
+                    if ui.small_button("+ Add step").clicked() {
+                        cfg.nav_steps.push((1, "day".to_string()));
+                    }
                     ui.add_space(6.0);
 
                     // ── Layout ───────────────────────────────────────────────

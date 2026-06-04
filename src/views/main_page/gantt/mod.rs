@@ -212,6 +212,7 @@ impl Default for GanttChart {
         options.zoom_animation_duration = gantt_cfg.zoom_animation_duration;
         options.hatch_spacing           = gantt_cfg.hatch_spacing;
         options.job_label_min_width     = gantt_cfg.job_label_min_width;
+        options.nav_steps = gantt_cfg.nav_steps_s();
         let mut energy_panel = EnergyPanelState::default();
         energy_panel.panel_height = gantt_cfg.energy_panel_height;
         energy_panel.series_colors = gantt_cfg.energy_series_colors.iter()
@@ -656,29 +657,32 @@ impl GanttChart {
             fallback_usable_width
         };
         let points_per_second = canvas_usable_width / self.options.canvas_width_s;
-        let day_delta_s: i64 = 24 * 60 * 60;
-        let week_delta_s: i64 = 7 * day_delta_s;
 
+        fn fmt_nav(s: i64) -> String {
+            if s % (7 * 86_400) == 0  { format!("{}w", s / (7 * 86_400)) }
+            else if s % 86_400 == 0   { format!("{}d", s / 86_400) }
+            else if s % 3_600 == 0    { format!("{}h", s / 3_600) }
+            else if s % 60 == 0       { format!("{}min", s / 60) }
+            else                      { format!("{}s", s) }
+        }
+
+        let steps = self.options.nav_steps.clone();
         ui.label(RichText::new("Nav:").text_style(TextStyle::Small));
-        if ui.small_button("◀ 1w").clicked() {
-            self.options.sideways_pan_in_points += week_delta_s as f32 * points_per_second;
-            self.options.zoom_to_relative_s_range = None;
-            self.pending_navigation_refresh = true;
+        // ◀ buttons: largest step first (reverse order)
+        for &step_s in steps.iter().rev() {
+            if ui.small_button(format!("◀ {}", fmt_nav(step_s))).clicked() {
+                self.options.sideways_pan_in_points += step_s as f32 * points_per_second;
+                self.options.zoom_to_relative_s_range = None;
+                self.pending_navigation_refresh = true;
+            }
         }
-        if ui.small_button("◀ 1d").clicked() {
-            self.options.sideways_pan_in_points += day_delta_s as f32 * points_per_second;
-            self.options.zoom_to_relative_s_range = None;
-            self.pending_navigation_refresh = true;
-        }
-        if ui.small_button("1d ▶").clicked() {
-            self.options.sideways_pan_in_points -= day_delta_s as f32 * points_per_second;
-            self.options.zoom_to_relative_s_range = None;
-            self.pending_navigation_refresh = true;
-        }
-        if ui.small_button("1w ▶").clicked() {
-            self.options.sideways_pan_in_points -= week_delta_s as f32 * points_per_second;
-            self.options.zoom_to_relative_s_range = None;
-            self.pending_navigation_refresh = true;
+        // ▶ buttons: smallest step first (forward order)
+        for &step_s in steps.iter() {
+            if ui.small_button(format!("{} ▶", fmt_nav(step_s))).clicked() {
+                self.options.sideways_pan_in_points -= step_s as f32 * points_per_second;
+                self.options.zoom_to_relative_s_range = None;
+                self.pending_navigation_refresh = true;
+            }
         }
 
         if ui.small_button(t!("app.gantt.now")).clicked() {
@@ -716,6 +720,7 @@ impl View for GanttChart {
             self.energy.series_colors = cfg.energy_series_colors.iter()
                 .map(|c| [c.0, c.1, c.2]).collect();
             self.energy.now_line_color = self.options.now_line_color;
+            self.options.nav_steps = cfg.nav_steps_s();
         }
         self.options.job_color.color = app.prefs.job_color.color.clone();
 
