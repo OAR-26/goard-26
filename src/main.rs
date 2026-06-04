@@ -11,14 +11,24 @@ i18n!("src/i18n");
 fn main() -> Result<(), eframe::Error> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let live_data = args.iter().any(|a| a == "--live");
-    let import_paths: Vec<String> = args.into_iter()
+    // Each entry is a Vec<String>:
+    //   single file  → ["file.json"]
+    //   group        → ["oar.json", "energy.json"]  (joined by '+' on the command line)
+    let import_entries: Vec<Vec<String>> = args.into_iter()
         .filter(|a| !a.starts_with("--"))
+        .map(|a| {
+            if a.contains('+') {
+                a.split('+').map(|s| s.to_string()).filter(|s| !s.is_empty()).collect()
+            } else {
+                vec![a]
+            }
+        })
         .collect();
     let options = eframe::NativeOptions::default();
     eframe::run_native(
         &t!("app.title"),
         options,
-        Box::new(move |_cc| Ok(Box::new(app::App::new(live_data, import_paths)))),
+        Box::new(move |_cc| Ok(Box::new(app::App::new(live_data, import_entries)))),
     )
 }
 

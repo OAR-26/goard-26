@@ -35,14 +35,31 @@ Goard (pronounced "guard") is a desktop/web dashboard for monitoring HPC cluster
 rustup update
 ```
 
-**Import-only mode** (default — no live data, import JSON files manually):
+**Import-only mode** (default — no live data, import files manually via UI):
 ```bash
 cargo run --release
+```
+
+**Pre-load one or more files on launch:**
+```bash
+cargo run --release -- examples/oar.json
+cargo run --release -- examples/oar.json examples/energy.json   # separate tabs
+```
+
+**Pre-load a group** (files joined by `+` become one overlaid tab):
+```bash
+cargo run --release -- examples/oar.json+examples/energy.json
+```
+
+**Mix standalone files and groups:**
+```bash
+cargo run --release -- examples/oar1.json examples/oar2.json+examples/energy2.json
 ```
 
 **Live data mode** (connects to HPC cluster for real-time monitoring):
 ```bash
 cargo run --release -- --live
+cargo run --release -- --live examples/oar.json+examples/energy.json
 ```
 
 #### Web (WASM)
