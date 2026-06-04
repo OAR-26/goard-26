@@ -597,8 +597,39 @@ impl ApplicationContext {
     pub fn delete_group(&mut self, group_idx: usize) {
         if group_idx >= self.import.groups.len() { return; }
 
-        // Switch away first if this group was active.
-        if self.import.current_group_index == Some(group_idx) {
+        let was_active = self.import.current_group_index == Some(group_idx);
+
+        // Determine "left" target BEFORE any removal (indices shift during removal).
+        // Visual tab order: [Live] [individual files by ds_idx] [groups by group_idx]
+        let target_after_delete: Option<(bool, usize)> = if was_active {
+            if group_idx > 0 {
+                // Previous group — its index is unchanged after removing group_idx.
+                Some((true, group_idx - 1))
+            } else {
+                // Find last individual (ungrouped) file not belonging to this group.
+                let members_set: std::collections::HashSet<usize> =
+                    self.import.groups[group_idx].member_indices.iter().copied().collect();
+                let other_grouped: std::collections::HashSet<usize> = self.import.groups.iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != group_idx)
+                    .flat_map(|(_, g)| g.member_indices.iter().copied())
+                    .collect();
+                let last_individual = (1..=self.import.imported_data_sources.len())
+                    .filter(|i| !members_set.contains(i) && !other_grouped.contains(i))
+                    .max();
+                last_individual.map(|ds_idx| {
+                    // Adjust for how many member files with index < ds_idx will be removed.
+                    let shift = members_set.iter().filter(|&&m| m < ds_idx).count();
+                    (false, ds_idx - shift)
+                })
+                // None → no individual files; fall back to live data or nothing
+            }
+        } else {
+            None
+        };
+
+        // Switch away if this group was active.
+        if was_active {
             self.import.current_group_index = None;
             self.import.current_data_source_index = 0;
         }
@@ -632,6 +663,25 @@ impl ApplicationContext {
                 std::cmp::Ordering::Greater => self.import.current_data_source_index -= 1,
                 std::cmp::Ordering::Equal   => self.import.current_data_source_index = 0,
                 _ => {}
+            }
+        }
+
+        // Apply the "left" target now that all indices are final.
+        if was_active {
+            match target_after_delete {
+                Some((true, gi)) if gi < self.import.groups.len() => {
+                    self.switch_to_group(gi);
+                }
+                Some((false, ds)) if ds > 0 && ds <= self.import.imported_data_sources.len() => {
+                    self.switch_to_data_source(ds);
+                }
+                _ => {
+                    // No left neighbour: live data if available, else nothing (index 0).
+                    if self.live_data {
+                        self.switch_to_data_source(0);
+                    }
+                    // else: already at 0 with cleared data from the loop above.
+                }
             }
         }
 
@@ -811,8 +861,10 @@ impl ApplicationContext {
             if self.import.current_data_source_index > index {
                 self.import.current_data_source_index -= 1;
             } else if self.import.current_data_source_index == index {
-                self.import.current_data_source_index = 0;
-                if !self.live_data {
+                // Switch to the tab to the left; fall back to 0 if this was the first.
+                let target = if index > 1 { index - 1 } else { 0 };
+                if target == 0 && !self.live_data {
+                    self.import.current_data_source_index = 0;
                     self.data.all_jobs.clear();
                     self.data.swap_all_jobs.clear();
                     self.data.all_clusters.clear();
@@ -820,6 +872,8 @@ impl ApplicationContext {
                     self.data.strata_by_resource_id.clear();
                     self.data.strata_by_host.clear();
                     self.data.markers.clear();
+                } else {
+                    self.switch_to_data_source(target);
                 }
             }
             self.filter_jobs();
