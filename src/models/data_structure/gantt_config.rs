@@ -16,7 +16,7 @@ impl RgbColor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct StateColors {
     pub absent: RgbColor,
     pub suspected: RgbColor,
@@ -36,7 +36,7 @@ impl Default for StateColors {
 }
 
 #[derive(Debug, Clone)]
-pub struct GanttConfig {
+pub struct GanttConfig  {
     pub standby_truncate_to_now: bool,
     pub besteffort_truncate_to_now: bool,
     pub min_state_duration_s: i64,
@@ -64,7 +64,7 @@ pub struct GanttConfig {
     pub gutter_max_width: f32,
     pub job_label_min_width: f32,
     pub hatch_spacing: f32,
-
+    pub ssh_host: String,
 }
 
 impl Default for GanttConfig {
@@ -111,7 +111,7 @@ impl Default for GanttConfig {
             gutter_max_width: 650.0,
             job_label_min_width: 30.0,
             hatch_spacing: 10.0,
-
+            ssh_host: "grenoble.g5k".to_string(),
         }
     }
 }
@@ -190,9 +190,147 @@ impl GanttConfig {
             gutter_max_width:           f64("gutter_max_width").map(|v| v as f32).unwrap_or(def.gutter_max_width),
             job_label_min_width:        f64("job_label_min_width").map(|v| v as f32).unwrap_or(def.job_label_min_width),
             hatch_spacing:              f64("hatch_spacing").map(|v| v as f32).unwrap_or(def.hatch_spacing),
+            ssh_host:                   str_("ssh_host").map(|s| s.to_string()).unwrap_or(def.ssh_host),
 
             state_colors,
             state_colors_light,
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn save(&self) {
+        fn hex(c: RgbColor) -> String { format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2) }
+        let series: String = self.energy_series_colors.iter()
+            .map(|&c| format!("    \"{}\",\n", hex(c)))
+            .collect();
+        let content = format!(
+"# ── SSH (live data only) ──────────────────────────────────────────────────────
+
+# SSH host used to fetch live OAR data (oarstat command is run on this host)
+ssh_host = \"{ssh_host}\"
+
+# ── General behaviour ─────────────────────────────────────────────────────────
+
+# Truncate open-ended Absent intervals to 'now' when a Standby period applies
+standby_truncate_state_to_now = {standby}
+
+# Hide the future portion of besteffort jobs so they don't extend past now
+besteffort_truncate_job_to_now = {besteffort}
+
+# Minimum interval duration in seconds before it is drawn (0 = always draw)
+min_state_duration = {min_state}
+
+# Initial Gantt horizontal window width in seconds (21600 = 6 h)
+default_timespan = {default_timespan}
+
+# ── Job colors ────────────────────────────────────────────────────────────────
+
+# Minimum RGB component for random job colors (0–255).
+# 0 = full range, 255 = white. 70–140 recommended for dark/light balance.
+job_color_min = {job_color_min}
+
+# ── Gantt row sizing ──────────────────────────────────────────────────────────
+
+# Default row height in pixels on first load
+gantt_row_height = {gantt_row_height}
+
+# Minimum row height reachable by vertical zoom (Alt+scroll)
+gantt_row_height_min = {gantt_row_height_min}
+
+# Maximum row height reachable by vertical zoom (Alt+scroll)
+gantt_row_height_max = {gantt_row_height_max}
+
+# ── Energy panel ──────────────────────────────────────────────────────────────
+
+# Default height of the energy diagram panel in pixels
+energy_panel_height = {energy_panel_height}
+
+# Estimated watts per assigned resource when no measured energy file is loaded
+energy_watts_per_resource = {energy_watts}
+
+# Color palette (hex) for multi-series energy lines. Cycles if more series than entries.
+energy_series_colors = [
+{series_colors}]
+
+# Color of the vertical 'now' marker line on the energy and Gantt plots
+now_line_color = \"{now_line_color}\"
+
+# ── Zoom limits ───────────────────────────────────────────────────────────────
+
+# Maximum number of seconds visible in the Gantt window (zoom-out limit). 172800 = 2 days.
+zoom_max_seconds = {zoom_max}
+
+# Minimum number of seconds visible in the Gantt window (zoom-in limit)
+zoom_min_seconds = {zoom_min}
+
+# ── Interaction sensitivity ───────────────────────────────────────────────────
+
+# Horizontal zoom speed for Ctrl+scroll. Higher = faster zoom.
+scroll_zoom_sensitivity = {scroll_zoom}
+
+# Horizontal zoom speed for right-click drag. Higher = faster zoom.
+drag_zoom_sensitivity = {drag_zoom}
+
+# Duration in seconds of the 'Center on now' zoom animation
+zoom_animation_duration = {zoom_anim}
+
+# ── Layout ────────────────────────────────────────────────────────────────────
+
+# Maximum width in pixels of the resource-label column on the left
+gutter_max_width = {gutter_max}
+
+# Minimum job bar width in pixels before the job ID label is hidden
+job_label_min_width = {job_label_min}
+
+# Spacing in pixels between diagonal lines in dead/absent interval overlays
+hatch_spacing = {hatch_spacing}
+
+# ── Resource state colors (dark mode) ────────────────────────────────────────
+
+[state_colors]
+Absent    = \"{absent_dark}\"
+Suspected = \"{suspected_dark}\"
+Dead      = \"{dead_dark}\"
+Standby   = \"{standby_dark}\"
+
+# ── Resource state colors (light mode) ───────────────────────────────────────
+
+[state_colors_light]
+Absent    = \"{absent_light}\"
+Suspected = \"{suspected_light}\"
+Dead      = \"{dead_light}\"
+Standby   = \"{standby_light}\"
+",
+            ssh_host             = self.ssh_host,
+            standby              = self.standby_truncate_to_now,
+            besteffort           = self.besteffort_truncate_to_now,
+            min_state            = self.min_state_duration_s,
+            default_timespan     = self.default_timespan_s,
+            job_color_min        = self.job_color_min,
+            gantt_row_height     = self.gantt_row_height,
+            gantt_row_height_min = self.gantt_row_height_min,
+            gantt_row_height_max = self.gantt_row_height_max,
+            energy_panel_height  = self.energy_panel_height,
+            energy_watts         = self.energy_watts_per_resource,
+            series_colors        = series,
+            now_line_color       = hex(self.now_line_color),
+            zoom_max             = self.zoom_max_seconds,
+            zoom_min             = self.zoom_min_seconds,
+            scroll_zoom          = self.scroll_zoom_sensitivity,
+            drag_zoom            = self.drag_zoom_sensitivity,
+            zoom_anim            = self.zoom_animation_duration,
+            gutter_max           = self.gutter_max_width,
+            job_label_min        = self.job_label_min_width,
+            hatch_spacing        = self.hatch_spacing,
+            absent_dark          = hex(self.state_colors.absent),
+            suspected_dark       = hex(self.state_colors.suspected),
+            dead_dark            = hex(self.state_colors.dead),
+            standby_dark         = hex(self.state_colors.standby),
+            absent_light         = hex(self.state_colors_light.absent),
+            suspected_light      = hex(self.state_colors_light.suspected),
+            dead_light           = hex(self.state_colors_light.dead),
+            standby_light        = hex(self.state_colors_light.standby),
+        );
+        let _ = std::fs::write("config.toml", content);
     }
 }

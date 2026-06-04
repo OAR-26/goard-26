@@ -6,11 +6,13 @@ use crate::{
 };
 use eframe::egui;
 
+use super::config_panel::ConfigPanel;
 use super::options::Options;
 use crate::views::view::ViewType;
 
 pub struct Menu {
     options_pane: Options,
+    config_panel: ConfigPanel,
 }
 
 impl Default for Menu {
@@ -24,7 +26,7 @@ impl Default for Menu {
             Options::new(application_options.clone())
         };
 
-        Menu { options_pane }
+        Menu { options_pane, config_panel: ConfigPanel::default() }
     }
 }
 
@@ -87,6 +89,11 @@ impl View for Menu {
                 self.options_pane.open();
             }
 
+            // Config panel
+            if ui.button("⚙ Config").clicked() {
+                self.config_panel.open = true;
+            }
+
             // Contextual help
             ui.menu_button("?", |ui| {
                 match app.view_type {
@@ -100,8 +107,9 @@ impl View for Menu {
                 }
             });
 
-            // Show External Window
+            // Show External Windows
             self.options_pane.ui(ui, &mut app.prefs.font_size);
+            self.config_panel.show(ui, app);
         });
     }
 }

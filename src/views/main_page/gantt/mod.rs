@@ -620,11 +620,6 @@ impl GanttChart {
             });
         }
 
-        ui.menu_button(t!("app.gantt.settings.title"), |ui| {
-            ui.set_max_height(500.0);
-            self.options.job_color.ui(ui);
-        });
-
         let admin_button = if is_admin {
             egui::Button::new("Admin")
         } else {
@@ -701,6 +696,29 @@ impl GanttChart {
 
 impl View for GanttChart {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        // Apply config changes triggered by ConfigPanel's Apply button.
+        if app.prefs.config_reload_requested {
+            app.prefs.config_reload_requested = false;
+            let cfg = &app.prefs.gantt_config;
+            self.options.row_height_min          = cfg.gantt_row_height_min;
+            self.options.row_height_max          = cfg.gantt_row_height_max;
+            self.options.scroll_zoom_sensitivity = cfg.scroll_zoom_sensitivity;
+            self.options.drag_zoom_sensitivity   = cfg.drag_zoom_sensitivity;
+            self.options.zoom_max_seconds        = cfg.zoom_max_seconds;
+            self.options.zoom_min_seconds        = cfg.zoom_min_seconds;
+            self.options.zoom_animation_duration = cfg.zoom_animation_duration;
+            self.options.hatch_spacing           = cfg.hatch_spacing;
+            self.options.job_label_min_width     = cfg.job_label_min_width;
+            self.options.rect_height             = cfg.gantt_row_height
+                .clamp(cfg.gantt_row_height_min, cfg.gantt_row_height_max);
+            self.options.now_line_color = egui::Color32::from_rgb(
+                cfg.now_line_color.0, cfg.now_line_color.1, cfg.now_line_color.2);
+            self.energy.series_colors = cfg.energy_series_colors.iter()
+                .map(|c| [c.0, c.1, c.2]).collect();
+            self.energy.now_line_color = self.options.now_line_color;
+        }
+        self.options.job_color.color = app.prefs.job_color.color.clone();
+
         self.render_data_source_tabs(ui, app);
 
         let ds_idx = app.import.current_data_source_index;

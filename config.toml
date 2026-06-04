@@ -1,3 +1,8 @@
+# ── SSH (live data only) ──────────────────────────────────────────────────────
+
+# SSH host used to fetch live OAR data (oarstat command is run on this host)
+ssh_host = "grenoble.g5k"
+
 # ── General behaviour ─────────────────────────────────────────────────────────
 
 # Truncate open-ended Absent intervals to 'now' when a Standby period applies
@@ -10,13 +15,13 @@ besteffort_truncate_job_to_now = true
 min_state_duration = 2
 
 # Initial Gantt horizontal window width in seconds (21600 = 6 h)
-default_timespan = 86400
+default_timespan = 3600
 
 # ── Job colors ────────────────────────────────────────────────────────────────
 
 # Minimum RGB component for random job colors (0–255).
 # 0 = full range, 255 = white. 70–140 recommended for dark/light balance.
-job_color_min = 70
+job_color_min = 50
 
 # ── Gantt row sizing ──────────────────────────────────────────────────────────
 
@@ -49,8 +54,8 @@ energy_series_colors = [
     "#bcbd22",
 ]
 
-# Color of the vertical 'now' marker line on the energy plot
-now_line_color = "#dc0000"
+# Color of the vertical 'now' marker line on the energy and Gantt plots
+now_line_color = "#ff0000"
 
 # ── Zoom limits ───────────────────────────────────────────────────────────────
 
