@@ -112,6 +112,10 @@ pub struct EnergyPanelState {
     pub fit_to_figure: bool,
     pub y_bounds: Option<(f64, f64)>,
     pub panel_height: f32,
+    /// Per-series RGB colors (set from config, default palette if empty).
+    pub series_colors: Vec<[u8; 3]>,
+    /// Color of the vertical "now" line.
+    pub now_line_color: egui::Color32,
 }
 
 impl Default for EnergyPanelState {
@@ -122,6 +126,8 @@ impl Default for EnergyPanelState {
             fit_to_figure: true,
             y_bounds: None,
             panel_height: 270.0,
+            series_colors: Vec::new(),
+            now_line_color: egui::Color32::from_rgb(220, 0, 0),
         }
     }
 }
@@ -213,6 +219,8 @@ impl EnergyPanelState {
             show_gantt,
             self.fit_to_figure,
             self.y_bounds,
+            &self.series_colors,
+            self.now_line_color,
         );
         if let Some(yb) = new_y {
             self.y_bounds = Some(yb);

@@ -363,6 +363,7 @@ Chargé par `GanttConfig::load()` au démarrage. Embarqué dans le binaire WASM 
 | `besteffort_truncate_job_to_now` | Cache la portion future des jobs besteffort |
 | `min_state_duration` | Durée minimale (secondes) pour afficher un intervalle d'état |
 | `default_timespan` | Largeur initiale du Gantt en secondes (21600 = 6h) |
+| `job_color_min` | Composante RGB minimale pour les couleurs de jobs aléatoires (0–255). 0 = spectre complet, 255 = blanc. Défaut 140 : couleurs claires, labels noirs lisibles. |
 | `state_colors` | Couleurs hatch mode sombre |
 | `state_colors_light` | Couleurs hatch mode clair |
 

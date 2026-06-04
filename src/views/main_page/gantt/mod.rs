@@ -161,7 +161,7 @@ fn compute_gutter_width(
     // 4px left pad + 4px right pad; minimum 40px label area so an empty view isn't invisible.
     let label_w = (label_text_w + 8.0).max(40.0);
 
-    (label_w + stripes_w).min(650.0)
+    (label_w + stripes_w).min(app.prefs.gantt_config.gutter_max_width)
 }
 
 pub struct GanttChart {
@@ -201,7 +201,24 @@ impl Default for GanttChart {
         let config = load_views_config();
         let gantt_cfg = crate::models::data_structure::gantt_config::GanttConfig::load();
         let mut options = Options::default();
-        options.canvas_width_s = gantt_cfg.default_timespan_s as f32;
+        options.canvas_width_s          = gantt_cfg.default_timespan_s as f32;
+        options.rect_height             = gantt_cfg.gantt_row_height;
+        options.row_height_min          = gantt_cfg.gantt_row_height_min;
+        options.row_height_max          = gantt_cfg.gantt_row_height_max;
+        options.scroll_zoom_sensitivity = gantt_cfg.scroll_zoom_sensitivity;
+        options.drag_zoom_sensitivity   = gantt_cfg.drag_zoom_sensitivity;
+        options.zoom_max_seconds        = gantt_cfg.zoom_max_seconds;
+        options.zoom_min_seconds        = gantt_cfg.zoom_min_seconds;
+        options.zoom_animation_duration = gantt_cfg.zoom_animation_duration;
+        options.hatch_spacing           = gantt_cfg.hatch_spacing;
+        options.job_label_min_width     = gantt_cfg.job_label_min_width;
+        let mut energy_panel = EnergyPanelState::default();
+        energy_panel.panel_height = gantt_cfg.energy_panel_height;
+        energy_panel.series_colors = gantt_cfg.energy_series_colors.iter()
+            .map(|c| [c.0, c.1, c.2])
+            .collect();
+        energy_panel.now_line_color = egui::Color32::from_rgb(
+            gantt_cfg.now_line_color.0, gantt_cfg.now_line_color.1, gantt_cfg.now_line_color.2);
         if let Some(first) = config.views.first() {
             options.levels = first.levels.clone();
             options.resource_filter = first.filter.clone();
@@ -228,7 +245,7 @@ impl Default for GanttChart {
             gantt_views: config.views,
             current_view_index: 0,
             leaf_info_presets: config.leaf_info_presets,
-            energy: EnergyPanelState::default(),
+            energy: energy_panel,
             admin: AdminPanelState::default(),
             create_view: CreateViewPanel::default(),
             create_preset: CreatePresetPanel::default(),
@@ -1105,7 +1122,7 @@ impl View for GanttChart {
                         energy_series = if raw_multi.is_empty() {
                             // No raw energy files — estimate from Gantt jobs.
                             vec![("Estimated".to_string(),
-                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s))]
+                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource))]
                         } else if in_group {
                             // Group with Gantt member + raw energy files: estimated series first, then raw.
                             let gantt_name = app.import.imported_data_sources
@@ -1114,17 +1131,17 @@ impl View for GanttChart {
                                 .unwrap_or_else(|| "Gantt".to_string());
                             let mut all = vec![(
                                 format!("{} (est.)", gantt_name),
-                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s),
+                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource),
                             )];
                             for (name, s) in &raw_multi {
                                 all.push((name.to_string(),
-                                    energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s)));
+                                    energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource)));
                             }
                             all
                         } else {
                             raw_multi.iter().map(|(name, s)| {
                                 (name.to_string(),
-                                 energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s))
+                                 energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource))
                             }).collect()
                         };
                     }
@@ -1160,11 +1177,11 @@ impl View for GanttChart {
             let raw_multi = app.get_current_energy_series_multi();
             energy_series = if raw_multi.is_empty() {
                 vec![("Estimated".to_string(),
-                    energy_estimate::compute_energy_points(None, &[], vs, ve))]
+                    energy_estimate::compute_energy_points(None, &[], vs, ve, app.prefs.gantt_config.energy_watts_per_resource))]
             } else {
                 raw_multi.iter().map(|(name, s)| {
                     (name.to_string(),
-                     energy_estimate::compute_energy_points(Some(s), &[], vs, ve))
+                     energy_estimate::compute_energy_points(Some(s), &[], vs, ve, app.prefs.gantt_config.energy_watts_per_resource))
                 }).collect()
             };
         }

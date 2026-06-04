@@ -761,8 +761,8 @@ impl ApplicationContext {
             self.data.dead_intervals = get_dead_intervals_from_json("./data/data.json");
             let live_now = Local::now();
             self.set_localdate(
-                live_now - chrono::Duration::hours(1),
-                live_now + chrono::Duration::hours(1),
+                live_now - chrono::Duration::hours(self.prefs.gantt_config.live_window_hours_before),
+                live_now + chrono::Duration::hours(self.prefs.gantt_config.live_window_hours_after),
             );
             let now = chrono::Utc::now().timestamp();
             self.data.standby_upto.clear();

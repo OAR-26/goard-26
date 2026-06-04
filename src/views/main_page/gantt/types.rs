@@ -95,6 +95,17 @@ pub struct Options {
     pub leaf_info_preset: Option<LeafInfoPreset>,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub zoom_to_relative_s_range: Option<(f64, (f64, f64))>,
+
+    // ── From GanttConfig (set once on startup) ────────────────────────────────
+    pub row_height_min: f32,
+    pub row_height_max: f32,
+    pub scroll_zoom_sensitivity: f32,
+    pub drag_zoom_sensitivity: f32,
+    pub zoom_max_seconds: f32,
+    pub zoom_min_seconds: f32,
+    pub zoom_animation_duration: f64,
+    pub hatch_spacing: f32,
+    pub job_label_min_width: f32,
 }
 
 impl Default for Options {
@@ -122,6 +133,15 @@ impl Default for Options {
             leaf_label_template: None,
             sort_by_label: false,
             leaf_info_preset: None,
+            row_height_min: 8.0,
+            row_height_max: 80.0,
+            scroll_zoom_sensitivity: 0.0025,
+            drag_zoom_sensitivity: 0.01,
+            zoom_max_seconds: (2 * 24 * 60 * 60) as f32,
+            zoom_min_seconds: 5.0,
+            zoom_animation_duration: 0.75,
+            hatch_spacing: 10.0,
+            job_label_min_width: 30.0,
         }
     }
 }

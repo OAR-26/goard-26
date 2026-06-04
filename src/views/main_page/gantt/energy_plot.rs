@@ -48,6 +48,8 @@ pub fn ui_energy_global(
     gantt_synced: bool,
     fit_to_figure: bool,
     y_bounds: Option<(f64, f64)>,
+    series_palette: &[[u8; 3]],
+    now_line_color: egui::Color32,
 ) -> (Option<(i64, i64)>, Option<(f64, f64)>) {
     ui.label("Consommation globale");
 
@@ -97,7 +99,13 @@ pub fn ui_energy_global(
     // Build egui_plot Lines — one per series.
     let lines: Vec<Line> = non_empty.iter().enumerate().map(|(idx, (label, pts))| {
         let color = if non_empty.len() == 1 {
-            egui::Color32::BLUE
+            if let Some(&[r, g, b]) = series_palette.first() {
+                egui::Color32::from_rgb(r, g, b)
+            } else {
+                series_color(idx)
+            }
+        } else if let Some(&[r, g, b]) = series_palette.get(idx % series_palette.len().max(1)) {
+            egui::Color32::from_rgb(r, g, b)
         } else {
             series_color(idx)
         };
@@ -110,7 +118,7 @@ pub fn ui_energy_global(
     }).collect();
 
     let now_line = VLine::new(now_s as f64)
-        .color(egui::Color32::RED)
+        .color(now_line_color)
         .width(2.0);
 
     let mut hover_label: Option<String> = None;

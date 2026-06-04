@@ -1674,7 +1674,7 @@ fn paint_job(
 
     // Caculate the color of the job depending the selected job color int gantt component
     let (hovered_color, normal_color) = if options.job_color.is_random() {
-        get_job_gantt_colors(job.id)
+        get_job_gantt_colors(job.id, 140)
     } else {
         job.state.get_color()
     };

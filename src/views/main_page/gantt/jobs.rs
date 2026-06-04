@@ -377,7 +377,7 @@ pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[Painte
         let start_x = info.point_from_s(options, block.start_s);
         let end_x = info.point_from_s(options, block.stop_s);
         let block_width = end_x - start_x;
-        if block_width <= 30.0 {
+        if block_width <= options.job_label_min_width {
             continue;
         }
         let block_top = block.rows.first().unwrap().row_y;
@@ -1031,7 +1031,7 @@ fn draw_dead_intervals_for_row(
         pos2(info.canvas.max.x, info.canvas.max.y),
     );
     let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
-    let hachure_spacing = 10.0;
+    let hachure_spacing = options.hatch_spacing;
 
     for iv in intervals {
         // Skip intervals shorter than min_state_duration_s (closed intervals only).
@@ -1269,6 +1269,7 @@ pub(super) fn draw_level_n<'a>(
                         all_clusters,
                         Some(key.as_str()),
                         app.prefs.gantt_config.besteffort_truncate_to_now,
+                        app.prefs.gantt_config.job_color_min,
                     );
                 }
 
@@ -1461,6 +1462,7 @@ fn paint_job(
     all_cluster: &Vec<Cluster>,
     resource_label_for_state_tooltip: Option<&str>,
     besteffort_truncate_to_now: bool,
+    job_color_min: u8,
 ) -> PaintResult {
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
@@ -1529,7 +1531,7 @@ fn paint_job(
     }
 
     let (hovered_color, normal_color) = if options.job_color.is_random() {
-        get_job_gantt_colors(job.id)
+        get_job_gantt_colors(job.id, job_color_min)
     } else {
         job.state.get_color()
     };
