@@ -171,9 +171,11 @@ pub struct GanttChart {
     initial_end_s: Option<i64>,
     last_data_source_index: Option<usize>,
     /// Saved (canvas_width_s, sideways_pan_in_points) per data-source index (Gantt tabs).
-    tab_view_state: std::collections::HashMap<usize, (f32, f32)>,
+    tab_view_state: std::collections::HashMap<usize, (f32, f32, f32)>,
     /// Saved visible (start_s, end_s) per data-source index (energy-only tabs).
     energy_visible: std::collections::HashMap<usize, (i64, i64)>,
+    /// Saved energy panel state (y_bounds, fit_to_figure, panel_height) per data-source index.
+    energy_panel_state: std::collections::HashMap<usize, (Option<(f64, f64)>, bool, f32)>,
     /// Saved current_view_index per data-source index.
     tab_view_index: std::collections::HashMap<usize, usize>,
 
@@ -217,6 +219,7 @@ impl Default for GanttChart {
             last_data_source_index: None,
             tab_view_state: std::collections::HashMap::new(),
             energy_visible: std::collections::HashMap::new(),
+            energy_panel_state: std::collections::HashMap::new(),
             tab_view_index: std::collections::HashMap::new(),
             last_canvas_usable_width_px: 1.0,
             pending_navigation_refresh: false,
@@ -468,8 +471,9 @@ impl GanttChart {
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
             // Save zoom/pan and view index for the tab we are leaving.
             if let Some(old_idx) = self.last_data_source_index {
-                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points));
+                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
                 self.tab_view_index.insert(old_idx, self.current_view_index);
+                self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
             }
 
             let start_s = app.get_start_date().timestamp();
@@ -484,14 +488,22 @@ impl GanttChart {
             }
 
             // Restore zoom/pan if this tab was visited before; overrides span-based defaults.
-            if let Some(&(saved_width, saved_pan)) = self.tab_view_state.get(&ds_idx) {
+            if let Some(&(saved_width, saved_pan, saved_row_h)) = self.tab_view_state.get(&ds_idx) {
                 self.options.canvas_width_s = saved_width;
                 self.options.sideways_pan_in_points = saved_pan;
+                self.options.rect_height = saved_row_h;
             }
 
             // Restore view index if this tab was visited before.
             if let Some(&saved_view) = self.tab_view_index.get(&ds_idx) {
                 self.current_view_index = saved_view.min(self.gantt_views.len().saturating_sub(1));
+            }
+
+            // Restore energy panel state if this tab was visited before.
+            if let Some(&(y_bounds, fit, height)) = self.energy_panel_state.get(&ds_idx) {
+                self.energy.y_bounds = y_bounds;
+                self.energy.fit_to_figure = fit;
+                self.energy.panel_height = height;
             }
 
             // Apply or restore aggregation levels when the data source changes.
@@ -670,8 +682,9 @@ impl View for GanttChart {
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
             // Save zoom/pan and view index for the tab we are leaving (UI-click switches land here).
             if let Some(old_idx) = self.last_data_source_index {
-                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points));
+                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
                 self.tab_view_index.insert(old_idx, self.current_view_index);
+                self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
             }
 
             let start_s = app.get_start_date().timestamp();
@@ -686,9 +699,10 @@ impl View for GanttChart {
             }
 
             // Restore zoom/pan if this tab was visited before.
-            if let Some(&(saved_width, saved_pan)) = self.tab_view_state.get(&ds_idx) {
+            if let Some(&(saved_width, saved_pan, saved_row_h)) = self.tab_view_state.get(&ds_idx) {
                 self.options.canvas_width_s = saved_width;
                 self.options.sideways_pan_in_points = saved_pan;
+                self.options.rect_height = saved_row_h;
             }
 
             // Restore view index if this tab was visited before.
@@ -704,6 +718,13 @@ impl View for GanttChart {
                         .cloned()
                         .or_else(|| backward_compat_preset(view));
                 }
+            }
+
+            // Restore energy panel state if this tab was visited before.
+            if let Some(&(y_bounds, fit, height)) = self.energy_panel_state.get(&ds_idx) {
+                self.energy.y_bounds = y_bounds;
+                self.energy.fit_to_figure = fit;
+                self.energy.panel_height = height;
             }
         }
 
