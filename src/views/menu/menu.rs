@@ -53,8 +53,12 @@ impl View for Menu {
                     ui.add_enabled_ui(!app.live_data, |ui| {
                         if ui.button("📡 Live Data").clicked() {
                             app.live_data = true;
-                            app.update_periodically();
+                            // switch_to_data_source(0) sets start_date/end_date to the live
+                            // window BEFORE update_periodically spawns the fetch thread, so
+                            // the thread always fetches the current time range, not the
+                            // previously imported file's historical range.
                             app.switch_to_data_source(0);
+                            app.update_periodically();
                             app.instant_update();
                             ui.close_menu();
                         }
