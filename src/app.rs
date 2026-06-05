@@ -232,4 +232,8 @@ impl eframe::App for App {
         });
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.gantt_view.flush_all_tab_states(&self.application_context);
+    }
 }

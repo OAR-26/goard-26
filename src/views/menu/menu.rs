@@ -83,7 +83,7 @@ impl View for Menu {
 
                     ui.separator();
                     if ui.button(t!("app.menu.quit")).clicked() {
-                        std::process::exit(0);
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
             });

@@ -521,9 +521,23 @@ impl ApplicationContext {
             .unwrap_or("Imported Data");
         let name = self.generate_unique_name(base_name);
 
+        let file_hash = Some(
+            crate::models::data_structure::tab_state_cache::compute_file_hash(json_str.as_bytes())
+        );
+
+        // Normalize to absolute path so cache lookups are consistent regardless of
+        // whether the file was opened via CLI (relative) or the file picker (absolute).
+        let file_path = file_path.map(|p| {
+            std::fs::canonicalize(&p)
+                .ok()
+                .and_then(|c| c.to_str().map(str::to_string))
+                .unwrap_or(p)
+        });
+
         self.import.imported_data_sources.push(ImportedDataSource {
             name,
             file_path,
+            file_hash,
             file_type_name: file_type.name().to_string(),
             visualization_targets: file_type.visualization_targets().to_vec(),
             raw_energy_series: parsed.raw_energy_series,

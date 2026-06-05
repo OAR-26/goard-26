@@ -141,6 +141,8 @@ fn save_views_config(views: &[GanttView], presets: &[types::LeafInfoPreset]) {
     }
 }
 
+use crate::models::data_structure::tab_state_cache::{TabStateCache, TabViewState};
+
 use self::types::{gutter_stripes_total_w, Info, Options, GUTTER_WIDTH};
 
 
@@ -170,6 +172,7 @@ pub struct GanttChart {
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
     last_data_source_index: Option<usize>,
+    tab_state_cache: TabStateCache,
     /// Saved (canvas_width_s, sideways_pan_in_points) per data-source index (Gantt tabs).
     tab_view_state: std::collections::HashMap<usize, (f32, f32, f32)>,
     /// Saved visible (start_s, end_s) per data-source index (energy-only tabs).
@@ -242,6 +245,7 @@ impl Default for GanttChart {
             initial_start_s: None,
             initial_end_s: None,
             last_data_source_index: None,
+            tab_state_cache: TabStateCache::load(),
             tab_view_state: std::collections::HashMap::new(),
             energy_visible: std::collections::HashMap::new(),
             energy_panel_state: std::collections::HashMap::new(),
@@ -503,6 +507,7 @@ impl GanttChart {
                 self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
                 self.tab_view_index.insert(old_idx, self.current_view_index);
                 self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
+                self.persist_tab_state(app, old_idx);
             }
 
             let start_s = app.get_start_date().timestamp();
@@ -527,6 +532,9 @@ impl GanttChart {
                 self.options.canvas_width_s = saved_width;
                 self.options.sideways_pan_in_points = saved_pan;
                 self.options.rect_height = saved_row_h;
+            } else if ds_idx > 0 {
+                // First visit this session — try persistent cache.
+                self.restore_from_cache(app, ds_idx);
             }
 
             // Restore view index if this tab was visited before.
@@ -721,6 +729,76 @@ impl GanttChart {
             self.pending_navigation_refresh = true;
         }
     }
+
+    /// Persist `tab_idx`'s state to the on-disk cache.
+    /// For the currently active tab, always read from `self.options` / `self.energy` (live).
+    /// For background tabs, read from the in-memory HashMaps (last-left snapshot).
+    /// Skip tabs that were never visited this session (no HashMap entry, not active).
+    pub fn persist_tab_state(&mut self, app: &ApplicationContext, tab_idx: usize) {
+        if tab_idx == 0 { return; }
+        let Some(ds) = app.import.imported_data_sources.get(tab_idx - 1) else { return };
+        let Some(hash) = ds.file_hash.as_deref() else { return };
+
+        let is_active = tab_idx == app.import.current_data_source_index;
+        // Skip tabs that were never visited this session — we have nothing to save for them,
+        // and using self.options (active tab's state) as a fallback would corrupt their entry.
+        if !is_active && !self.tab_view_state.contains_key(&tab_idx) { return; }
+
+        let (w, pan, rh) = if is_active {
+            (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height)
+        } else {
+            self.tab_view_state.get(&tab_idx).copied()
+                .unwrap_or((self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height))
+        };
+        let vi = if is_active {
+            self.current_view_index
+        } else {
+            self.tab_view_index.get(&tab_idx).copied().unwrap_or(self.current_view_index)
+        };
+        let (y_bounds, fit, ph) = if is_active {
+            (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height)
+        } else {
+            self.energy_panel_state.get(&tab_idx).copied()
+                .unwrap_or((self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height))
+        };
+        let state = TabViewState {
+            canvas_width_s: w,
+            sideways_pan: pan,
+            row_height: rh,
+            view_index: vi,
+            energy_y_min: y_bounds.map(|b| b.0),
+            energy_y_max: y_bounds.map(|b| b.1),
+            energy_fit: fit,
+            energy_panel_height: ph,
+        };
+        self.tab_state_cache.store(ds.file_path.as_deref(), hash, state);
+        self.tab_state_cache.save_to_disk();
+    }
+
+    /// Flush all visited/active imported tabs to the cache at once (called on app exit).
+    pub fn flush_all_tab_states(&mut self, app: &ApplicationContext) {
+        let n = app.import.imported_data_sources.len();
+        for tab_idx in 1..=n {
+            self.persist_tab_state(app, tab_idx);
+        }
+    }
+
+    /// Restore tab state from the on-disk cache (first visit this session).
+    /// Applies directly to `self.options` and seeds energy/view-index maps.
+    /// Does NOT seed `tab_view_state` — that map only holds last-left snapshots so that
+    /// `persist_tab_state` can detect whether a tab was visited this session.
+    fn restore_from_cache(&mut self, app: &ApplicationContext, ds_idx: usize) {
+        let Some(ds) = app.import.imported_data_sources.get(ds_idx - 1) else { return };
+        let Some(hash) = ds.file_hash.as_deref() else { return };
+        let Some(saved) = self.tab_state_cache.lookup(ds.file_path.as_deref(), hash) else { return };
+        self.options.canvas_width_s = saved.canvas_width_s;
+        self.options.sideways_pan_in_points = saved.sideways_pan;
+        self.options.rect_height = saved.row_height;
+        let vi = saved.view_index.min(self.gantt_views.len().saturating_sub(1));
+        self.tab_view_index.insert(ds_idx, vi);
+        let y_bounds = saved.energy_y_min.zip(saved.energy_y_max);
+        self.energy_panel_state.insert(ds_idx, (y_bounds, saved.energy_fit, saved.energy_panel_height));
+    }
 }
 
 impl View for GanttChart {
@@ -758,6 +836,7 @@ impl View for GanttChart {
                 self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
                 self.tab_view_index.insert(old_idx, self.current_view_index);
                 self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
+                self.persist_tab_state(app, old_idx);
             }
 
             let start_s = app.get_start_date().timestamp();
@@ -782,6 +861,9 @@ impl View for GanttChart {
                 self.options.canvas_width_s = saved_width;
                 self.options.sideways_pan_in_points = saved_pan;
                 self.options.rect_height = saved_row_h;
+            } else if ds_idx > 0 {
+                // First visit this session — try persistent cache.
+                self.restore_from_cache(app, ds_idx);
             }
 
             // Restore view index if this tab was visited before.
