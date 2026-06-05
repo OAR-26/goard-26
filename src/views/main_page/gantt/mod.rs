@@ -194,6 +194,11 @@ pub struct GanttChart {
     create_preset: CreatePresetPanel,
     edit_view: EditViewPanel,
     edit_preset: EditPresetPanel,
+
+    jump_dialog_open: bool,
+    jump_date_str: String,
+    jump_time_str: String,
+    jump_error: Option<String>,
 }
 
 impl Default for GanttChart {
@@ -254,6 +259,10 @@ impl Default for GanttChart {
             create_preset: CreatePresetPanel::default(),
             edit_view: EditViewPanel::default(),
             edit_preset: EditPresetPanel::default(),
+            jump_dialog_open: false,
+            jump_date_str: String::new(),
+            jump_time_str: String::new(),
+            jump_error: None,
         }
     }
 }
@@ -676,6 +685,22 @@ impl GanttChart {
                 self.pending_navigation_refresh = true;
             }
         }
+
+        // Jump-to button
+        if ui.small_button("🕐").on_hover_text("Jump to date/time").clicked() {
+            let usable = self.last_canvas_usable_width_px.max(1.0);
+            let init_s = self.initial_start_s.unwrap_or_else(|| chrono::Utc::now().timestamp());
+            let pan_ratio = self.options.sideways_pan_in_points / usable;
+            let visible_start_s = init_s - (pan_ratio * self.options.canvas_width_s) as i64;
+            let center_s = visible_start_s + (self.options.canvas_width_s / 2.0) as i64;
+            let dt = Local.timestamp_opt(center_s, 0).single()
+                .unwrap_or_else(Local::now);
+            self.jump_date_str = dt.format("%Y-%m-%d").to_string();
+            self.jump_time_str = dt.format("%H:%M").to_string();
+            self.jump_error = None;
+            self.jump_dialog_open = true;
+        }
+
         // ▶ buttons: smallest step first (forward order)
         for &step_s in steps.iter() {
             if ui.small_button(format!("{} ▶", fmt_nav(step_s))).clicked() {
@@ -1017,6 +1042,66 @@ impl View for GanttChart {
                         }
                     });
                 });
+        }
+
+        // ── Jump-to dialog ────────────────────────────────────────────────────
+        if self.jump_dialog_open {
+            let mut do_jump = false;
+            let mut do_cancel = false;
+            egui::Window::new("Jump to...")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ui.ctx(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Date (YYYY-MM-DD):");
+                        ui.text_edit_singleline(&mut self.jump_date_str);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Time (HH:MM):");
+                        ui.text_edit_singleline(&mut self.jump_time_str);
+                    });
+                    if let Some(err) = &self.jump_error {
+                        ui.colored_label(egui::Color32::RED, err);
+                    }
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        let jump_btn = egui::Button::new("Jump ▶")
+                            .fill(ui.visuals().selection.bg_fill);
+                        if ui.add(jump_btn).clicked() { do_jump = true; }
+                        if ui.button("Cancel").clicked() { do_cancel = true; }
+                    });
+                });
+            if do_jump {
+                use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+                let parsed = (|| -> Result<i64, &'static str> {
+                    let date = NaiveDate::parse_from_str(self.jump_date_str.trim(), "%Y-%m-%d")
+                        .map_err(|_| "Invalid date (YYYY-MM-DD)")?;
+                    let time = NaiveTime::parse_from_str(self.jump_time_str.trim(), "%H:%M")
+                        .map_err(|_| "Invalid time (HH:MM)")?;
+                    let naive = NaiveDateTime::new(date, time);
+                    Local.from_local_datetime(&naive)
+                        .single()
+                        .map(|dt| dt.timestamp())
+                        .ok_or("Ambiguous local time")
+                })();
+                match parsed {
+                    Ok(target_s) => {
+                        let init_s = self.initial_start_s.unwrap_or(target_s);
+                        let usable = self.last_canvas_usable_width_px.max(1.0);
+                        let canvas_w = self.options.canvas_width_s;
+                        self.options.sideways_pan_in_points =
+                            (init_s as f32 - target_s as f32 + canvas_w / 2.0)
+                            * usable / canvas_w;
+                        self.options.zoom_to_relative_s_range = None;
+                        self.pending_navigation_refresh = true;
+                        self.jump_dialog_open = false;
+                        self.jump_error = None;
+                    }
+                    Err(e) => self.jump_error = Some(e.to_string()),
+                }
+            }
+            if do_cancel { self.jump_dialog_open = false; self.jump_error = None; }
         }
 
         let mut visible_range: Option<(i64, i64)> = None;
