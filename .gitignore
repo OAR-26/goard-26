@@ -33,4 +33,6 @@ Thumbs.db
 *.dylib
 
 # Options file
-options.jsontab_states.json
+options.json
+
+tab_states.json

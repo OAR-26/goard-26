@@ -403,7 +403,79 @@ Les fonctions protégées sont : création/édition/suppression de vues Gantt, c
 
 ---
 
-## 9) Diagramme énergie
+## 9) Cache de préférences par onglet (`tab_states.json`)
+
+### Principe
+
+Chaque fichier importé dispose d'un identifiant stable composé de deux clés :
+
+| Clé | Calcul | Rôle |
+|-----|--------|------|
+| **Chemin absolu** | canonicalisé à l'import (`std::fs::canonicalize`) | Lookup rapide O(1) |
+| **Hash FNV-1a 64 bits** | premiers 8 Ko du contenu + longueur totale | Fallback si fichier déplacé/renommé |
+
+À l'ouverture d'un onglet, le cache est interrogé d'abord par chemin, puis par hash. Si une correspondance est trouvée, les préférences sont restaurées immédiatement.
+
+### Données persistées par onglet
+
+| Champ | Description |
+|-------|-------------|
+| `canvas_width_s` | Largeur visible du Gantt en secondes (niveau de zoom) |
+| `sideways_pan` | Décalage horizontal en points |
+| `row_height` | Hauteur des lignes de ressources |
+| `view_index` | Index de la vue d'agrégation active |
+| `energy_y_min/max` | Bornes Y du graphe énergie |
+| `energy_fit` | Case « Ajuster à la figure » |
+| `energy_panel_height` | Hauteur du panneau énergie |
+
+### Déclencheurs de sauvegarde
+
+| Événement | Code |
+|-----------|------|
+| Changement d'onglet | Blocs save dans `render_compact_toolbar` et `render` |
+| Fermeture d'un onglet | `close_ds` handler dans `render_data_source_tabs` (via `persist_tab_state`) |
+| Quitter l'application | `eframe::App::on_exit` → `flush_all_tab_states` |
+
+> **Règle importante :** pour l'onglet actuellement actif, `persist_tab_state` lit directement `self.options.*` et `self.energy.*` (état courant) et non le `tab_view_state` HashMap (snapshot potentiellement périmé). Pour les onglets en arrière-plan, il lit le HashMap mis à jour lors du dernier départ.
+
+### Fichiers et structs concernés
+
+| Fichier | Rôle |
+|---------|------|
+| `src/models/data_structure/tab_state_cache.rs` | `TabStateCache` (load/save/lookup/store) + `compute_file_hash()` |
+| `src/models/data_structure/import_state.rs` | `ImportedDataSource.file_hash: Option<String>` |
+| `src/models/data_structure/application_context.rs` | Calcul du hash + canonicalisation du chemin à l'import |
+| `src/views/main_page/gantt/mod.rs` | `GanttChart::persist_tab_state`, `flush_all_tab_states`, `restore_from_cache` |
+| `src/app.rs` | `on_exit` → `flush_all_tab_states` |
+
+### Fichier de cache
+
+`tab_states.json` est écrit dans le répertoire de travail courant (là où le binaire est lancé). Il est **gitignore** : ne jamais le committer avec des chemins machine-spécifiques.
+
+Format d'une entrée :
+
+```json
+{
+  "path": "/chemin/absolu/vers/fichier.json",
+  "hash": "494729c9f071c0bc",
+  "state": {
+    "canvas_width_s": 86400.0,
+    "sideways_pan": 0.0,
+    "row_height": 20.0,
+    "view_index": 0,
+    "energy_y_min": null,
+    "energy_y_max": null,
+    "energy_fit": true,
+    "energy_panel_height": 270.0
+  }
+}
+```
+
+Maximum 200 entrées (FIFO). La clé de déduplication est le hash (pas le chemin) : si un fichier est déplacé, le chemin stocké est mis à jour automatiquement à la prochaine ouverture.
+
+---
+
+## 10) Diagramme énergie
 
 ### Sources de données
 

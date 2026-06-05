@@ -85,7 +85,7 @@ En haut du Gantt, une rangée d'onglets permet de naviguer entre les sources :
 - **Live Data** : données temps réel (visible uniquement si le mode live est actif)
   - `×` à droite : désactive le mode live et vide les données en mémoire
 - **Fichiers importés** : un onglet par fichier chargé
-  - `+` : groupe ce fichier avec un autre (voir section 11)
+  - `+` : groupe ce fichier avec un autre (voir section 12)
   - `×` : ferme et supprime la source
 
 ### Interactions principales
@@ -264,7 +264,39 @@ Cliquer **Import ▶** pour charger. Un onglet apparaît en haut du Gantt.
 
 ---
 
-## 11) Groupement de fichiers
+## 11) Préférences par fichier (sauvegarde automatique)
+
+L'application mémorise automatiquement les préférences Gantt **par fichier importé** :
+
+| Préférence | Ce qui est sauvegardé |
+|------------|-----------------------|
+| Zoom | Largeur visible de la timeline |
+| Position | Décalage horizontal (pan) |
+| Hauteur des lignes | Taille verticale des lignes de ressources |
+| Vue active | Indice de la vue d'agrégation sélectionnée |
+| Panneau énergie | Bornes Y, option « Ajuster à la figure », hauteur du panneau |
+
+### Quand les préférences sont-elles sauvegardées ?
+
+- **Changement d'onglet** : en quittant un onglet vers un autre
+- **Fermeture d'un onglet** (`×`)
+- **Quitter l'application** (via Fichier → Quitter ou le bouton de fermeture de la fenêtre)
+
+> **Note :** fermer la fenêtre via le gestionnaire de fenêtres (croix OS) déclenche aussi la sauvegarde. En revanche, forcer la fin du processus (`kill`, coupure de courant) ne garantit pas la sauvegarde du dernier état.
+
+### Identification du fichier
+
+Les préférences sont associées au fichier par son **chemin absolu** ET par une **empreinte du contenu** (hash des premiers 8 Ko). Cela signifie que :
+- Renommer ou déplacer un fichier → les préférences sont quand même retrouvées (via le hash)
+- Modifier le contenu du fichier → le chemin seul suffit à retrouver l'ancienne session
+
+### Fichier de stockage
+
+Les préférences sont stockées dans `tab_states.json` dans le répertoire de travail. Ce fichier est local à votre machine et n'est pas partagé.
+
+---
+
+## 12) Groupement de fichiers
 
 Il est possible de **combiner** un fichier OAR et un fichier Energy Series pour superposer la courbe mesurée sur l'estimation.
 
@@ -282,7 +314,7 @@ Depuis l'onglet du groupe :
 
 ---
 
-## 12) Résumé des fonctionnalités
+## 13) Résumé des fonctionnalités
 
 - Authentification administrateur (gestion des vues et presets)
 - Dashboard (métriques + graphique + tableau tri/pagination/colonnes)
@@ -295,3 +327,4 @@ Depuis l'onglet du groupe :
 - Estimation et mesure énergétique synchronisées avec la timeline
 - Thème clair/sombre, langue, taille de police
 - Rafraîchissement auto et manuel (mode live uniquement)
+- Préférences Gantt sauvegardées par fichier (zoom, pan, vue, énergie) — restaurées automatiquement à la réouverture
