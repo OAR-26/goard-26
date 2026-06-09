@@ -82,7 +82,7 @@ zoom_animation_duration = 0.75
 gutter_max_width = 650
 
 # Minimum job bar width in pixels before the job label is hidden
-job_label_min_width = 30
+job_label_min_width = 0
 
 # Field displayed inside job bars. Options: id, owner, name, command, queue, project, state, walltime, job_type
 job_label_field = "name"

@@ -35,7 +35,7 @@
     "hosts":               "network_address",
     "assigned_resources":  "resource_id",
     "submission_time":     "submission_time",
-    "job_type":            "job_type",
+    "job_type":            "type",
     "job_types":           "types",
     "name":                "name",
     "project":             "project",

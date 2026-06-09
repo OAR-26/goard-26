@@ -378,8 +378,8 @@ fn job_bar_label(job: &Job, field: &str) -> String {
             if s >= 3600 { format!("{}h{:02}m", s / 3600, (s % 3600) / 60) }
             else         { format!("{}m", s / 60) }
         }
-        "job_type" => job.job_type.clone(),
-        _          => job.id.to_string(), // "id" + unknown fields fall back to id
+        "type" | "job_type" => job.job_type.clone(),
+        _                   => job.id.to_string(), // "id" + unknown fields fall back to id
     }
 }
 
