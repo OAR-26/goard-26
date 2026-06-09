@@ -81,8 +81,11 @@ zoom_animation_duration = 0.75
 # Maximum width in pixels of the resource-label column on the left
 gutter_max_width = 650
 
-# Minimum job bar width in pixels before the job ID label is hidden
+# Minimum job bar width in pixels before the job label is hidden
 job_label_min_width = 30
+
+# Field displayed inside job bars. Options: id, owner, name, command, queue, project, state, walltime, job_type
+job_label_field = "name"
 
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
 hatch_spacing = 10

@@ -212,6 +212,20 @@ impl SettingsPanel {
                         ui.add(egui::DragValue::new(&mut cfg.job_label_min_width).range(0.0..=200.0));
                     });
                     ui.horizontal(|ui| {
+                        ui.label("Job bar label field:");
+                        const JOB_FIELDS: &[&str] = &[
+                            "id", "owner", "name", "command", "queue",
+                            "project", "state", "walltime", "job_type",
+                        ];
+                        egui::ComboBox::from_id_salt("job_label_field")
+                            .selected_text(cfg.job_label_field.as_str())
+                            .show_ui(ui, |ui| {
+                                for &f in JOB_FIELDS {
+                                    ui.selectable_value(&mut cfg.job_label_field, f.to_string(), f);
+                                }
+                            });
+                    });
+                    ui.horizontal(|ui| {
                         ui.label("Hatch spacing (px):");
                         ui.add(egui::DragValue::new(&mut cfg.hatch_spacing).range(2.0..=50.0));
                     });

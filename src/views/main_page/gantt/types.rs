@@ -106,6 +106,8 @@ pub struct Options {
     pub zoom_animation_duration: f64,
     pub hatch_spacing: f32,
     pub job_label_min_width: f32,
+    /// Job field rendered inside bar labels (e.g. "id", "owner", "name"). Default: "id".
+    pub job_label_field: String,
     pub now_line_color: egui::Color32,
     /// Step durations in seconds, smallest to largest. Each drives one ◀/▶ button pair.
     pub nav_steps: Vec<i64>,
@@ -145,6 +147,7 @@ impl Default for Options {
             zoom_animation_duration: 0.75,
             hatch_spacing: 10.0,
             job_label_min_width: 30.0,
+            job_label_field: "id".to_string(),
             now_line_color: egui::Color32::RED,
             nav_steps: vec![86_400, 7 * 86_400],
         }

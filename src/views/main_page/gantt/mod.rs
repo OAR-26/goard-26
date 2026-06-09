@@ -220,6 +220,7 @@ impl Default for GanttChart {
         options.zoom_animation_duration = gantt_cfg.zoom_animation_duration;
         options.hatch_spacing           = gantt_cfg.hatch_spacing;
         options.job_label_min_width     = gantt_cfg.job_label_min_width;
+        options.job_label_field         = gantt_cfg.job_label_field.clone();
         options.nav_steps = gantt_cfg.nav_steps_s();
         let mut energy_panel = EnergyPanelState::default();
         energy_panel.panel_height = gantt_cfg.energy_panel_height;
@@ -816,6 +817,7 @@ impl View for GanttChart {
             self.options.zoom_animation_duration = cfg.zoom_animation_duration;
             self.options.hatch_spacing           = cfg.hatch_spacing;
             self.options.job_label_min_width     = cfg.job_label_min_width;
+            self.options.job_label_field         = cfg.job_label_field.clone();
             self.options.rect_height             = cfg.gantt_row_height
                 .clamp(cfg.gantt_row_height_min, cfg.gantt_row_height_max);
             self.options.now_line_color = egui::Color32::from_rgb(

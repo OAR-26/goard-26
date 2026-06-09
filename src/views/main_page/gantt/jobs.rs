@@ -321,6 +321,8 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PaintedJobRow {
     job_id: u32,
+    /// Pre-computed display label (field selected by options.job_label_field).
+    job_bar_label: String,
     start_s: i64,
     stop_s: i64,
     row_y: f32,
@@ -330,6 +332,7 @@ pub(super) struct PaintedJobRow {
 
 struct JobBlock<'a> {
     job_id: u32,
+    job_bar_label: String,
     start_s: i64,
     stop_s: i64,
     rows: Vec<&'a PaintedJobRow>,
@@ -344,6 +347,7 @@ fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow], rect_height: f32
     let mut blocks = Vec::new();
     for ((job_id, start_s, stop_s), mut group_rows) in group_map {
         group_rows.sort_by(|a, b| a.row_y.partial_cmp(&b.row_y).unwrap_or(std::cmp::Ordering::Equal));
+        let label = group_rows.first().map(|r| r.job_bar_label.clone()).unwrap_or_default();
         let mut i = 0;
         while i < group_rows.len() {
             let mut j = i + 1;
@@ -354,11 +358,29 @@ fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow], rect_height: f32
                 }
                 j += 1;
             }
-            blocks.push(JobBlock { job_id, start_s, stop_s, rows: group_rows[i..j].to_vec() });
+            blocks.push(JobBlock { job_id, job_bar_label: label.clone(), start_s, stop_s, rows: group_rows[i..j].to_vec() });
             i = j;
         }
     }
     blocks
+}
+
+fn job_bar_label(job: &Job, field: &str) -> String {
+    match field {
+        "owner"    => job.owner.clone(),
+        "name"     => job.name.clone().unwrap_or_else(|| job.id.to_string()),
+        "command"  => job.command.clone(),
+        "queue"    => job.queue.clone(),
+        "project"  => job.project.clone(),
+        "state"    => format!("{:?}", job.state),
+        "walltime" => {
+            let s = job.walltime;
+            if s >= 3600 { format!("{}h{:02}m", s / 3600, (s % 3600) / 60) }
+            else         { format!("{}m", s / 60) }
+        }
+        "job_type" => job.job_type.clone(),
+        _          => job.id.to_string(), // "id" + unknown fields fall back to id
+    }
 }
 
 pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[PaintedJobRow]) {
@@ -390,7 +412,7 @@ pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[Painte
                 .text(
                     block_rect.center(),
                     Align2::CENTER_CENTER,
-                    format!("{}", block.job_id),
+                    block.job_bar_label.clone(),
                     font.clone(),
                     Color32::BLACK,
                 );
@@ -1315,6 +1337,7 @@ pub(super) fn draw_level_n<'a>(
                     };
                     painted_rows.push(PaintedJobRow {
                         job_id: job.id,
+                        job_bar_label: job_bar_label(job, &options.job_label_field),
                         start_s: job.scheduled_start,
                         stop_s,
                         row_y: job_row_y,

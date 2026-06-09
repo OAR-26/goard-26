@@ -63,6 +63,9 @@ pub struct GanttConfig  {
 
     pub gutter_max_width: f32,
     pub job_label_min_width: f32,
+    /// Job field displayed inside bar labels. Default: "id".
+    /// Valid values: id, owner, name, command, queue, project, state, walltime, job_type.
+    pub job_label_field: String,
     pub hatch_spacing: f32,
     pub ssh_host: String,
     /// Navigation step buttons: (n, unit) pairs, smallest to largest.
@@ -124,6 +127,7 @@ impl Default for GanttConfig {
 
             gutter_max_width: 650.0,
             job_label_min_width: 30.0,
+            job_label_field: "id".to_string(),
             hatch_spacing: 10.0,
             ssh_host: "grenoble.g5k".to_string(),
             nav_steps: vec![(1, "day".to_string()), (1, "week".to_string())],
@@ -204,6 +208,7 @@ impl GanttConfig {
 
             gutter_max_width:           f64("gutter_max_width").map(|v| v as f32).unwrap_or(def.gutter_max_width),
             job_label_min_width:        f64("job_label_min_width").map(|v| v as f32).unwrap_or(def.job_label_min_width),
+            job_label_field:            str_("job_label_field").map(|s| s.to_string()).unwrap_or(def.job_label_field),
             hatch_spacing:              f64("hatch_spacing").map(|v| v as f32).unwrap_or(def.hatch_spacing),
             ssh_host:                   str_("ssh_host").map(|s| s.to_string()).unwrap_or(def.ssh_host),
             nav_steps: {
@@ -308,8 +313,11 @@ zoom_animation_duration = {zoom_anim}
 # Maximum width in pixels of the resource-label column on the left
 gutter_max_width = {gutter_max}
 
-# Minimum job bar width in pixels before the job ID label is hidden
+# Minimum job bar width in pixels before the job label is hidden
 job_label_min_width = {job_label_min}
+
+# Field displayed inside job bars. Options: id, owner, name, command, queue, project, state, walltime, job_type
+job_label_field = \"{job_label_field}\"
 
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
 hatch_spacing = {hatch_spacing}
@@ -356,6 +364,7 @@ Standby   = \"{standby_light}\"
             zoom_anim            = self.zoom_animation_duration,
             gutter_max           = self.gutter_max_width,
             job_label_min        = self.job_label_min_width,
+            job_label_field      = self.job_label_field,
             hatch_spacing        = self.hatch_spacing,
             nav_steps_toml       = nav_steps_toml,
             absent_dark          = hex(self.state_colors.absent),
