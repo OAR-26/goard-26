@@ -66,6 +66,8 @@ pub struct GanttConfig  {
     /// Job field displayed inside bar labels. Default: "id".
     /// Valid values: id, owner, name, command, queue, project, state, walltime, job_type.
     pub job_label_field: String,
+    /// Color mode: "random" or "field".
+    pub job_color_mode: String,
     /// Job field used to assign a deterministic color when color mode is ByField.
     pub job_color_field: String,
     pub hatch_spacing: f32,
@@ -133,6 +135,7 @@ impl Default for GanttConfig {
             gutter_max_width: 650.0,
             job_label_min_width: 30.0,
             job_label_field: "id".to_string(),
+            job_color_mode: "random".to_string(),
             job_color_field: "state".to_string(),
             hatch_spacing: 10.0,
             ssh_host: "grenoble.g5k".to_string(),
@@ -227,6 +230,7 @@ impl GanttConfig {
             gutter_max_width:           f64("gutter_max_width").map(|v| v as f32).unwrap_or(def.gutter_max_width),
             job_label_min_width:        f64("job_label_min_width").map(|v| v as f32).unwrap_or(def.job_label_min_width),
             job_label_field:            str_("job_label_field").map(|s| s.to_string()).unwrap_or(def.job_label_field),
+            job_color_mode:             str_("job_color_mode").map(|s| s.to_string()).unwrap_or(def.job_color_mode),
             job_color_field:            str_("job_color_field").map(|s| s.to_string()).unwrap_or(def.job_color_field),
             hatch_spacing:              f64("hatch_spacing").map(|v| v as f32).unwrap_or(def.hatch_spacing),
             ssh_host:                   str_("ssh_host").map(|s| s.to_string()).unwrap_or(def.ssh_host),
@@ -350,7 +354,10 @@ job_label_min_width = {job_label_min}
 # Field displayed inside job bars. Options: id, owner, name, command, queue, project, state, walltime, job_type
 job_label_field = \"{job_label_field}\"
 
-# Field used to assign a deterministic color when color mode is 'By field'
+# Job color mode: \"random\" (hash by id) or \"field\" (by field value with optional color map)
+job_color_mode = \"{job_color_mode}\"
+
+# Field used to assign a deterministic color when color mode is 'field'
 job_color_field = \"{job_color_field}\"
 
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
@@ -403,6 +410,7 @@ Standby   = \"{standby_light}\"
             gutter_max           = self.gutter_max_width,
             job_label_min        = self.job_label_min_width,
             job_label_field      = self.job_label_field,
+            job_color_mode       = self.job_color_mode,
             job_color_field      = self.job_color_field,
             hatch_spacing        = self.hatch_spacing,
             nav_steps_toml       = nav_steps_toml,

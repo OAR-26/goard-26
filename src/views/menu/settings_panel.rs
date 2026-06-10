@@ -5,15 +5,17 @@ use crate::models::data_structure::{
     gantt_config::{GanttConfig, RgbColor},
 };
 use crate::views::components::gantt_job_color::{JobColor, JobColorEnum};
+use crate::views::menu::field_colors_editor::FieldColorsEditor;
 
 pub struct SettingsPanel {
     pub open: bool,
     draft: Option<(GanttConfig, JobColorEnum)>,
+    field_colors_editor: FieldColorsEditor,
 }
 
 impl Default for SettingsPanel {
     fn default() -> Self {
-        Self { open: false, draft: None }
+        Self { open: false, draft: None, field_colors_editor: FieldColorsEditor::default() }
     }
 }
 
@@ -98,6 +100,9 @@ impl SettingsPanel {
                             ui.text_edit_singleline(&mut cfg.job_color_field);
                         }
                     });
+                    if ui.button(t!("app.gantt.settings.field_colors_btn")).clicked() {
+                        self.field_colors_editor.open_with(&cfg.field_colors);
+                    }
                     ui.horizontal(|ui| {
                         ui.label("Random color minimum (0–255):");
                         ui.add(egui::Slider::new(&mut cfg.job_color_min, 0u8..=255u8));
@@ -250,9 +255,20 @@ impl SettingsPanel {
                 });
             });
 
+        // ── Field colors editor window ───────────────────────────────────────────
+        if let Some(new_field_colors) = self.field_colors_editor.show(ui) {
+            if let Some((cfg, _)) = self.draft.as_mut() {
+                cfg.field_colors = new_field_colors;
+            }
+        }
+
         if apply {
             if let Some((cfg, mode)) = self.draft.take() {
                 app.prefs.gantt_config = cfg;
+                app.prefs.gantt_config.job_color_mode = match mode {
+                    JobColorEnum::ByField => "field".to_string(),
+                    JobColorEnum::Random  => "random".to_string(),
+                };
                 app.prefs.job_color = JobColor { color: mode };
                 app.prefs.config_reload_requested = true;
                 #[cfg(not(target_arch = "wasm32"))]

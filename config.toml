@@ -87,7 +87,10 @@ job_label_min_width = 30
 # Field displayed inside job bars. Options: id, owner, name, command, queue, project, state, walltime, job_type
 job_label_field = "name"
 
-# Field used to assign a deterministic color when color mode is 'By field'
+# Job color mode: "random" (hash by id) or "field" (by field value with optional color map)
+job_color_mode = "field"
+
+# Field used to assign a deterministic color when color mode is 'field'
 job_color_field = "type"
 
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
@@ -143,6 +146,11 @@ Unknown             = "#c8c8c8"
 Waiting             = "#87cefa"
 
 [field_colors.type]
-evolving            = "#002df3"
-malleable           = "#13dd01"
+evolving1           = "#002df3"
+evolving2           = "#3658ee"
+evolving3           = "#4c62c2"
+evolving4           = "#6472b1"
+malleable1          = "#13dd01"
+malleable2          = "#44c039"
+malleable3          = "#4ca144"
 rigid               = "#ee0000"

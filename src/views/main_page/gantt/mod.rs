@@ -554,10 +554,12 @@ impl GanttChart {
                 self.restore_from_cache(app, ds_idx);
             }
 
-            // Restore view index if this tab was visited before.
-            if let Some(&saved_view) = self.tab_view_index.get(&ds_idx) {
-                self.current_view_index = saved_view.min(self.gantt_views.len().saturating_sub(1));
-            }
+            // Restore view index for this tab; reset to 0 if no saved state so we
+            // don't inherit the previous tab's view index.
+            self.current_view_index = self.tab_view_index.get(&ds_idx)
+                .copied()
+                .unwrap_or(0)
+                .min(self.gantt_views.len().saturating_sub(1));
 
             // Restore energy panel state if this tab was visited before.
             if let Some(&(y_bounds, fit, height)) = self.energy_panel_state.get(&ds_idx) {
@@ -888,19 +890,20 @@ impl View for GanttChart {
                 self.restore_from_cache(app, ds_idx);
             }
 
-            // Restore view index if this tab was visited before.
-            if let Some(&saved_view) = self.tab_view_index.get(&ds_idx) {
-                self.current_view_index = saved_view.min(self.gantt_views.len().saturating_sub(1));
-                // Apply the view's options (file types with own hierarchy override this every frame).
-                if let Some(view) = self.gantt_views.get(self.current_view_index) {
-                    self.options.levels = view.levels.clone();
-                    self.options.resource_filter = view.filter.clone();
-                    self.options.leaf_label_template = view.leaf_label_template.clone();
-                    self.options.sort_by_label = view.sort_by_label;
-                    self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
-                        .cloned()
-                        .or_else(|| backward_compat_preset(view));
-                }
+            // Restore view index for this tab; reset to 0 if no saved state so we
+            // don't inherit the previous tab's view index.
+            self.current_view_index = self.tab_view_index.get(&ds_idx)
+                .copied()
+                .unwrap_or(0)
+                .min(self.gantt_views.len().saturating_sub(1));
+            if let Some(view) = self.gantt_views.get(self.current_view_index) {
+                self.options.levels = view.levels.clone();
+                self.options.resource_filter = view.filter.clone();
+                self.options.leaf_label_template = view.leaf_label_template.clone();
+                self.options.sort_by_label = view.sort_by_label;
+                self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
+                    .cloned()
+                    .or_else(|| backward_compat_preset(view));
             }
 
             // Restore energy panel state if this tab was visited before.
