@@ -93,7 +93,10 @@ impl SettingsPanel {
                     ui.horizontal(|ui| {
                         ui.label("Mode:");
                         ui.radio_value(job_color_mode, JobColorEnum::Random, "Random");
-                        ui.radio_value(job_color_mode, JobColorEnum::State, "By state");
+                        ui.radio_value(job_color_mode, JobColorEnum::ByField, "By field:");
+                        if *job_color_mode == JobColorEnum::ByField {
+                            ui.text_edit_singleline(&mut cfg.job_color_field);
+                        }
                     });
                     ui.horizontal(|ui| {
                         ui.label("Random color minimum (0–255):");

@@ -108,6 +108,10 @@ pub struct Options {
     pub job_label_min_width: f32,
     /// Job field rendered inside bar labels (e.g. "id", "owner", "name"). Default: "id".
     pub job_label_field: String,
+    /// Job field used for deterministic color assignment in ByField mode. Default: "state".
+    pub job_color_field: String,
+    /// Per-field value→color maps. field name → (value → (fill, hover)).
+    pub field_colors: std::collections::HashMap<String, std::collections::HashMap<String, (egui::Color32, egui::Color32)>>,
     pub now_line_color: egui::Color32,
     /// Step durations in seconds, smallest to largest. Each drives one ◀/▶ button pair.
     pub nav_steps: Vec<i64>,
@@ -148,6 +152,8 @@ impl Default for Options {
             hatch_spacing: 10.0,
             job_label_min_width: 30.0,
             job_label_field: "id".to_string(),
+            job_color_field: "state".to_string(),
+            field_colors: std::collections::HashMap::new(),
             now_line_color: egui::Color32::RED,
             nav_steps: vec![86_400, 7 * 86_400],
         }

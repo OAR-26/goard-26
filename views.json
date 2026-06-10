@@ -91,6 +91,17 @@
         "disk"
       ],
       "leaf_infos": "disk_info"
+    },
+    {
+      "name": "Ya",
+      "levels": [
+        "host"
+      ],
+      "filter": null,
+      "leaf_label_template": null,
+      "sort_by_label": false,
+      "summary_fields": [],
+      "leaf_infos": null
     }
   ],
   "leaf_info_presets": [

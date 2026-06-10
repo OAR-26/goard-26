@@ -146,6 +146,20 @@ use crate::models::data_structure::tab_state_cache::{TabStateCache, TabViewState
 use self::types::{gutter_stripes_total_w, Info, Options, GUTTER_WIDTH};
 
 
+fn cfg_field_colors(
+    src: &std::collections::HashMap<String, std::collections::HashMap<String, crate::models::data_structure::gantt_config::RgbColor>>,
+) -> std::collections::HashMap<String, std::collections::HashMap<String, (egui::Color32, egui::Color32)>> {
+    let darker = |c: u8| -> u8 { ((c as f32 * 0.8) as u8).max(1) };
+    src.iter().map(|(field, values)| {
+        let mapped = values.iter().map(|(val, &c)| {
+            let fill  = egui::Color32::from_rgb(c.0, c.1, c.2);
+            let hover = egui::Color32::from_rgb(darker(c.0), darker(c.1), darker(c.2));
+            (val.clone(), (fill, hover))
+        }).collect();
+        (field.clone(), mapped)
+    }).collect()
+}
+
 fn compute_gutter_width(
     ctx: &egui::Context,
     base_font: &FontId,
@@ -221,6 +235,8 @@ impl Default for GanttChart {
         options.hatch_spacing           = gantt_cfg.hatch_spacing;
         options.job_label_min_width     = gantt_cfg.job_label_min_width;
         options.job_label_field         = gantt_cfg.job_label_field.clone();
+        options.job_color_field         = gantt_cfg.job_color_field.clone();
+        options.field_colors         = cfg_field_colors(&gantt_cfg.field_colors);
         options.nav_steps = gantt_cfg.nav_steps_s();
         let mut energy_panel = EnergyPanelState::default();
         energy_panel.panel_height = gantt_cfg.energy_panel_height;
@@ -818,6 +834,8 @@ impl View for GanttChart {
             self.options.hatch_spacing           = cfg.hatch_spacing;
             self.options.job_label_min_width     = cfg.job_label_min_width;
             self.options.job_label_field         = cfg.job_label_field.clone();
+            self.options.job_color_field         = cfg.job_color_field.clone();
+            self.options.field_colors         = cfg_field_colors(&cfg.field_colors);
             self.options.rect_height             = cfg.gantt_row_height
                 .clamp(cfg.gantt_row_height_min, cfg.gantt_row_height_max);
             self.options.now_line_color = egui::Color32::from_rgb(
@@ -827,7 +845,9 @@ impl View for GanttChart {
             self.energy.now_line_color = self.options.now_line_color;
             self.options.nav_steps = cfg.nav_steps_s();
         }
-        self.options.job_color.color = app.prefs.job_color.color.clone();
+        self.options.job_color.color  = app.prefs.job_color.color.clone();
+        self.options.job_color_field  = app.prefs.gantt_config.job_color_field.clone();
+        self.options.field_colors = cfg_field_colors(&app.prefs.gantt_config.field_colors);
 
         self.render_data_source_tabs(ui, app);
 

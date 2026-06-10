@@ -15,13 +15,13 @@ besteffort_truncate_job_to_now = true
 min_state_duration = 2
 
 # Initial Gantt horizontal window width in seconds (21600 = 6 h)
-default_timespan = 3600
+default_timespan = 21600
 
 # ── Job colors ────────────────────────────────────────────────────────────────
 
 # Minimum RGB component for random job colors (0–255).
 # 0 = full range, 255 = white. 70–140 recommended for dark/light balance.
-job_color_min = 85
+job_color_min = 65
 
 # ── Gantt row sizing ──────────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ energy_series_colors = [
 ]
 
 # Color of the vertical 'now' marker line on the energy and Gantt plots
-now_line_color = "#ff0000"
+now_line_color = "#dc0000"
 
 # ── Zoom limits ───────────────────────────────────────────────────────────────
 
@@ -82,10 +82,13 @@ zoom_animation_duration = 0.75
 gutter_max_width = 650
 
 # Minimum job bar width in pixels before the job label is hidden
-job_label_min_width = 0
+job_label_min_width = 30
 
 # Field displayed inside job bars. Options: id, owner, name, command, queue, project, state, walltime, job_type
 job_label_field = "name"
+
+# Field used to assign a deterministic color when color mode is 'By field'
+job_color_field = "type"
 
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
 hatch_spacing = 10
@@ -94,14 +97,6 @@ hatch_spacing = 10
 # Each [[nav_steps]] entry adds one ◀/▶ button pair.
 # Buttons render: ◀ stepN … ◀ step1 | step1 ▶ … stepN ▶
 # unit: minute | hour | day | week
-
-[[nav_steps]]
-n    = 1
-unit = "hour"
-
-[[nav_steps]]
-n    = 6
-unit = "hour"
 
 [[nav_steps]]
 n    = 1
@@ -127,3 +122,27 @@ Absent    = "#1040a0"
 Suspected = "#a01010"
 Dead      = "#404040"
 Standby   = "#008888"
+
+# ── Field value colors (used when color mode is 'By field') ──────────────────
+# Add [field_colors.<fieldname>] sections to map field values to colors.
+# Values not listed fall back to hash-based random color.
+
+[field_colors.state]
+Error               = "#ff8a80"
+Finishing           = "#90caf9"
+Hold                = "#ffecb3"
+Launching           = "#c5ffc6"
+Resuming            = "#81c784"
+Running             = "#a5d6a7"
+Suspended           = "#ffdd93"
+Terminated          = "#c8e6ff"
+ToAckReservation    = "#e0bfff"
+ToError             = "#ffcccb"
+ToLaunch            = "#b2ebf2"
+Unknown             = "#c8c8c8"
+Waiting             = "#87cefa"
+
+[field_colors.type]
+evolving            = "#002df3"
+malleable           = "#13dd01"
+rigid               = "#ee0000"

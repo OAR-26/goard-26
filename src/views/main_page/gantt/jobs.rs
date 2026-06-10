@@ -7,7 +7,7 @@ use crate::models::data_structure::marker::MarkerShape;
 use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::data_structure::strata::Strata;
 use crate::models::utils::date_converter::format_timestamp;
-use crate::models::utils::utils::{compare_string_with_number, get_job_gantt_colors, get_tree_structure_for_job};
+use crate::models::utils::utils::{compare_string_with_number, get_job_gantt_colors, get_job_gantt_colors_for_str, get_tree_structure_for_job};
 use crate::views::components::job_details::JobDetailsWindow;
 use egui::{
     pos2, Align2, Color32, CursorIcon, FontId, Id, LayerId, Order, Rect, Shape, Stroke,
@@ -1556,7 +1556,12 @@ fn paint_job(
     let (hovered_color, normal_color) = if options.job_color.is_random() {
         get_job_gantt_colors(job.id, job_color_min)
     } else {
-        job.state.get_color()
+        let val = job_bar_label(job, &options.job_color_field);
+        options.field_colors
+            .get(&options.job_color_field)
+            .and_then(|m| m.get(&val))
+            .copied()
+            .unwrap_or_else(|| get_job_gantt_colors_for_str(&val, job_color_min))
     };
     let fill_color = if is_job_hovered { hovered_color } else { normal_color };
     chart_painter.rect_filled(visible_rect, rounding, fill_color);

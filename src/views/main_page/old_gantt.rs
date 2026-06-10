@@ -11,7 +11,7 @@ use crate::models::utils::utils::get_all_resources;
 use crate::models::utils::utils::get_cluster_from_name;
 use crate::models::utils::utils::get_cluster_state_from_name;
 use crate::models::utils::utils::get_host_state_from_name;
-use crate::models::utils::utils::get_job_gantt_colors;
+use crate::models::utils::utils::{get_job_gantt_colors, get_job_gantt_colors_for_str};
 use crate::models::utils::utils::get_tree_structure_for_job;
 use crate::views::view::View;
 use crate::{
@@ -1676,7 +1676,8 @@ fn paint_job(
     let (hovered_color, normal_color) = if options.job_color.is_random() {
         get_job_gantt_colors(job.id, 140)
     } else {
-        job.state.get_color()
+        let val = format!("{:?}", job.state);
+        get_job_gantt_colors_for_str(&val, 140)
     };
 
     // If the job is hovered, we make it brighter

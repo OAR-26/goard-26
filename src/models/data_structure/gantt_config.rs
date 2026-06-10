@@ -66,11 +66,16 @@ pub struct GanttConfig  {
     /// Job field displayed inside bar labels. Default: "id".
     /// Valid values: id, owner, name, command, queue, project, state, walltime, job_type.
     pub job_label_field: String,
+    /// Job field used to assign a deterministic color when color mode is ByField.
+    pub job_color_field: String,
     pub hatch_spacing: f32,
     pub ssh_host: String,
     /// Navigation step buttons: (n, unit) pairs, smallest to largest.
     /// Each entry produces one ◀/▶ button pair.
     pub nav_steps: Vec<(i64, String)>,
+    /// Per-field value→color mappings. field name → (value string → fill color).
+    /// When ByField coloring is active, looked up by job_color_field then the field's value.
+    pub field_colors: std::collections::HashMap<String, std::collections::HashMap<String, RgbColor>>,
 }
 
 pub fn unit_seconds(unit: &str) -> i64 {
@@ -128,9 +133,11 @@ impl Default for GanttConfig {
             gutter_max_width: 650.0,
             job_label_min_width: 30.0,
             job_label_field: "id".to_string(),
+            job_color_field: "state".to_string(),
             hatch_spacing: 10.0,
             ssh_host: "grenoble.g5k".to_string(),
             nav_steps: vec![(1, "day".to_string()), (1, "week".to_string())],
+            field_colors: std::collections::HashMap::new(),
         }
     }
 }
@@ -177,6 +184,17 @@ impl GanttConfig {
         let state_colors       = parse_colors("state_colors",       &def.state_colors);
         let state_colors_light = parse_colors("state_colors_light",  &def.state_colors_light);
 
+        let field_colors: std::collections::HashMap<String, std::collections::HashMap<String, RgbColor>> = val
+            .get("field_colors")
+            .and_then(|v| v.as_table())
+            .map(|outer| outer.iter().filter_map(|(field, values)| {
+                let colors = values.as_table()?.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), v.as_str().and_then(RgbColor::from_hex)?)))
+                    .collect();
+                Some((field.clone(), colors))
+            }).collect())
+            .unwrap_or_default();
+
         Self {
             standby_truncate_to_now:    bool("standby_truncate_state_to_now").unwrap_or(def.standby_truncate_to_now),
             besteffort_truncate_to_now: bool("besteffort_truncate_job_to_now").unwrap_or(def.besteffort_truncate_to_now),
@@ -209,6 +227,7 @@ impl GanttConfig {
             gutter_max_width:           f64("gutter_max_width").map(|v| v as f32).unwrap_or(def.gutter_max_width),
             job_label_min_width:        f64("job_label_min_width").map(|v| v as f32).unwrap_or(def.job_label_min_width),
             job_label_field:            str_("job_label_field").map(|s| s.to_string()).unwrap_or(def.job_label_field),
+            job_color_field:            str_("job_color_field").map(|s| s.to_string()).unwrap_or(def.job_color_field),
             hatch_spacing:              f64("hatch_spacing").map(|v| v as f32).unwrap_or(def.hatch_spacing),
             ssh_host:                   str_("ssh_host").map(|s| s.to_string()).unwrap_or(def.ssh_host),
             nav_steps: {
@@ -225,6 +244,7 @@ impl GanttConfig {
 
             state_colors,
             state_colors_light,
+            field_colors,
         }
     }
 
@@ -237,6 +257,17 @@ impl GanttConfig {
         let nav_steps_toml: String = self.nav_steps.iter()
             .map(|(n, u)| format!("\n[[nav_steps]]\nn    = {}\nunit = \"{}\"\n", n, u))
             .collect();
+        let field_colors_toml: String = {
+            let mut fields: Vec<_> = self.field_colors.iter().collect();
+            fields.sort_by_key(|(k, _)| k.as_str());
+            fields.iter().map(|(field, values)| {
+                let mut vals: Vec<_> = values.iter().collect();
+                vals.sort_by_key(|(k, _)| k.as_str());
+                let mut s = format!("\n[field_colors.{}]\n", field);
+                for (val, &c) in &vals { s.push_str(&format!("{:<20}= \"{}\"\n", val, hex(c))); }
+                s
+            }).collect()
+        };
         let content = format!(
 "# ── SSH (live data only) ──────────────────────────────────────────────────────
 
@@ -319,6 +350,9 @@ job_label_min_width = {job_label_min}
 # Field displayed inside job bars. Options: id, owner, name, command, queue, project, state, walltime, job_type
 job_label_field = \"{job_label_field}\"
 
+# Field used to assign a deterministic color when color mode is 'By field'
+job_color_field = \"{job_color_field}\"
+
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
 hatch_spacing = {hatch_spacing}
 
@@ -343,7 +377,11 @@ Absent    = \"{absent_light}\"
 Suspected = \"{suspected_light}\"
 Dead      = \"{dead_light}\"
 Standby   = \"{standby_light}\"
-",
+
+# ── Field value colors (used when color mode is 'By field') ──────────────────
+# Add [field_colors.<fieldname>] sections to map field values to colors.
+# Values not listed fall back to hash-based random color.
+{field_colors_toml}",
             ssh_host             = self.ssh_host,
             standby              = self.standby_truncate_to_now,
             besteffort           = self.besteffort_truncate_to_now,
@@ -365,8 +403,10 @@ Standby   = \"{standby_light}\"
             gutter_max           = self.gutter_max_width,
             job_label_min        = self.job_label_min_width,
             job_label_field      = self.job_label_field,
+            job_color_field      = self.job_color_field,
             hatch_spacing        = self.hatch_spacing,
             nav_steps_toml       = nav_steps_toml,
+            field_colors_toml    = field_colors_toml,
             absent_dark          = hex(self.state_colors.absent),
             suspected_dark       = hex(self.state_colors.suspected),
             dead_dark            = hex(self.state_colors.dead),

@@ -27,6 +27,15 @@ pub fn convert_id_to_color(id: u32, min: u8) -> egui::Color32 {
     egui::Color32::from_rgb(r, g, b)
 }
 
+/// Returns `(base_color, darker_color)` for a string value (field-based coloring).
+/// Same visual contract as `get_job_gantt_colors`: deterministic, respects `job_color_min`.
+pub fn get_job_gantt_colors_for_str(value: &str, job_color_min: u8) -> (egui::Color32, egui::Color32) {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    let seed = (hasher.finish() as u32) | 1; // ensure non-zero so we never get transparent
+    get_job_gantt_colors(seed, job_color_min)
+}
+
 /// Returns `(base_color, darker_color)` for rendering a job bar.
 /// Job id 0 (synthetic all_resources sentinel) → transparent pair.
 /// `job_color_min`: minimum RGB component for random colors (from GanttConfig).
