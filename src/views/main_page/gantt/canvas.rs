@@ -1,5 +1,5 @@
 use super::jobs::{
-    build_resource_groups, draw_level_n, draw_stripe_borders, paint_job_id_labels, paint_tooltip,
+    build_resource_groups, draw_level_n, draw_stripe_borders, paint_job_block_borders, paint_job_id_labels, paint_tooltip,
 };
 use super::theme::get_theme_colors;
 use super::timeline::{paint_timeline_text_on_top, timeline_header_height};
@@ -87,6 +87,7 @@ pub(super) fn ui_canvas(
         Stroke::new(1.0, theme_colors.line),
     );
 
+    paint_job_block_borders(info, options, &all_painted_rows);
     paint_job_id_labels(info, options, &all_painted_rows);
     paint_tooltip(info, options, app);
     options.previous_hovered_job = options.current_hovered_job.clone();

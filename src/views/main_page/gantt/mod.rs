@@ -233,6 +233,8 @@ impl Default for GanttChart {
         options.zoom_min_seconds        = gantt_cfg.zoom_min_seconds;
         options.zoom_animation_duration = gantt_cfg.zoom_animation_duration;
         options.hatch_spacing           = gantt_cfg.hatch_spacing;
+        options.job_block_border        = gantt_cfg.job_block_border;
+        options.job_block_border_width  = gantt_cfg.job_block_border_width;
         options.job_label_min_width     = gantt_cfg.job_label_min_width;
         options.job_label_field         = gantt_cfg.job_label_field.clone();
         options.job_color_field         = gantt_cfg.job_color_field.clone();
@@ -834,6 +836,8 @@ impl View for GanttChart {
             self.options.zoom_min_seconds        = cfg.zoom_min_seconds;
             self.options.zoom_animation_duration = cfg.zoom_animation_duration;
             self.options.hatch_spacing           = cfg.hatch_spacing;
+            self.options.job_block_border        = cfg.job_block_border;
+            self.options.job_block_border_width  = cfg.job_block_border_width;
             self.options.job_label_min_width     = cfg.job_label_min_width;
             self.options.job_label_field         = cfg.job_label_field.clone();
             self.options.job_color_field         = cfg.job_color_field.clone();

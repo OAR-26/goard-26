@@ -71,6 +71,8 @@ pub struct GanttConfig  {
     /// Job field used to assign a deterministic color when color mode is ByField.
     pub job_color_field: String,
     pub hatch_spacing: f32,
+    pub job_block_border: bool,
+    pub job_block_border_width: f32,
     pub ssh_host: String,
     /// Navigation step buttons: (n, unit) pairs, smallest to largest.
     /// Each entry produces one ◀/▶ button pair.
@@ -138,6 +140,8 @@ impl Default for GanttConfig {
             job_color_mode: "random".to_string(),
             job_color_field: "state".to_string(),
             hatch_spacing: 10.0,
+            job_block_border: false,
+            job_block_border_width: 2.5,
             ssh_host: "grenoble.g5k".to_string(),
             nav_steps: vec![(1, "day".to_string()), (1, "week".to_string())],
             field_colors: std::collections::HashMap::new(),
@@ -233,6 +237,8 @@ impl GanttConfig {
             job_color_mode:             str_("job_color_mode").map(|s| s.to_string()).unwrap_or(def.job_color_mode),
             job_color_field:            str_("job_color_field").map(|s| s.to_string()).unwrap_or(def.job_color_field),
             hatch_spacing:              f64("hatch_spacing").map(|v| v as f32).unwrap_or(def.hatch_spacing),
+            job_block_border:           bool("job_block_border").unwrap_or(def.job_block_border),
+            job_block_border_width:     f64("job_block_border_width").map(|v| v as f32).unwrap_or(def.job_block_border_width),
             ssh_host:                   str_("ssh_host").map(|s| s.to_string()).unwrap_or(def.ssh_host),
             nav_steps: {
                 val.get("nav_steps")
@@ -363,6 +369,12 @@ job_color_field = \"{job_color_field}\"
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
 hatch_spacing = {hatch_spacing}
 
+# Draw a black border around every job block (true) or only on hover (false)
+job_block_border = {job_block_border}
+
+# Thickness in pixels of the always-on job block border
+job_block_border_width = {job_block_border_width}
+
 # ── Navigation ────────────────────────────────────────────────────────────────
 # Each [[nav_steps]] entry adds one ◀/▶ button pair.
 # Buttons render: ◀ stepN … ◀ step1 | step1 ▶ … stepN ▶
@@ -413,6 +425,8 @@ Standby   = \"{standby_light}\"
             job_color_mode       = self.job_color_mode,
             job_color_field      = self.job_color_field,
             hatch_spacing        = self.hatch_spacing,
+            job_block_border       = self.job_block_border,
+            job_block_border_width = self.job_block_border_width,
             nav_steps_toml       = nav_steps_toml,
             field_colors_toml    = field_colors_toml,
             absent_dark          = hex(self.state_colors.absent),

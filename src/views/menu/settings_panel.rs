@@ -103,6 +103,13 @@ impl SettingsPanel {
                     if ui.button(t!("app.gantt.settings.field_colors_btn")).clicked() {
                         self.field_colors_editor.open_with(&cfg.field_colors);
                     }
+                    ui.checkbox(&mut cfg.job_block_border, "Always show border around job blocks");
+                    if cfg.job_block_border {
+                        ui.horizontal(|ui| {
+                            ui.label("Border width (px):");
+                            ui.add(egui::Slider::new(&mut cfg.job_block_border_width, 0.5f32..=8.0f32).step_by(0.5));
+                        });
+                    }
                     ui.horizontal(|ui| {
                         ui.label("Random color minimum (0–255):");
                         ui.add(egui::Slider::new(&mut cfg.job_color_min, 0u8..=255u8));

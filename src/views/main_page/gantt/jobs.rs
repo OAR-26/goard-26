@@ -420,6 +420,32 @@ pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[Painte
     }
 }
 
+pub(super) fn paint_job_block_borders(info: &Info, options: &Options, rows: &[PaintedJobRow]) {
+    if rows.is_empty() || !options.job_block_border {
+        return;
+    }
+    let chart_clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
+        pos2(info.canvas.max.x, info.canvas.max.y),
+    );
+    let height = options.rect_height.max(info.text_height);
+    let blocks = collect_contiguous_job_blocks(rows, height);
+    let border_color = if info.ctx.style().visuals.dark_mode { Color32::WHITE } else { Color32::BLACK };
+    let border_stroke = Stroke::new(options.job_block_border_width, border_color);
+
+    for block in blocks {
+        let start_x = info.point_from_s(options, block.start_s);
+        let end_x   = info.point_from_s(options, block.stop_s);
+        let block_top    = block.rows.first().unwrap().row_y;
+        let block_bottom = block.rows.last().unwrap().row_y + height;
+        let block_rect = Rect::from_min_max(pos2(start_x, block_top), pos2(end_x, block_bottom))
+            .intersect(chart_clip_rect);
+        if !block_rect.is_negative() {
+            info.painter.rect_stroke(block_rect, options.rounding, border_stroke);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Job-field extraction  (path-based: one path per host, higher fields derived
 // from strata so a job never appears under the wrong cluster/group)

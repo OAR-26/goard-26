@@ -88,13 +88,19 @@ job_label_min_width = 30
 job_label_field = "name"
 
 # Job color mode: "random" (hash by id) or "field" (by field value with optional color map)
-job_color_mode = "random"
+job_color_mode = "field"
 
 # Field used to assign a deterministic color when color mode is 'field'
 job_color_field = "type"
 
 # Spacing in pixels between diagonal lines in dead/absent interval overlays
 hatch_spacing = 10
+
+# Draw a black border around every job block (true) or only on hover (false)
+job_block_border = true
+
+# Thickness in pixels of the always-on job block border
+job_block_border_width = 2.5
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 # Each [[nav_steps]] entry adds one ◀/▶ button pair.

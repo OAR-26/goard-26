@@ -115,6 +115,8 @@ pub struct Options {
     pub now_line_color: egui::Color32,
     /// Step durations in seconds, smallest to largest. Each drives one ◀/▶ button pair.
     pub nav_steps: Vec<i64>,
+    pub job_block_border: bool,
+    pub job_block_border_width: f32,
 }
 
 impl Default for Options {
@@ -156,6 +158,8 @@ impl Default for Options {
             field_colors: std::collections::HashMap::new(),
             now_line_color: egui::Color32::RED,
             nav_steps: vec![86_400, 7 * 86_400],
+            job_block_border: false,
+            job_block_border_width: 2.5,
         }
     }
 }
