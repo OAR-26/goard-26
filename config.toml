@@ -85,7 +85,7 @@ gutter_max_width = 650
 job_label_min_width = 30
 
 # Field displayed inside job bars. Options: id, owner, name, command, queue, project, state, walltime, job_type
-job_label_field = "id"
+job_label_field = "name"
 
 # Job color mode: "random" (hash by id) or "field" (by field value with optional color map)
 job_color_mode = "random"

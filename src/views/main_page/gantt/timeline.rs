@@ -30,6 +30,16 @@ const GRID_LEVELS: &[GridLevel] = &[
     GridLevel { step_s: 864000, medium_s: 8640000, big_s: 17280000}, // 100d / 200d
 ];
 
+pub(super) fn timeline_header_height(options: &Options, usable_width: f32, text_height: f32) -> f32 {
+    let max_lines = usable_width / 13.0;
+    let level = pick_grid_level(options.canvas_width_s, max_lines);
+    if level.medium_s < 3600 {
+        text_height * 2.0 + 5.0
+    } else {
+        text_height + 5.0
+    }
+}
+
 fn pick_grid_level(canvas_width_s: f32, max_lines: f32) -> GridLevel {
     // Target ~max_lines/10 medium labels on screen → ~130px spacing for any level.
     let max_labels = max_lines / 10.0;
@@ -136,9 +146,10 @@ pub(super) fn paint_timeline_text_on_top(
     let num_tiny_lines = options.canvas_width_s / (level.step_s as f32);
     let zoom_factor = remap_clamp(num_tiny_lines, (0.1 * max_lines)..=max_lines, 1.0..=0.0);
 
+    let header_h = timeline_header_height(options, info.usable_width(), info.text_height);
     let bg_rect = Rect::from_min_size(
         pos2(info.canvas.min.x + gutter_width, fixed_timeline_y),
-        egui::vec2(info.usable_width(), info.text_height + 5.0),
+        egui::vec2(info.usable_width(), header_h),
     );
     info.painter
         .rect_filled(bg_rect, 0.0, theme_colors.background_timeline);
