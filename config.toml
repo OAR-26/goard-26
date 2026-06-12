@@ -100,7 +100,7 @@ hatch_spacing = 10
 job_block_border = true
 
 # Thickness in pixels of the always-on job block border
-job_block_border_width = 2.5
+job_block_border_width = 1
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 # Each [[nav_steps]] entry adds one ◀/▶ button pair.
@@ -137,7 +137,7 @@ Standby   = "#008888"
 # Values not listed fall back to hash-based random color.
 
 [field_colors.state]
-Error               = "#ff8a80"
+Error               = "#ff1500"
 Finishing           = "#90caf9"
 Hold                = "#ffecb3"
 Launching           = "#c5ffc6"
