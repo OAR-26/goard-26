@@ -3106,6 +3106,7 @@ dependencies = [
  "serde_json",
  "strum",
  "strum_macros",
+ "toml 0.8.20",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -3161,7 +3162,7 @@ dependencies = [
  "serde_json",
  "serde_yml",
  "siphasher",
- "toml",
+ "toml 0.7.8",
  "triomphe",
 ]
 
@@ -3589,6 +3590,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.8.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd87a5cdd6ffab733b2f74bc4fd7ee5fff6634124999ac278c35fc78c6120148"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit 0.22.23",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3617,6 +3630,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02a8b472d1a3d7c18e2d61a489aee3453fd9031c33e4f55bd533f4a7adca1bee"
 dependencies = [
  "indexmap",
+ "serde",
+ "serde_spanned",
  "toml_datetime",
  "winnow 0.7.1",
 ]

@@ -1,8 +1,8 @@
 use super::jobs::{
-    build_resource_groups, draw_level_n, draw_stripe_borders, paint_job_id_labels, paint_tooltip,
+    build_resource_groups, draw_level_n, draw_stripe_borders, paint_job_block_borders, paint_job_id_labels, paint_tooltip,
 };
 use super::theme::get_theme_colors;
-use super::timeline::paint_timeline_text_on_top;
+use super::timeline::{paint_timeline_text_on_top, timeline_header_height};
 use super::types::{gutter_stripes_total_w, Info, Options};
 use crate::models::data_structure::application_context::ApplicationContext;
 use crate::models::data_structure::cluster::Cluster;
@@ -29,7 +29,7 @@ pub(super) fn ui_canvas(
 
     let mut cursor_y = info.canvas.min.y;
     let mut all_painted_rows = Vec::new();
-    cursor_y += info.text_height;
+    cursor_y += timeline_header_height(options, info.usable_width(), info.text_height);
 
     let theme_colors = get_theme_colors(&info.ctx.style());
 
@@ -87,6 +87,7 @@ pub(super) fn ui_canvas(
         Stroke::new(1.0, theme_colors.line),
     );
 
+    paint_job_block_borders(info, options, &all_painted_rows);
     paint_job_id_labels(info, options, &all_painted_rows);
     paint_tooltip(info, options, app);
     options.previous_hovered_job = options.current_hovered_job.clone();

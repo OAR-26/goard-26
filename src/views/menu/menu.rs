@@ -6,11 +6,13 @@ use crate::{
 };
 use eframe::egui;
 
+use super::settings_panel::SettingsPanel;
 use super::options::Options;
 use crate::views::view::ViewType;
 
 pub struct Menu {
     options_pane: Options,
+    settings_panel: SettingsPanel,
 }
 
 impl Default for Menu {
@@ -24,7 +26,7 @@ impl Default for Menu {
             Options::new(application_options.clone())
         };
 
-        Menu { options_pane }
+        Menu { options_pane, settings_panel: SettingsPanel::default() }
     }
 }
 
@@ -47,7 +49,21 @@ impl View for Menu {
                         app.import.request_file_import = true;
                         ui.close_menu();
                     }
-                    
+
+                    ui.add_enabled_ui(!app.live_data, |ui| {
+                        if ui.button("📡 Live Data").clicked() {
+                            app.live_data = true;
+                            // switch_to_data_source(0) sets start_date/end_date to the live
+                            // window BEFORE update_periodically spawns the fetch thread, so
+                            // the thread always fetches the current time range, not the
+                            // previously imported file's historical range.
+                            app.switch_to_data_source(0);
+                            app.update_periodically();
+                            app.instant_update();
+                            ui.close_menu();
+                        }
+                    });
+
                     ui.separator();
 
                     if app.user_connected.is_some() {
@@ -67,7 +83,7 @@ impl View for Menu {
 
                     ui.separator();
                     if ui.button(t!("app.menu.quit")).clicked() {
-                        std::process::exit(0);
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
             });
@@ -75,6 +91,11 @@ impl View for Menu {
             // Menu Options
             if ui.button(t!("app.menu.options")).clicked() {
                 self.options_pane.open();
+            }
+
+            // Config panel
+            if ui.button("⚙ Settings").clicked() {
+                self.settings_panel.open = true;
             }
 
             // Contextual help
@@ -90,8 +111,9 @@ impl View for Menu {
                 }
             });
 
-            // Show External Window
+            // Show External Windows
             self.options_pane.ui(ui, &mut app.prefs.font_size);
+            self.settings_panel.show(ui, app);
         });
     }
 }

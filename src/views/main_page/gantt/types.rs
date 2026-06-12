@@ -95,6 +95,28 @@ pub struct Options {
     pub leaf_info_preset: Option<LeafInfoPreset>,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub zoom_to_relative_s_range: Option<(f64, (f64, f64))>,
+
+    // ── From GanttConfig (set once on startup) ────────────────────────────────
+    pub row_height_min: f32,
+    pub row_height_max: f32,
+    pub scroll_zoom_sensitivity: f32,
+    pub drag_zoom_sensitivity: f32,
+    pub zoom_max_seconds: f32,
+    pub zoom_min_seconds: f32,
+    pub zoom_animation_duration: f64,
+    pub hatch_spacing: f32,
+    pub job_label_min_width: f32,
+    /// Job field rendered inside bar labels (e.g. "id", "owner", "name"). Default: "id".
+    pub job_label_field: String,
+    /// Job field used for deterministic color assignment in ByField mode. Default: "state".
+    pub job_color_field: String,
+    /// Per-field value→color maps. field name → (value → (fill, hover)).
+    pub field_colors: std::collections::HashMap<String, std::collections::HashMap<String, (egui::Color32, egui::Color32)>>,
+    pub now_line_color: egui::Color32,
+    /// Step durations in seconds, smallest to largest. Each drives one ◀/▶ button pair.
+    pub nav_steps: Vec<i64>,
+    pub job_block_border: bool,
+    pub job_block_border_width: f32,
 }
 
 impl Default for Options {
@@ -122,6 +144,22 @@ impl Default for Options {
             leaf_label_template: None,
             sort_by_label: false,
             leaf_info_preset: None,
+            row_height_min: 8.0,
+            row_height_max: 80.0,
+            scroll_zoom_sensitivity: 0.0025,
+            drag_zoom_sensitivity: 0.01,
+            zoom_max_seconds: (2 * 24 * 60 * 60) as f32,
+            zoom_min_seconds: 5.0,
+            zoom_animation_duration: 0.75,
+            hatch_spacing: 10.0,
+            job_label_min_width: 30.0,
+            job_label_field: "id".to_string(),
+            job_color_field: "state".to_string(),
+            field_colors: std::collections::HashMap::new(),
+            now_line_color: egui::Color32::RED,
+            nav_steps: vec![86_400, 7 * 86_400],
+            job_block_border: false,
+            job_block_border_width: 2.5,
         }
     }
 }

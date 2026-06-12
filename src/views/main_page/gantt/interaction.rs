@@ -12,11 +12,8 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
         let (mods, scroll_y) = info.ctx.input(|i| (i.modifiers, i.smooth_scroll_delta.y));
         // Alt + molette verticale : zoom vertical sur la hauteur des lignes
         if mods.alt && !(mods.ctrl || mods.command) && scroll_y != 0.0 {
-            const MIN_ROW_HEIGHT: f32 = 8.0;
-            const MAX_ROW_HEIGHT: f32 = 80.0;
-
-            let zoom_factor_y = (-scroll_y * 0.0025).exp();
-            options.rect_height = (options.rect_height * zoom_factor_y).clamp(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
+            let zoom_factor_y = (-scroll_y * options.scroll_zoom_sensitivity).exp();
+            options.rect_height = (options.rect_height * zoom_factor_y).clamp(options.row_height_min, options.row_height_max);
 
             // On consomme le scroll pour éviter qu’il soit réutilisé ailleurs
             info.ctx.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
@@ -34,20 +31,18 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
         if zoom_factor == 1.0 {
             let (mods, scroll_y) = info.ctx.input(|i| (i.modifiers, i.smooth_scroll_delta.y));
             if (mods.ctrl || mods.command) && scroll_y != 0.0 {
-                zoom_factor *= (-scroll_y * 0.0025).exp();
+                zoom_factor *= (-scroll_y * options.scroll_zoom_sensitivity).exp();
             }
         }
         // Drag vertical avec clic droit : zoom temporel
         if response.dragged_by(PointerButton::Secondary) {
-            zoom_factor *= (response.drag_delta().y * 0.01).exp();
+            zoom_factor *= (response.drag_delta().y * options.drag_zoom_sensitivity).exp();
         }
 
         if zoom_factor != 1.0 {
             let new_width = options.canvas_width_s / zoom_factor;
 
-            let max_canvas_width = 2 * 24 * 60 * 60;
-            const MIN_CANVAS_WIDTH: f32 = 5.0; // 5 seconds minimum
-            if new_width <= max_canvas_width as f32 && new_width >= MIN_CANVAS_WIDTH {
+            if new_width <= options.zoom_max_seconds && new_width >= options.zoom_min_seconds {
                 options.canvas_width_s = new_width;
 
                 // On zoome autour de la position de la souris
@@ -70,8 +65,7 @@ pub(super) fn interact_with_canvas(options: &mut Options, response: &Response, i
     }
     // Animation progressive du retour à la vue globale
     if let Some((start_time, (start_s, end_s))) = options.zoom_to_relative_s_range {
-        const ZOOM_DURATION: f32 = 0.75;
-        let t = (info.ctx.input(|i| i.time - start_time) as f32 / ZOOM_DURATION).min(1.0);
+        let t = (info.ctx.input(|i| i.time - start_time) as f32 / options.zoom_animation_duration as f32).min(1.0);
 
         let canvas_width = info.usable_width();
 

@@ -141,8 +141,24 @@ fn save_views_config(views: &[GanttView], presets: &[types::LeafInfoPreset]) {
     }
 }
 
+use crate::models::data_structure::tab_state_cache::{TabStateCache, TabViewState};
+
 use self::types::{gutter_stripes_total_w, Info, Options, GUTTER_WIDTH};
 
+
+fn cfg_field_colors(
+    src: &std::collections::HashMap<String, std::collections::HashMap<String, crate::models::data_structure::gantt_config::RgbColor>>,
+) -> std::collections::HashMap<String, std::collections::HashMap<String, (egui::Color32, egui::Color32)>> {
+    let darker = |c: u8| -> u8 { ((c as f32 * 0.8) as u8).max(1) };
+    src.iter().map(|(field, values)| {
+        let mapped = values.iter().map(|(val, &c)| {
+            let fill  = egui::Color32::from_rgb(c.0, c.1, c.2);
+            let hover = egui::Color32::from_rgb(darker(c.0), darker(c.1), darker(c.2));
+            (val.clone(), (fill, hover))
+        }).collect();
+        (field.clone(), mapped)
+    }).collect()
+}
 
 fn compute_gutter_width(
     ctx: &egui::Context,
@@ -161,7 +177,7 @@ fn compute_gutter_width(
     // 4px left pad + 4px right pad; minimum 40px label area so an empty view isn't invisible.
     let label_w = (label_text_w + 8.0).max(40.0);
 
-    (label_w + stripes_w).min(650.0)
+    (label_w + stripes_w).min(app.prefs.gantt_config.gutter_max_width)
 }
 
 pub struct GanttChart {
@@ -170,6 +186,15 @@ pub struct GanttChart {
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
     last_data_source_index: Option<usize>,
+    tab_state_cache: TabStateCache,
+    /// Saved (canvas_width_s, sideways_pan_in_points) per data-source index (Gantt tabs).
+    tab_view_state: std::collections::HashMap<usize, (f32, f32, f32)>,
+    /// Saved visible (start_s, end_s) per data-source index (energy-only tabs).
+    energy_visible: std::collections::HashMap<usize, (i64, i64)>,
+    /// Saved energy panel state (y_bounds, fit_to_figure, panel_height) per data-source index.
+    energy_panel_state: std::collections::HashMap<usize, (Option<(f64, f64)>, bool, f32)>,
+    /// Saved current_view_index per data-source index.
+    tab_view_index: std::collections::HashMap<usize, usize>,
 
     gantt_views: Vec<GanttView>,
     current_view_index: usize,
@@ -186,6 +211,11 @@ pub struct GanttChart {
     create_preset: CreatePresetPanel,
     edit_view: EditViewPanel,
     edit_preset: EditPresetPanel,
+
+    jump_dialog_open: bool,
+    jump_date_str: String,
+    jump_time_str: String,
+    jump_error: Option<String>,
 }
 
 impl Default for GanttChart {
@@ -193,7 +223,32 @@ impl Default for GanttChart {
         let config = load_views_config();
         let gantt_cfg = crate::models::data_structure::gantt_config::GanttConfig::load();
         let mut options = Options::default();
-        options.canvas_width_s = gantt_cfg.default_timespan_s as f32;
+        options.canvas_width_s          = gantt_cfg.default_timespan_s as f32;
+        options.rect_height             = gantt_cfg.gantt_row_height;
+        options.row_height_min          = gantt_cfg.gantt_row_height_min;
+        options.row_height_max          = gantt_cfg.gantt_row_height_max;
+        options.scroll_zoom_sensitivity = gantt_cfg.scroll_zoom_sensitivity;
+        options.drag_zoom_sensitivity   = gantt_cfg.drag_zoom_sensitivity;
+        options.zoom_max_seconds        = gantt_cfg.zoom_max_seconds;
+        options.zoom_min_seconds        = gantt_cfg.zoom_min_seconds;
+        options.zoom_animation_duration = gantt_cfg.zoom_animation_duration;
+        options.hatch_spacing           = gantt_cfg.hatch_spacing;
+        options.job_block_border        = gantt_cfg.job_block_border;
+        options.job_block_border_width  = gantt_cfg.job_block_border_width;
+        options.job_label_min_width     = gantt_cfg.job_label_min_width;
+        options.job_label_field         = gantt_cfg.job_label_field.clone();
+        options.job_color_field         = gantt_cfg.job_color_field.clone();
+        options.field_colors         = cfg_field_colors(&gantt_cfg.field_colors);
+        options.nav_steps = gantt_cfg.nav_steps_s();
+        let mut energy_panel = EnergyPanelState::default();
+        energy_panel.panel_height = gantt_cfg.energy_panel_height;
+        energy_panel.series_colors = gantt_cfg.energy_series_colors.iter()
+            .map(|c| [c.0, c.1, c.2])
+            .collect();
+        let now_color = egui::Color32::from_rgb(
+            gantt_cfg.now_line_color.0, gantt_cfg.now_line_color.1, gantt_cfg.now_line_color.2);
+        energy_panel.now_line_color = now_color;
+        options.now_line_color = now_color;
         if let Some(first) = config.views.first() {
             options.levels = first.levels.clone();
             options.resource_filter = first.filter.clone();
@@ -209,6 +264,11 @@ impl Default for GanttChart {
             initial_start_s: None,
             initial_end_s: None,
             last_data_source_index: None,
+            tab_state_cache: TabStateCache::load(),
+            tab_view_state: std::collections::HashMap::new(),
+            energy_visible: std::collections::HashMap::new(),
+            energy_panel_state: std::collections::HashMap::new(),
+            tab_view_index: std::collections::HashMap::new(),
             last_canvas_usable_width_px: 1.0,
             pending_navigation_refresh: false,
             delete_view_confirm: None,
@@ -216,12 +276,16 @@ impl Default for GanttChart {
             gantt_views: config.views,
             current_view_index: 0,
             leaf_info_presets: config.leaf_info_presets,
-            energy: EnergyPanelState::default(),
+            energy: energy_panel,
             admin: AdminPanelState::default(),
             create_view: CreateViewPanel::default(),
             create_preset: CreatePresetPanel::default(),
             edit_view: EditViewPanel::default(),
             edit_preset: EditPresetPanel::default(),
+            jump_dialog_open: false,
+            jump_date_str: String::new(),
+            jump_time_str: String::new(),
+            jump_error: None,
         }
     }
 }
@@ -267,24 +331,35 @@ impl GanttChart {
         let mut close_group_idx: Option<usize> = None;
         let mut group_target: Option<usize> = None;
         let mut remove_from_group: Option<(usize, usize)> = None; // (group_idx, ds_idx)
+        let mut disable_live = false;
 
         ui.horizontal(|ui| {
-            // Live Data tab.
-            let is_active = current_index == 0 && current_group.is_none();
-            let fill = if is_active { active_fill } else { inactive_fill };
-            let text = if is_active {
-                egui::RichText::new("Live Data").strong()
-            } else {
-                egui::RichText::new("Live Data")
-            };
-            let mut btn = egui::Button::new(text).fill(fill).frame(true);
-            if is_active {
-                btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
+            // Live Data tab — only shown when live mode is active.
+            if app.live_data {
+                let is_active = current_index == 0 && current_group.is_none();
+                let fill = if is_active { active_fill } else { inactive_fill };
+                let text = if is_active {
+                    egui::RichText::new("Live Data").strong()
+                } else {
+                    egui::RichText::new("Live Data")
+                };
+                let mut btn = egui::Button::new(text).fill(fill).frame(true);
+                if is_active {
+                    btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
+                }
+                ui.horizontal(|ui| {
+                    if ui.add(btn).clicked() {
+                        switch_to_ds = Some(0);
+                    }
+                    let close = egui::Button::new("×")
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::new(1.0, text_color));
+                    if ui.add(close).on_hover_text("Disable live data").clicked() {
+                        disable_live = true;
+                    }
+                });
+                ui.add_space(4.0);
             }
-            if ui.add(btn).clicked() {
-                switch_to_ds = Some(0);
-            }
-            ui.add_space(4.0);
 
             // Individual ungrouped tabs.
             for (ds_idx, name) in &individual {
@@ -403,6 +478,31 @@ impl GanttChart {
         });
 
         // Apply deferred actions (avoids re-borrow of `app` inside closure).
+        if disable_live {
+            app.live_data = false;
+            *app.refresh.refresh_rate.lock().unwrap() = u64::MAX;
+            *app.refresh.is_refreshing.lock().unwrap() = false;
+            // Drain in-flight channel messages so they don't land after re-enable.
+            while app.refresh.jobs_receiver.try_recv().is_ok() {}
+            while app.refresh.resources_receiver.try_recv().is_ok() {}
+            while app.refresh.dead_intervals_receiver.try_recv().is_ok() {}
+            app.data.all_jobs.clear();
+            app.data.swap_all_jobs.clear();
+            app.data.all_clusters.clear();
+            app.data.swap_all_clusters.clear();
+            app.data.strata_by_resource_id.clear();
+            app.data.strata_by_host.clear();
+            app.data.strata_by_resource_id_live.clear();
+            app.data.strata_by_host_live.clear();
+            app.data.markers.clear();
+            if app.import.current_data_source_index == 0 {
+                if !app.import.imported_data_sources.is_empty() {
+                    app.switch_to_data_source(1);
+                } else {
+                    app.filter_jobs();
+                }
+            }
+        }
         if let Some(i) = switch_to_ds               { app.switch_to_data_source(i); }
         if let Some(gi) = switch_to_group           { app.switch_to_group(gi); }
         if let Some(i) = close_ds                   { app.close_imported_data_source(i); }
@@ -421,15 +521,53 @@ impl GanttChart {
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
         let ds_idx = app.import.current_data_source_index;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
+            // Save zoom/pan and view index for the tab we are leaving.
+            if let Some(old_idx) = self.last_data_source_index {
+                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
+                self.tab_view_index.insert(old_idx, self.current_view_index);
+                self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
+                self.persist_tab_state(app, old_idx);
+            }
+
             let start_s = app.get_start_date().timestamp();
             let end_s = app.get_end_date().timestamp();
             self.initial_start_s = Some(start_s);
             self.initial_end_s = Some(end_s);
             self.last_data_source_index = Some(ds_idx);
-            let span_s = (end_s - start_s) as f32;
-            if span_s > 0.0 && span_s < self.options.canvas_width_s {
-                self.options.canvas_width_s = span_s.max(10.0);
-                self.options.sideways_pan_in_points = 0.0;
+            // For imported files, clamp the visible window to the data span so the
+            // canvas doesn't show empty space beyond the file's time range.
+            // For live data (ds_idx == 0), the load window is only ±N hours but the
+            // user may want a wider default_timespan — don't clamp.
+            if ds_idx != 0 {
+                let span_s = (end_s - start_s) as f32;
+                if span_s > 0.0 && span_s < self.options.canvas_width_s {
+                    self.options.canvas_width_s = span_s.max(10.0);
+                    self.options.sideways_pan_in_points = 0.0;
+                }
+            }
+
+            // Restore zoom/pan if this tab was visited before; overrides span-based defaults.
+            if let Some(&(saved_width, saved_pan, saved_row_h)) = self.tab_view_state.get(&ds_idx) {
+                self.options.canvas_width_s = saved_width;
+                self.options.sideways_pan_in_points = saved_pan;
+                self.options.rect_height = saved_row_h;
+            } else if ds_idx > 0 {
+                // First visit this session — try persistent cache.
+                self.restore_from_cache(app, ds_idx);
+            }
+
+            // Restore view index for this tab; reset to 0 if no saved state so we
+            // don't inherit the previous tab's view index.
+            self.current_view_index = self.tab_view_index.get(&ds_idx)
+                .copied()
+                .unwrap_or(0)
+                .min(self.gantt_views.len().saturating_sub(1));
+
+            // Restore energy panel state if this tab was visited before.
+            if let Some(&(y_bounds, fit, height)) = self.energy_panel_state.get(&ds_idx) {
+                self.energy.y_bounds = y_bounds;
+                self.energy.fit_to_figure = fit;
+                self.energy.panel_height = height;
             }
 
             // Apply or restore aggregation levels when the data source changes.
@@ -440,15 +578,29 @@ impl GanttChart {
                     self.options.levels = view.levels.clone();
                     self.options.resource_filter = view.filter.clone();
                     self.options.leaf_label_template = view.leaf_label_template.clone();
+                    self.options.sort_by_label = view.sort_by_label;
+                    self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
+                        .cloned()
+                        .or_else(|| backward_compat_preset(view));
                 }
             } else {
                 let type_name = app.import.imported_data_sources
                     .get(ds_idx - 1).map(|ds| ds.file_type_name.clone()).unwrap_or_default();
                 let registry = FileTypeRegistry::default();
                 if let Some(levels) = registry.find_by_name(&type_name).and_then(|t| t.hierarchy_levels()) {
+                    // File type has its own fixed hierarchy — ignore view index.
                     self.options.levels = levels;
                     self.options.resource_filter = None;
                     self.options.leaf_label_template = None;
+                } else if let Some(view) = self.gantt_views.get(self.current_view_index) {
+                    // OAR-style file — apply the restored view.
+                    self.options.levels = view.levels.clone();
+                    self.options.resource_filter = view.filter.clone();
+                    self.options.leaf_label_template = view.leaf_label_template.clone();
+                    self.options.sort_by_label = view.sort_by_label;
+                    self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
+                        .cloned()
+                        .or_else(|| backward_compat_preset(view));
                 }
             }
         }
@@ -507,11 +659,6 @@ impl GanttChart {
             });
         }
 
-        ui.menu_button(t!("app.gantt.settings.title"), |ui| {
-            ui.set_max_height(500.0);
-            self.options.job_color.ui(ui);
-        });
-
         let admin_button = if is_admin {
             egui::Button::new("Admin")
         } else {
@@ -548,29 +695,48 @@ impl GanttChart {
             fallback_usable_width
         };
         let points_per_second = canvas_usable_width / self.options.canvas_width_s;
-        let day_delta_s: i64 = 24 * 60 * 60;
-        let week_delta_s: i64 = 7 * day_delta_s;
 
+        fn fmt_nav(s: i64) -> String {
+            if s % (7 * 86_400) == 0  { format!("{}w", s / (7 * 86_400)) }
+            else if s % 86_400 == 0   { format!("{}d", s / 86_400) }
+            else if s % 3_600 == 0    { format!("{}h", s / 3_600) }
+            else if s % 60 == 0       { format!("{}min", s / 60) }
+            else                      { format!("{}s", s) }
+        }
+
+        let steps = self.options.nav_steps.clone();
         ui.label(RichText::new("Nav:").text_style(TextStyle::Small));
-        if ui.small_button("◀ 1w").clicked() {
-            self.options.sideways_pan_in_points += week_delta_s as f32 * points_per_second;
-            self.options.zoom_to_relative_s_range = None;
-            self.pending_navigation_refresh = true;
+        // ◀ buttons: largest step first (reverse order)
+        for &step_s in steps.iter().rev() {
+            if ui.small_button(format!("◀ {}", fmt_nav(step_s))).clicked() {
+                self.options.sideways_pan_in_points += step_s as f32 * points_per_second;
+                self.options.zoom_to_relative_s_range = None;
+                self.pending_navigation_refresh = true;
+            }
         }
-        if ui.small_button("◀ 1d").clicked() {
-            self.options.sideways_pan_in_points += day_delta_s as f32 * points_per_second;
-            self.options.zoom_to_relative_s_range = None;
-            self.pending_navigation_refresh = true;
+
+        // Jump-to button
+        if ui.small_button("🕐").on_hover_text("Jump to date/time").clicked() {
+            let usable = self.last_canvas_usable_width_px.max(1.0);
+            let init_s = self.initial_start_s.unwrap_or_else(|| chrono::Utc::now().timestamp());
+            let pan_ratio = self.options.sideways_pan_in_points / usable;
+            let visible_start_s = init_s - (pan_ratio * self.options.canvas_width_s) as i64;
+            let center_s = visible_start_s + (self.options.canvas_width_s / 2.0) as i64;
+            let dt = Local.timestamp_opt(center_s, 0).single()
+                .unwrap_or_else(Local::now);
+            self.jump_date_str = dt.format("%Y-%m-%d").to_string();
+            self.jump_time_str = dt.format("%H:%M").to_string();
+            self.jump_error = None;
+            self.jump_dialog_open = true;
         }
-        if ui.small_button("1d ▶").clicked() {
-            self.options.sideways_pan_in_points -= day_delta_s as f32 * points_per_second;
-            self.options.zoom_to_relative_s_range = None;
-            self.pending_navigation_refresh = true;
-        }
-        if ui.small_button("1w ▶").clicked() {
-            self.options.sideways_pan_in_points -= week_delta_s as f32 * points_per_second;
-            self.options.zoom_to_relative_s_range = None;
-            self.pending_navigation_refresh = true;
+
+        // ▶ buttons: smallest step first (forward order)
+        for &step_s in steps.iter() {
+            if ui.small_button(format!("{} ▶", fmt_nav(step_s))).clicked() {
+                self.options.sideways_pan_in_points -= step_s as f32 * points_per_second;
+                self.options.zoom_to_relative_s_range = None;
+                self.pending_navigation_refresh = true;
+            }
         }
 
         if ui.small_button(t!("app.gantt.now")).clicked() {
@@ -584,23 +750,171 @@ impl GanttChart {
             self.pending_navigation_refresh = true;
         }
     }
+
+    /// Persist `tab_idx`'s state to the on-disk cache.
+    /// For the currently active tab, always read from `self.options` / `self.energy` (live).
+    /// For background tabs, read from the in-memory HashMaps (last-left snapshot).
+    /// Skip tabs that were never visited this session (no HashMap entry, not active).
+    pub fn persist_tab_state(&mut self, app: &ApplicationContext, tab_idx: usize) {
+        if tab_idx == 0 { return; }
+        let Some(ds) = app.import.imported_data_sources.get(tab_idx - 1) else { return };
+        let Some(hash) = ds.file_hash.as_deref() else { return };
+
+        let is_active = tab_idx == app.import.current_data_source_index;
+        // Skip tabs that were never visited this session — we have nothing to save for them,
+        // and using self.options (active tab's state) as a fallback would corrupt their entry.
+        if !is_active && !self.tab_view_state.contains_key(&tab_idx) { return; }
+
+        let (w, pan, rh) = if is_active {
+            (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height)
+        } else {
+            self.tab_view_state.get(&tab_idx).copied()
+                .unwrap_or((self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height))
+        };
+        let vi = if is_active {
+            self.current_view_index
+        } else {
+            self.tab_view_index.get(&tab_idx).copied().unwrap_or(self.current_view_index)
+        };
+        let (y_bounds, fit, ph) = if is_active {
+            (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height)
+        } else {
+            self.energy_panel_state.get(&tab_idx).copied()
+                .unwrap_or((self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height))
+        };
+        let state = TabViewState {
+            canvas_width_s: w,
+            sideways_pan: pan,
+            row_height: rh,
+            view_index: vi,
+            energy_y_min: y_bounds.map(|b| b.0),
+            energy_y_max: y_bounds.map(|b| b.1),
+            energy_fit: fit,
+            energy_panel_height: ph,
+        };
+        self.tab_state_cache.store(ds.file_path.as_deref(), hash, state);
+        self.tab_state_cache.save_to_disk();
+    }
+
+    /// Flush all visited/active imported tabs to the cache at once (called on app exit).
+    pub fn flush_all_tab_states(&mut self, app: &ApplicationContext) {
+        let n = app.import.imported_data_sources.len();
+        for tab_idx in 1..=n {
+            self.persist_tab_state(app, tab_idx);
+        }
+    }
+
+    /// Restore tab state from the on-disk cache (first visit this session).
+    /// Applies directly to `self.options` and seeds energy/view-index maps.
+    /// Does NOT seed `tab_view_state` — that map only holds last-left snapshots so that
+    /// `persist_tab_state` can detect whether a tab was visited this session.
+    fn restore_from_cache(&mut self, app: &ApplicationContext, ds_idx: usize) {
+        let Some(ds) = app.import.imported_data_sources.get(ds_idx - 1) else { return };
+        let Some(hash) = ds.file_hash.as_deref() else { return };
+        let Some(saved) = self.tab_state_cache.lookup(ds.file_path.as_deref(), hash) else { return };
+        self.options.canvas_width_s = saved.canvas_width_s;
+        self.options.sideways_pan_in_points = saved.sideways_pan;
+        self.options.rect_height = saved.row_height;
+        let vi = saved.view_index.min(self.gantt_views.len().saturating_sub(1));
+        self.tab_view_index.insert(ds_idx, vi);
+        let y_bounds = saved.energy_y_min.zip(saved.energy_y_max);
+        self.energy_panel_state.insert(ds_idx, (y_bounds, saved.energy_fit, saved.energy_panel_height));
+    }
 }
 
 impl View for GanttChart {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        // Apply config changes triggered by ConfigPanel's Apply button.
+        if app.prefs.config_reload_requested {
+            app.prefs.config_reload_requested = false;
+            let cfg = &app.prefs.gantt_config;
+            self.options.row_height_min          = cfg.gantt_row_height_min;
+            self.options.row_height_max          = cfg.gantt_row_height_max;
+            self.options.scroll_zoom_sensitivity = cfg.scroll_zoom_sensitivity;
+            self.options.drag_zoom_sensitivity   = cfg.drag_zoom_sensitivity;
+            self.options.zoom_max_seconds        = cfg.zoom_max_seconds;
+            self.options.zoom_min_seconds        = cfg.zoom_min_seconds;
+            self.options.zoom_animation_duration = cfg.zoom_animation_duration;
+            self.options.hatch_spacing           = cfg.hatch_spacing;
+            self.options.job_block_border        = cfg.job_block_border;
+            self.options.job_block_border_width  = cfg.job_block_border_width;
+            self.options.job_label_min_width     = cfg.job_label_min_width;
+            self.options.job_label_field         = cfg.job_label_field.clone();
+            self.options.job_color_field         = cfg.job_color_field.clone();
+            self.options.field_colors         = cfg_field_colors(&cfg.field_colors);
+            self.options.rect_height             = cfg.gantt_row_height
+                .clamp(cfg.gantt_row_height_min, cfg.gantt_row_height_max);
+            self.options.now_line_color = egui::Color32::from_rgb(
+                cfg.now_line_color.0, cfg.now_line_color.1, cfg.now_line_color.2);
+            self.energy.series_colors = cfg.energy_series_colors.iter()
+                .map(|c| [c.0, c.1, c.2]).collect();
+            self.energy.now_line_color = self.options.now_line_color;
+            self.options.nav_steps = cfg.nav_steps_s();
+        }
+        self.options.job_color.color  = app.prefs.job_color.color.clone();
+        self.options.job_color_field  = app.prefs.gantt_config.job_color_field.clone();
+        self.options.field_colors = cfg_field_colors(&app.prefs.gantt_config.field_colors);
+
         self.render_data_source_tabs(ui, app);
 
         let ds_idx = app.import.current_data_source_index;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
+            // Save zoom/pan and view index for the tab we are leaving (UI-click switches land here).
+            if let Some(old_idx) = self.last_data_source_index {
+                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
+                self.tab_view_index.insert(old_idx, self.current_view_index);
+                self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
+                self.persist_tab_state(app, old_idx);
+            }
+
             let start_s = app.get_start_date().timestamp();
             let end_s = app.get_end_date().timestamp();
             self.initial_start_s = Some(start_s);
             self.initial_end_s = Some(end_s);
             self.last_data_source_index = Some(ds_idx);
-            let span_s = (end_s - start_s) as f32;
-            if span_s > 0.0 && span_s < self.options.canvas_width_s {
-                self.options.canvas_width_s = span_s.max(10.0);
-                self.options.sideways_pan_in_points = 0.0;
+            // For imported files, clamp the visible window to the data span so the
+            // canvas doesn't show empty space beyond the file's time range.
+            // For live data (ds_idx == 0), the load window is only ±N hours but the
+            // user may want a wider default_timespan — don't clamp.
+            if ds_idx != 0 {
+                let span_s = (end_s - start_s) as f32;
+                if span_s > 0.0 && span_s < self.options.canvas_width_s {
+                    self.options.canvas_width_s = span_s.max(10.0);
+                    self.options.sideways_pan_in_points = 0.0;
+                }
+            }
+
+            // Restore zoom/pan if this tab was visited before.
+            if let Some(&(saved_width, saved_pan, saved_row_h)) = self.tab_view_state.get(&ds_idx) {
+                self.options.canvas_width_s = saved_width;
+                self.options.sideways_pan_in_points = saved_pan;
+                self.options.rect_height = saved_row_h;
+            } else if ds_idx > 0 {
+                // First visit this session — try persistent cache.
+                self.restore_from_cache(app, ds_idx);
+            }
+
+            // Restore view index for this tab; reset to 0 if no saved state so we
+            // don't inherit the previous tab's view index.
+            self.current_view_index = self.tab_view_index.get(&ds_idx)
+                .copied()
+                .unwrap_or(0)
+                .min(self.gantt_views.len().saturating_sub(1));
+            if let Some(view) = self.gantt_views.get(self.current_view_index) {
+                self.options.levels = view.levels.clone();
+                self.options.resource_filter = view.filter.clone();
+                self.options.leaf_label_template = view.leaf_label_template.clone();
+                self.options.sort_by_label = view.sort_by_label;
+                self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
+                    .cloned()
+                    .or_else(|| backward_compat_preset(view));
+            }
+
+            // Restore energy panel state if this tab was visited before.
+            if let Some(&(y_bounds, fit, height)) = self.energy_panel_state.get(&ds_idx) {
+                self.energy.y_bounds = y_bounds;
+                self.energy.fit_to_figure = fit;
+                self.energy.panel_height = height;
             }
         }
 
@@ -841,6 +1155,66 @@ impl View for GanttChart {
                 });
         }
 
+        // ── Jump-to dialog ────────────────────────────────────────────────────
+        if self.jump_dialog_open {
+            let mut do_jump = false;
+            let mut do_cancel = false;
+            egui::Window::new("Jump to...")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ui.ctx(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Date (YYYY-MM-DD):");
+                        ui.text_edit_singleline(&mut self.jump_date_str);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Time (HH:MM):");
+                        ui.text_edit_singleline(&mut self.jump_time_str);
+                    });
+                    if let Some(err) = &self.jump_error {
+                        ui.colored_label(egui::Color32::RED, err);
+                    }
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        let jump_btn = egui::Button::new("Jump ▶")
+                            .fill(ui.visuals().selection.bg_fill);
+                        if ui.add(jump_btn).clicked() { do_jump = true; }
+                        if ui.button("Cancel").clicked() { do_cancel = true; }
+                    });
+                });
+            if do_jump {
+                use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+                let parsed = (|| -> Result<i64, &'static str> {
+                    let date = NaiveDate::parse_from_str(self.jump_date_str.trim(), "%Y-%m-%d")
+                        .map_err(|_| "Invalid date (YYYY-MM-DD)")?;
+                    let time = NaiveTime::parse_from_str(self.jump_time_str.trim(), "%H:%M")
+                        .map_err(|_| "Invalid time (HH:MM)")?;
+                    let naive = NaiveDateTime::new(date, time);
+                    Local.from_local_datetime(&naive)
+                        .single()
+                        .map(|dt| dt.timestamp())
+                        .ok_or("Ambiguous local time")
+                })();
+                match parsed {
+                    Ok(target_s) => {
+                        let init_s = self.initial_start_s.unwrap_or(target_s);
+                        let usable = self.last_canvas_usable_width_px.max(1.0);
+                        let canvas_w = self.options.canvas_width_s;
+                        self.options.sideways_pan_in_points =
+                            (init_s as f32 - target_s as f32 + canvas_w / 2.0)
+                            * usable / canvas_w;
+                        self.options.zoom_to_relative_s_range = None;
+                        self.pending_navigation_refresh = true;
+                        self.jump_dialog_open = false;
+                        self.jump_error = None;
+                    }
+                    Err(e) => self.jump_error = Some(e.to_string()),
+                }
+            }
+            if do_cancel { self.jump_dialog_open = false; self.jump_error = None; }
+        }
+
         let mut visible_range: Option<(i64, i64)> = None;
         // Each entry: (label, computed points). Multiple entries when a group has >1 energy file.
         let mut energy_series: Vec<(String, Vec<(i64, f64)>)> = Vec::new();
@@ -981,7 +1355,7 @@ impl View for GanttChart {
                         energy_series = if raw_multi.is_empty() {
                             // No raw energy files — estimate from Gantt jobs.
                             vec![("Estimated".to_string(),
-                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s))]
+                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource))]
                         } else if in_group {
                             // Group with Gantt member + raw energy files: estimated series first, then raw.
                             let gantt_name = app.import.imported_data_sources
@@ -990,17 +1364,17 @@ impl View for GanttChart {
                                 .unwrap_or_else(|| "Gantt".to_string());
                             let mut all = vec![(
                                 format!("{} (est.)", gantt_name),
-                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s),
+                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource),
                             )];
                             for (name, s) in &raw_multi {
                                 all.push((name.to_string(),
-                                    energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s)));
+                                    energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource)));
                             }
                             all
                         } else {
                             raw_multi.iter().map(|(name, s)| {
                                 (name.to_string(),
-                                 energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s))
+                                 energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource))
                             }).collect()
                         };
                     }
@@ -1028,18 +1402,19 @@ impl View for GanttChart {
             });
         });
         } else if show_energy {
-            // Energy-only source: no Gantt rows, compute visible range from stored time bounds.
-            let vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
-            let ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
+            // Energy-only source: use saved visible range if available, else full data bounds.
+            let default_vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
+            let default_ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
+            let (vs, ve) = self.energy_visible.get(&ds_idx).copied().unwrap_or((default_vs, default_ve));
             visible_range = Some((vs, ve));
             let raw_multi = app.get_current_energy_series_multi();
             energy_series = if raw_multi.is_empty() {
                 vec![("Estimated".to_string(),
-                    energy_estimate::compute_energy_points(None, &[], vs, ve))]
+                    energy_estimate::compute_energy_points(None, &[], vs, ve, app.prefs.gantt_config.energy_watts_per_resource))]
             } else {
                 raw_multi.iter().map(|(name, s)| {
                     (name.to_string(),
-                     energy_estimate::compute_energy_points(Some(s), &[], vs, ve))
+                     energy_estimate::compute_energy_points(Some(s), &[], vs, ve, app.prefs.gantt_config.energy_watts_per_resource))
                 }).collect()
             };
         }
@@ -1084,14 +1459,20 @@ impl View for GanttChart {
                     ui, &energy_series, vs, ve, now_s, y_axis_gutter, show_gantt,
                     &cluster_names_energy, &owners,
                 ) {
-                    let new_width_s = (new_ve - new_vs).max(1) as f32;
-                    self.options.canvas_width_s = new_width_s;
-                    let start_s = self.initial_start_s.unwrap();
-                    let canvas_w_px = last_gantt_usable_width_px.max(1.0);
-                    let pan_px =
-                        -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
-                    self.options.sideways_pan_in_points = pan_px;
-                    self.pending_navigation_refresh = true;
+                    if show_gantt {
+                        // Gantt + energy: sync Gantt canvas to new range.
+                        let new_width_s = (new_ve - new_vs).max(1) as f32;
+                        self.options.canvas_width_s = new_width_s;
+                        let start_s = self.initial_start_s.unwrap();
+                        let canvas_w_px = last_gantt_usable_width_px.max(1.0);
+                        let pan_px =
+                            -(((new_vs - start_s) as f32) / self.options.canvas_width_s) * canvas_w_px;
+                        self.options.sideways_pan_in_points = pan_px;
+                        self.pending_navigation_refresh = true;
+                    } else {
+                        // Energy-only: persist visible range directly.
+                        self.energy_visible.insert(ds_idx, (new_vs, new_ve));
+                    }
                 }
             }
         }

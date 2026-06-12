@@ -9,14 +9,26 @@ i18n!("src/i18n");
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
-    // Configure the native options
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let live_data = args.iter().any(|a| a == "--live");
+    // Each entry is a Vec<String>:
+    //   single file  → ["file.json"]
+    //   group        → ["oar.json", "energy.json"]  (joined by '+' on the command line)
+    let import_entries: Vec<Vec<String>> = args.into_iter()
+        .filter(|a| !a.starts_with("--"))
+        .map(|a| {
+            if a.contains('+') {
+                a.split('+').map(|s| s.to_string()).filter(|s| !s.is_empty()).collect()
+            } else {
+                vec![a]
+            }
+        })
+        .collect();
     let options = eframe::NativeOptions::default();
-
-    // Start the native app
     eframe::run_native(
         &t!("app.title"),
         options,
-        Box::new(|_cc| Ok(Box::new(app::App::new()))),
+        Box::new(move |_cc| Ok(Box::new(app::App::new(live_data, import_entries)))),
     )
 }
 
@@ -46,7 +58,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|_cc| Ok(Box::new(app::App::new()))),
+                Box::new(|_cc| Ok(Box::new(app::App::new(false, Vec::new())))),
             )
             .await;
 

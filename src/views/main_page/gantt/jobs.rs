@@ -7,7 +7,7 @@ use crate::models::data_structure::marker::MarkerShape;
 use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::data_structure::strata::Strata;
 use crate::models::utils::date_converter::format_timestamp;
-use crate::models::utils::utils::{compare_string_with_number, get_job_gantt_colors, get_tree_structure_for_job};
+use crate::models::utils::utils::{compare_string_with_number, get_job_gantt_colors, get_job_gantt_colors_for_str, get_tree_structure_for_job};
 use crate::views::components::job_details::JobDetailsWindow;
 use egui::{
     pos2, Align2, Color32, CursorIcon, FontId, Id, LayerId, Order, Rect, Shape, Stroke,
@@ -321,6 +321,8 @@ pub(super) fn paint_tooltip(info: &Info, options: &mut Options, app: &Applicatio
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PaintedJobRow {
     job_id: u32,
+    /// Pre-computed display label (field selected by options.job_label_field).
+    job_bar_label: String,
     start_s: i64,
     stop_s: i64,
     row_y: f32,
@@ -330,6 +332,7 @@ pub(super) struct PaintedJobRow {
 
 struct JobBlock<'a> {
     job_id: u32,
+    job_bar_label: String,
     start_s: i64,
     stop_s: i64,
     rows: Vec<&'a PaintedJobRow>,
@@ -344,6 +347,7 @@ fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow], rect_height: f32
     let mut blocks = Vec::new();
     for ((job_id, start_s, stop_s), mut group_rows) in group_map {
         group_rows.sort_by(|a, b| a.row_y.partial_cmp(&b.row_y).unwrap_or(std::cmp::Ordering::Equal));
+        let label = group_rows.first().map(|r| r.job_bar_label.clone()).unwrap_or_default();
         let mut i = 0;
         while i < group_rows.len() {
             let mut j = i + 1;
@@ -354,11 +358,29 @@ fn collect_contiguous_job_blocks<'a>(rows: &'a [PaintedJobRow], rect_height: f32
                 }
                 j += 1;
             }
-            blocks.push(JobBlock { job_id, start_s, stop_s, rows: group_rows[i..j].to_vec() });
+            blocks.push(JobBlock { job_id, job_bar_label: label.clone(), start_s, stop_s, rows: group_rows[i..j].to_vec() });
             i = j;
         }
     }
     blocks
+}
+
+fn job_bar_label(job: &Job, field: &str) -> String {
+    match field {
+        "owner"    => job.owner.clone(),
+        "name"     => job.name.clone().unwrap_or_else(|| job.id.to_string()),
+        "command"  => job.command.clone(),
+        "queue"    => job.queue.clone(),
+        "project"  => job.project.clone(),
+        "state"    => format!("{:?}", job.state),
+        "walltime" => {
+            let s = job.walltime;
+            if s >= 3600 { format!("{}h{:02}m", s / 3600, (s % 3600) / 60) }
+            else         { format!("{}m", s / 60) }
+        }
+        "type" | "job_type" => job.job_type.clone(),
+        _                   => job.id.to_string(), // "id" + unknown fields fall back to id
+    }
 }
 
 pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[PaintedJobRow]) {
@@ -377,7 +399,7 @@ pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[Painte
         let start_x = info.point_from_s(options, block.start_s);
         let end_x = info.point_from_s(options, block.stop_s);
         let block_width = end_x - start_x;
-        if block_width <= 30.0 {
+        if block_width <= options.job_label_min_width {
             continue;
         }
         let block_top = block.rows.first().unwrap().row_y;
@@ -390,10 +412,36 @@ pub(super) fn paint_job_id_labels(info: &Info, options: &Options, rows: &[Painte
                 .text(
                     block_rect.center(),
                     Align2::CENTER_CENTER,
-                    format!("{}", block.job_id),
+                    block.job_bar_label.clone(),
                     font.clone(),
                     Color32::BLACK,
                 );
+        }
+    }
+}
+
+pub(super) fn paint_job_block_borders(info: &Info, options: &Options, rows: &[PaintedJobRow]) {
+    if rows.is_empty() || !options.job_block_border {
+        return;
+    }
+    let chart_clip_rect = Rect::from_min_max(
+        pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
+        pos2(info.canvas.max.x, info.canvas.max.y),
+    );
+    let height = options.rect_height.max(info.text_height);
+    let blocks = collect_contiguous_job_blocks(rows, height);
+    let border_color = if info.ctx.style().visuals.dark_mode { Color32::WHITE } else { Color32::BLACK };
+    let border_stroke = Stroke::new(options.job_block_border_width, border_color);
+
+    for block in blocks {
+        let start_x = info.point_from_s(options, block.start_s);
+        let end_x   = info.point_from_s(options, block.stop_s);
+        let block_top    = block.rows.first().unwrap().row_y;
+        let block_bottom = block.rows.last().unwrap().row_y + height;
+        let block_rect = Rect::from_min_max(pos2(start_x, block_top), pos2(end_x, block_bottom))
+            .intersect(chart_clip_rect);
+        if !block_rect.is_negative() {
+            info.painter.rect_stroke(block_rect, options.rounding, border_stroke);
         }
     }
 }
@@ -1031,7 +1079,7 @@ fn draw_dead_intervals_for_row(
         pos2(info.canvas.max.x, info.canvas.max.y),
     );
     let chart_painter = info.painter.with_clip_rect(chart_clip_rect);
-    let hachure_spacing = 10.0;
+    let hachure_spacing = options.hatch_spacing;
 
     for iv in intervals {
         // Skip intervals shorter than min_state_duration_s (closed intervals only).
@@ -1269,6 +1317,7 @@ pub(super) fn draw_level_n<'a>(
                         all_clusters,
                         Some(key.as_str()),
                         app.prefs.gantt_config.besteffort_truncate_to_now,
+                        app.prefs.gantt_config.job_color_min,
                     );
                 }
 
@@ -1314,6 +1363,7 @@ pub(super) fn draw_level_n<'a>(
                     };
                     painted_rows.push(PaintedJobRow {
                         job_id: job.id,
+                        job_bar_label: job_bar_label(job, &options.job_label_field),
                         start_s: job.scheduled_start,
                         stop_s,
                         row_y: job_row_y,
@@ -1461,6 +1511,7 @@ fn paint_job(
     all_cluster: &Vec<Cluster>,
     resource_label_for_state_tooltip: Option<&str>,
     besteffort_truncate_to_now: bool,
+    job_color_min: u8,
 ) -> PaintResult {
     let chart_clip_rect = Rect::from_min_max(
         pos2(info.canvas.min.x + info.gutter_width, info.canvas.min.y),
@@ -1529,9 +1580,14 @@ fn paint_job(
     }
 
     let (hovered_color, normal_color) = if options.job_color.is_random() {
-        get_job_gantt_colors(job.id)
+        get_job_gantt_colors(job.id, job_color_min)
     } else {
-        job.state.get_color()
+        let val = job_bar_label(job, &options.job_color_field);
+        options.field_colors
+            .get(&options.job_color_field)
+            .and_then(|m| m.get(&val))
+            .copied()
+            .unwrap_or_else(|| get_job_gantt_colors_for_str(&val, job_color_min))
     };
     let fill_color = if is_job_hovered { hovered_color } else { normal_color };
     chart_painter.rect_filled(visible_rect, rounding, fill_color);

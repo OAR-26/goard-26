@@ -21,18 +21,46 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Self {
-        let app = App {
+    pub fn new(live_data: bool, import_entries: Vec<Vec<String>>) -> Self {
+        let mut application_context = ApplicationContext::default();
+        application_context.live_data = live_data;
+        if live_data {
+            application_context.update_periodically();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        for entry in &import_entries {
+            // Single file → standalone tab. Multiple files → group tab.
+            let mut anchor_index: Option<usize> = None;
+            for path in entry {
+                match std::fs::read_to_string(path) {
+                    Ok(content) => {
+                        if let Some(target) = anchor_index {
+                            // Wire pending_group_target so this file joins the group.
+                            application_context.import.pending_group_target = Some(target);
+                        }
+                        match application_context.import_data_from_json(&content, Some(path.clone()), None) {
+                            Ok(()) => {
+                                if anchor_index.is_none() {
+                                    // Capture 1-based index of the first imported file.
+                                    anchor_index = Some(application_context.import.imported_data_sources.len());
+                                }
+                            }
+                            Err(e) => eprintln!("Failed to import {}: {}", path, e),
+                        }
+                    }
+                    Err(e) => eprintln!("Cannot read {}: {}", path, e),
+                }
+            }
+        }
+        App {
             secret: Secret::default(),
             dashboard_view: Dashboard::default(),
             gantt_view: GanttChart::default(),
             authentification_view: Authentification::default(),
             menu: Menu::default(),
             tools: Tools::default(),
-            application_context: ApplicationContext::default(),
-        };
-
-        app
+            application_context,
+        }
     }
     
     fn trigger_file_import(&mut self) {
@@ -203,5 +231,9 @@ impl eframe::App for App {
             }
         });
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.gantt_view.flush_all_tab_states(&self.application_context);
     }
 }

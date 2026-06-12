@@ -34,7 +34,7 @@ pub fn test_connection(host: &str) -> Result<(), String> {
  * @return List of jobs
  */
 #[cfg(not(target_arch = "wasm32"))]
-pub fn get_current_jobs_for_period(start_date: DateTime<Local>, end_date: DateTime<Local>) -> bool {
+pub fn get_current_jobs_for_period(start_date: DateTime<Local>, end_date: DateTime<Local>, ssh_host: &str) -> bool {
     // Add a margin to the interval
     let interval = end_date - start_date;
     let margin = interval.num_seconds() * 30 / 100;
@@ -42,7 +42,7 @@ pub fn get_current_jobs_for_period(start_date: DateTime<Local>, end_date: DateTi
     let end_date = end_date + chrono::Duration::seconds(margin);
 
     // Test connection first
-    if test_connection("grenoble.g5k") != Ok(()) {
+    if test_connection(ssh_host) != Ok(()) {
         return false;
     }
 
@@ -55,7 +55,7 @@ pub fn get_current_jobs_for_period(start_date: DateTime<Local>, end_date: DateTi
     // Execute SSH command to generate JSON file and redirect output
     let ssh_status = Command::new("ssh")
         .args([
-            "grenoble.g5k",
+            ssh_host,
             &format!(
                 "oarstat -J -g \"{}, {}\"",
                 start_date.format("%Y-%m-%d %H:%M:%S"),

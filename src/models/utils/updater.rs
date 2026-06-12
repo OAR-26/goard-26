@@ -65,12 +65,13 @@ impl ApplicationContext {
         let jobs_sender = self.refresh.jobs_sender.clone();
         let resources_sender = self.refresh.resources_sender.clone();
         let dead_intervals_sender = self.refresh.dead_intervals_sender.clone();
+        let ssh_host = self.prefs.gantt_config.ssh_host.clone();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             let is_refreshing_clone = is_refreshing.clone();
             thread::spawn(move || {
-                let res = get_current_jobs_for_period(start, end);
+                let res = get_current_jobs_for_period(start, end, &ssh_host);
                 if res {
                     let jobs = get_jobs_from_json("./data/data.json");
                     let resources = get_resources_from_json("./data/data.json");
@@ -100,6 +101,12 @@ impl ApplicationContext {
     }
 
     pub fn update_periodically(&mut self) {
+        if self.refresh.thread_started {
+            // Thread already running — just unpause it.
+            *self.refresh.refresh_rate.lock().unwrap() = 30;
+            return;
+        }
+        self.refresh.thread_started = true;
         let refresh_rate = self.refresh.refresh_rate.clone();
         let jobs_sender = self.refresh.jobs_sender.clone();
         let resources_sender = self.refresh.resources_sender.clone();
@@ -107,6 +114,7 @@ impl ApplicationContext {
         let is_refreshing = self.refresh.is_refreshing.clone();
         let start_date = self.refresh.start_date.clone();
         let end_date = self.refresh.end_date.clone();
+        let ssh_host = self.prefs.gantt_config.ssh_host.clone();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -133,7 +141,7 @@ impl ApplicationContext {
                         end = *end_date.lock().unwrap();
                     }
 
-                    let res = get_current_jobs_for_period(start, end);
+                    let res = get_current_jobs_for_period(start, end, &ssh_host);
                     if res {
                         let jobs = get_jobs_from_json("./data/data.json");
                         let resources = get_resources_from_json("./data/data.json");
@@ -174,11 +182,12 @@ impl ApplicationContext {
         let sender = self.refresh.jobs_sender.clone();
         let start = start_date;
         let end = end_date;
+        let ssh_host = self.prefs.gantt_config.ssh_host.clone();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             thread::spawn(move || {
-                let res = get_current_jobs_for_period(start, end);
+                let res = get_current_jobs_for_period(start, end, &ssh_host);
                 if res {
                     let jobs = get_jobs_from_json("./data/data.json");
                     sender.send(jobs).unwrap();

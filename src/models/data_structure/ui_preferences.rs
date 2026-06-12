@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::gantt_config::GanttConfig;
+use crate::views::components::gantt_job_color::{JobColor, JobColorEnum};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -16,6 +17,9 @@ pub struct UiPreferences {
     pub theme_toggle_requested: bool,
     pub gantt_config: GanttConfig,
     pub cluster_presets: Vec<ClusterPreset>,
+    pub job_color: JobColor,
+    /// Set to true when Apply is clicked in ConfigPanel; GanttChart syncs options once then clears.
+    pub config_reload_requested: bool,
 
     /// Updated each frame by GanttChart so the toolbar can show view-specific stats.
     pub current_gantt_view_name: String,
@@ -25,12 +29,22 @@ pub struct UiPreferences {
 
 impl Default for UiPreferences {
     fn default() -> Self {
+        let gantt_config = GanttConfig::load();
+        let job_color = JobColor {
+            color: if gantt_config.job_color_mode == "field" {
+                JobColorEnum::ByField
+            } else {
+                JobColorEnum::Random
+            },
+        };
         Self {
             font_size: 16,
             see_all_jobs: false,
             theme_toggle_requested: false,
-            gantt_config: GanttConfig::load(),
+            gantt_config,
             cluster_presets: Vec::new(),
+            job_color,
+            config_reload_requested: false,
             current_gantt_view_name: String::new(),
             current_gantt_view_levels: Vec::new(),
             current_gantt_view_summary_fields: Vec::new(),

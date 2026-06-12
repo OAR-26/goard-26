@@ -1,7 +1,7 @@
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub enum JobColorEnum {
     Random,
-    State,
+    ByField,
 }
 
 pub struct JobColor {
@@ -37,7 +37,7 @@ impl JobColor {
                 );
                 ui.radio_value(
                     &mut self.color,
-                    JobColorEnum::State,
+                    JobColorEnum::ByField,
                     t!("app.gantt.settings.job_color_state"),
                 );
             });

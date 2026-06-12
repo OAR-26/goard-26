@@ -13,6 +13,9 @@ pub struct DataSourceGroup {
 pub struct ImportedDataSource {
     pub name: String,
     pub file_path: Option<String>,
+    /// FNV-1a 64-bit hash of first 8 KB + total length, hex-encoded.
+    /// Used for persistent tab-state lookup even after file moves/renames.
+    pub file_hash: Option<String>,
     pub file_type_name: String,
     pub visualization_targets: Vec<VisualizationTarget>,
     pub jobs: Vec<Job>,

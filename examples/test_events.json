@@ -1,0 +1,12 @@
+[
+  {"timestamp": 1779457800, "resource": "node001", "event": "start", "walltime": 300},
+  {"timestamp": 1779458100, "resource": "node001", "event": "stop",  "walltime": 0},
+  {"timestamp": 1779457900, "resource": "node002", "event": "start", "walltime": 600},
+  {"timestamp": 1779458200, "resource": "node003", "event": "start", "walltime": 120},
+  {"timestamp": 1779458320, "resource": "node003", "event": "stop",  "walltime": 0},
+  {"timestamp": 1779458000, "resource": "node004", "event": "start", "walltime": 400},
+  {"timestamp": 1779458400, "resource": "node004", "event": "stop",  "walltime": 0},
+  {"timestamp": 1779457700, "resource": "node005", "event": "start", "walltime": 200},
+  {"timestamp": 1779457900, "resource": "node005", "event": "stop",  "walltime": 0},
+  {"timestamp": 1779458284, "resource": "node002", "event": "stop",  "walltime": 0}
+]

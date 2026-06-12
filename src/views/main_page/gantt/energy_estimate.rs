@@ -7,6 +7,7 @@ pub fn compute_energy_points(
     jobs: &[Job],
     start_s: i64,
     end_s: i64,
+    watts_per_resource: f64,
 ) -> Vec<(i64, f64)> {
     if let Some(series) = precomputed {
         // No range filter — let the plot manage pan/zoom.
@@ -24,7 +25,7 @@ pub fn compute_energy_points(
         }
         return points;
     }
-    estimate_global_energy_series(jobs, start_s, end_s, 10, 300.0)
+    estimate_global_energy_series(jobs, start_s, end_s, 10, watts_per_resource)
 }
 /// Estimation de la puissance globale (W) sur une fenêtre [start_s, end_s].
 

@@ -16,3 +16,4 @@ pub mod marker;
 pub mod refresh_coordinator;
 pub mod import_state;
 pub mod ui_preferences;
+pub mod tab_state_cache;
