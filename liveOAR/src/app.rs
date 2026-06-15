@@ -1,4 +1,4 @@
-use crate::auth_view::AuthView;
+use crate::auth_view::{AuthOutcome, AuthView};
 use goard_core::models::utils::secret::Secret;
 use goard_core::views::main_page::dashboard::Dashboard;
 use goard_core::views::main_page::gantt::GanttChart;
@@ -46,9 +46,15 @@ impl eframe::App for App {
 
         if self.auth_active {
             CentralPanel::default().show(ctx, |ui| {
-                if let Some(username) = self.auth_view.show(ui) {
-                    self.connected_as = Some(username);
-                    self.auth_active = false;
+                match self.auth_view.show(ui) {
+                    Some(AuthOutcome::LoggedIn(username)) => {
+                        self.connected_as = Some(username);
+                        self.auth_active = false;
+                    }
+                    Some(AuthOutcome::ContinuedAsGuest) => {
+                        self.auth_active = false;
+                    }
+                    None => {}
                 }
             });
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -57,6 +63,7 @@ impl eframe::App for App {
 
         let connected_as = self.connected_as.clone();
         let mut logout_clicked = false;
+        let mut login_clicked = false;
 
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             self.menu.render_with_file_items(ui, &mut self.application_context, |ui, _app| {
@@ -67,16 +74,21 @@ impl eframe::App for App {
                         logout_clicked = true;
                         ui.close_menu();
                     }
+                } else {
+                    if ui.button("Login").clicked() {
+                        login_clicked = true;
+                        ui.close_menu();
+                    }
                 }
             });
         });
 
         if logout_clicked {
-            self.auth_active = true;
             self.connected_as = None;
+        }
+        if login_clicked {
             self.auth_view = AuthView::default();
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
-            return;
+            self.auth_active = true;
         }
 
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {

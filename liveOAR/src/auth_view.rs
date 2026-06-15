@@ -1,5 +1,10 @@
 use eframe::egui::{self, RichText};
 
+pub enum AuthOutcome {
+    LoggedIn(String),
+    ContinuedAsGuest,
+}
+
 pub struct AuthView {
     username: String,
     password: String,
@@ -17,9 +22,9 @@ impl Default for AuthView {
 }
 
 impl AuthView {
-    /// Returns `Some(username)` when login succeeds, `None` otherwise.
-    pub fn show(&mut self, ui: &mut egui::Ui) -> Option<String> {
-        let mut logged_in_as: Option<String> = None;
+    /// Returns `Some(AuthOutcome)` when the user acts, `None` while idle.
+    pub fn show(&mut self, ui: &mut egui::Ui) -> Option<AuthOutcome> {
+        let mut outcome: Option<AuthOutcome> = None;
 
         ui.vertical_centered(|ui| {
             ui.add_space(50.0);
@@ -53,16 +58,24 @@ impl AuthView {
 
                     if submit {
                         if self.username == "admin" && self.password == "admin" {
-                            logged_in_as = Some(self.username.clone());
+                            outcome = Some(AuthOutcome::LoggedIn(self.username.clone()));
                             self.error_message = None;
                         } else {
                             self.error_message = Some("Invalid credentials".to_string());
                         }
                         self.password.clear();
                     }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    if ui.button("Continue without logging in").clicked() {
+                        outcome = Some(AuthOutcome::ContinuedAsGuest);
+                    }
                 });
         });
 
-        logged_in_as
+        outcome
     }
 }
