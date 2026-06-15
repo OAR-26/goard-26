@@ -43,6 +43,19 @@ pub struct ApplicationContext {
     pub is_loading: bool,
     pub filters: JobFilters,
     pub live_data: bool,
+
+    // Direct time window — kept in sync with refresh.start_date/end_date.
+    // Views read these directly instead of locking the Mutex every frame.
+    pub start_date: DateTime<Local>,
+    pub end_date: DateTime<Local>,
+
+    // Runtime state synced from RefreshCoordinator each frame by check_data_update().
+    pub is_refreshing: bool,
+    pub live_refresh_paused: bool,
+
+    // Signals set by views; consumed and acted on by the binary-level App (liveOAR).
+    pub refresh_requested: bool,
+    pub live_disable_requested: bool,
 }
 
 impl ApplicationContext {
@@ -406,12 +419,15 @@ impl ApplicationContext {
     }
 
     pub fn check_data_update(&mut self) {
+        self.is_refreshing = *self.refresh.is_refreshing.lock().unwrap_or_else(|p| p.into_inner());
+        self.live_refresh_paused = *self.refresh.refresh_rate.lock().unwrap_or_else(|p| p.into_inner()) == u64::MAX;
+
         self.check_job_update();
         self.check_ressource_update();
         self.check_dead_intervals_update();
 
-        self.filters.set_scheduled_start_time(self.refresh.start_date.lock().unwrap().timestamp());
-        self.filters.set_wall_time(self.refresh.end_date.lock().unwrap().timestamp());
+        self.filters.set_scheduled_start_time(self.start_date.timestamp());
+        self.filters.set_wall_time(self.end_date.timestamp());
 
         self.filter_jobs();
     }
@@ -1027,11 +1043,20 @@ impl Default for ApplicationContext {
             is_loading: false,
             filters: JobFilters::default(),
             live_data: false,
+
+            start_date: now,
+            end_date: now,
+            is_refreshing: false,
+            live_refresh_paused: false,
+            refresh_requested: false,
+            live_disable_requested: false,
         };
         context.prefs.cluster_presets = ApplicationContext::load_presets_from_file("presets.json");
         // Center the initial live-data window on now using default_timespan so
         // the "now" line appears at the center of the Gantt on first load.
         let half = chrono::Duration::seconds(context.prefs.gantt_config.default_timespan_s / 2);
+        context.start_date = now - half;
+        context.end_date   = now + half;
         *context.refresh.start_date.lock().unwrap() = now - half;
         *context.refresh.end_date.lock().unwrap()   = now + half;
         context

@@ -1668,6 +1668,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "goard_core"
+version = "1.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "console_error_panic_hook",
+ "eframe",
+ "egui",
+ "egui_extras",
+ "egui_plot",
+ "env_logger",
+ "getrandom 0.2.15",
+ "js-sys",
+ "log",
+ "native-dialog",
+ "rand 0.8.5",
+ "range-set-blaze",
+ "rfd",
+ "rust-i18n",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "toml 0.8.20",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "gpu-alloc"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2113,6 +2143,21 @@ name = "litrs"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ce301924b7887e9d637144fdade93f9dfff9b60981d4ac161db09720d39aa5"
+
+[[package]]
+name = "liveOAR"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "eframe",
+ "env_logger",
+ "goard_core",
+ "js-sys",
+ "log",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
 
 [[package]]
 name = "lock_api"
@@ -3083,36 +3128,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-dashboard-app"
-version = "1.1.0"
-dependencies = [
- "chrono",
- "chrono-tz",
- "console_error_panic_hook",
- "eframe",
- "egui",
- "egui_extras",
- "egui_plot",
- "env_logger",
- "getrandom 0.2.15",
- "js-sys",
- "log",
- "native-dialog",
- "rand 0.8.5",
- "range-set-blaze",
- "rfd",
- "rust-i18n",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "toml 0.8.20",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "rust-i18n"
 version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3344,6 +3359,21 @@ name = "simd-adler32"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d66dc143e6b11c1eddc06d5c423cfc97062865baf299914ab64caa38182078fe"
+
+[[package]]
+name = "simulationGOARD"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "eframe",
+ "env_logger",
+ "goard_core",
+ "js-sys",
+ "log",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
 
 [[package]]
 name = "siphasher"

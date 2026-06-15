@@ -59,7 +59,7 @@ struct OarConfig {
 }
 
 // Embedded at compile time — no runtime file path needed.
-const OAR_CONFIG_JSON: &str = include_str!("../../../file_types/oar.json");
+const OAR_CONFIG_JSON: &str = include_str!("../../../../file_types/oar.json");
 
 // ── OarFileType ───────────────────────────────────────────────────────────────
 

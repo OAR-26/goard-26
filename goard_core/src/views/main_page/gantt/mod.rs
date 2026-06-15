@@ -480,12 +480,8 @@ impl GanttChart {
         // Apply deferred actions (avoids re-borrow of `app` inside closure).
         if disable_live {
             app.live_data = false;
-            *app.refresh.refresh_rate.lock().unwrap() = u64::MAX;
-            *app.refresh.is_refreshing.lock().unwrap() = false;
-            // Drain in-flight channel messages so they don't land after re-enable.
-            while app.refresh.jobs_receiver.try_recv().is_ok() {}
-            while app.refresh.resources_receiver.try_recv().is_ok() {}
-            while app.refresh.dead_intervals_receiver.try_recv().is_ok() {}
+            // Signal the binary-level App to drain channels and stop the refresh thread.
+            app.live_disable_requested = true;
             app.data.all_jobs.clear();
             app.data.swap_all_jobs.clear();
             app.data.all_clusters.clear();
@@ -1384,18 +1380,11 @@ impl View for GanttChart {
                     app.set_localdate(start, end);
 
                     if self.pending_navigation_refresh {
-                        let never = *app.refresh.refresh_rate.lock().unwrap_or_else(|p| p.into_inner()) == u64::MAX;
-                        if never {
+                        if app.live_refresh_paused {
                             self.pending_navigation_refresh = false;
-                        } else {
-                            let refreshing = *app
-                                .refresh.is_refreshing
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner());
-                            if !refreshing {
-                                app.instant_update();
-                                self.pending_navigation_refresh = false;
-                            }
+                        } else if !app.is_refreshing {
+                            app.refresh_requested = true;
+                            self.pending_navigation_refresh = false;
                         }
                     }
                 });

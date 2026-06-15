@@ -1,13 +1,11 @@
-use crate::models::utils::secret::Secret;
-use crate::views::main_page::dashboard::Dashboard;
-use crate::views::main_page::gantt::GanttChart;
-use crate::views::menu::menu::Menu;
-use crate::views::menu::tools::Tools;
-use crate::views::view::View;
-use crate::{
-    models::data_structure::application_context::ApplicationContext,
-    views::main_page::anthentification::Authentification,
-};
+use goard_core::models::utils::secret::Secret;
+use goard_core::views::main_page::dashboard::Dashboard;
+use goard_core::views::main_page::gantt::GanttChart;
+use goard_core::views::menu::menu::Menu;
+use goard_core::views::menu::tools::Tools;
+use goard_core::views::view::View;
+use goard_core::models::data_structure::application_context::ApplicationContext;
+use goard_core::views::main_page::anthentification::Authentification;
 use eframe::egui::{self, CentralPanel, TopBottomPanel};
 
 pub struct App {
@@ -35,13 +33,11 @@ impl App {
                 match std::fs::read_to_string(path) {
                     Ok(content) => {
                         if let Some(target) = anchor_index {
-                            // Wire pending_group_target so this file joins the group.
                             application_context.import.pending_group_target = Some(target);
                         }
                         match application_context.import_data_from_json(&content, Some(path.clone()), None) {
                             Ok(()) => {
                                 if anchor_index.is_none() {
-                                    // Capture 1-based index of the first imported file.
                                     anchor_index = Some(application_context.import.imported_data_sources.len());
                                 }
                             }
@@ -62,12 +58,9 @@ impl App {
             application_context,
         }
     }
-    
+
     fn trigger_file_import(&mut self) {
-        use crate::file_import;
-        
-        // Trigger the file dialog (works for both native and WASM)
-        file_import::trigger_file_dialog();
+        goard_core::file_import::trigger_file_dialog();
     }
 }
 
@@ -82,7 +75,7 @@ impl eframe::App for App {
 
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {
             match self.application_context.view_type {
-                crate::views::view::ViewType::Gantt => {
+                goard_core::views::view::ViewType::Gantt => {
                     self.tools
                         .render_with_gantt(ui, &mut self.application_context, &mut self.gantt_view);
                 }
@@ -92,31 +85,44 @@ impl eframe::App for App {
             }
         });
 
-        // Check for updates
+        // Pull live data updates and sync signal fields.
         self.application_context.check_data_update();
-        
-        // Handle file import request
+
+        // Handle signal: Gantt requested a navigation-triggered data refresh.
+        if self.application_context.refresh_requested {
+            self.application_context.refresh_requested = false;
+            self.application_context.instant_update();
+        }
+
+        // Handle signal: user disabled live mode from the Gantt tab bar.
+        if self.application_context.live_disable_requested {
+            self.application_context.live_disable_requested = false;
+            *self.application_context.refresh.refresh_rate.lock().unwrap() = u64::MAX;
+            *self.application_context.refresh.is_refreshing.lock().unwrap() = false;
+            while self.application_context.refresh.jobs_receiver.try_recv().is_ok() {}
+            while self.application_context.refresh.resources_receiver.try_recv().is_ok() {}
+            while self.application_context.refresh.dead_intervals_receiver.try_recv().is_ok() {}
+        }
+
+        // Handle file import request.
         if self.application_context.import.request_file_import {
             self.application_context.import.request_file_import = false;
             self.trigger_file_import();
         }
-        
+
         // File arrived from native picker → park it for type-selection dialog.
-        {
-            use crate::file_import;
-            if let Some((file_content, file_path)) = file_import::take_file_content() {
-                use crate::models::data_structure::import_state::PendingImport;
-                self.application_context.import.pending_import = Some(PendingImport {
-                    content: file_content,
-                    path: file_path,
-                    selected_type_name: None,
-                });
-            }
+        if let Some((file_content, file_path)) = goard_core::file_import::take_file_content() {
+            use goard_core::models::data_structure::import_state::PendingImport;
+            self.application_context.import.pending_import = Some(PendingImport {
+                content: file_content,
+                path: file_path,
+                selected_type_name: None,
+            });
         }
 
         // Import type-selection dialog — shown while a file is pending.
         if self.application_context.import.pending_import.is_some() {
-            use crate::models::file_types::FileTypeRegistry;
+            use goard_core::models::file_types::FileTypeRegistry;
 
             let pending = self.application_context.import.pending_import.as_ref().unwrap();
             let current_type = pending.selected_type_name.clone();
@@ -178,7 +184,6 @@ impl eframe::App for App {
                     });
                 });
 
-            // Apply radio clicks collected above.
             if let Some(t) = new_type {
                 self.application_context.import.pending_import.as_mut().unwrap().selected_type_name = t;
             }
@@ -211,21 +216,21 @@ impl eframe::App for App {
             .exact_height(18.0)
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if *self.application_context.refresh.is_refreshing.lock().unwrap() {
+                    if self.application_context.is_refreshing {
                         ui.add(egui::Spinner::new().size(12.0));
-                        ui.label(egui::RichText::new(t!("app.refreshing")).small());
+                        ui.label(egui::RichText::new(goard_core::refreshing_text()).small());
                     }
                 });
             });
 
         CentralPanel::default().show(ctx, |ui| match self.application_context.view_type {
-            crate::views::view::ViewType::Dashboard => {
+            goard_core::views::view::ViewType::Dashboard => {
                 self.dashboard_view.render(ui, &mut self.application_context);
             }
-            crate::views::view::ViewType::Gantt => {
+            goard_core::views::view::ViewType::Gantt => {
                 self.gantt_view.render(ui, &mut self.application_context);
             }
-            crate::views::view::ViewType::Authentification => {
+            goard_core::views::view::ViewType::Authentification => {
                 self.authentification_view
                     .render(ui, &mut self.application_context);
             }

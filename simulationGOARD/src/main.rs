@@ -1,19 +1,8 @@
 mod app;
-mod models;
-mod views;
-mod file_import;
-
-#[macro_use]
-extern crate rust_i18n;
-i18n!("src/i18n");
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let live_data = args.iter().any(|a| a == "--live");
-    // Each entry is a Vec<String>:
-    //   single file  → ["file.json"]
-    //   group        → ["oar.json", "energy.json"]  (joined by '+' on the command line)
     let import_entries: Vec<Vec<String>> = args.into_iter()
         .filter(|a| !a.starts_with("--"))
         .map(|a| {
@@ -26,18 +15,16 @@ fn main() -> Result<(), eframe::Error> {
         .collect();
     let options = eframe::NativeOptions::default();
     eframe::run_native(
-        &t!("app.title"),
+        &goard_core::window_title(),
         options,
-        Box::new(move |_cc| Ok(Box::new(app::App::new(live_data, import_entries)))),
+        Box::new(move |_cc| Ok(Box::new(app::App::new(import_entries)))),
     )
 }
 
-// When compiling to web using trunk:
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::wasm_bindgen::JsCast as _;
 
-    // Redirect `log` message to `console.log` and friends:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions::default();
@@ -58,11 +45,10 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|_cc| Ok(Box::new(app::App::new(false, Vec::new())))),
+                Box::new(|_cc| Ok(Box::new(app::App::new(Vec::new())))),
             )
             .await;
 
-        // Remove the loading text and spinner:
         if let Some(loading_text) = document.get_element_by_id("loading_text") {
             match start_result {
                 Ok(_) => {

@@ -26,7 +26,7 @@ struct EnergySeriesConfig {
     schema: SchemaConfig,
 }
 
-const CONFIG_JSON: &str = include_str!("../../../file_types/energy_series.json");
+const CONFIG_JSON: &str = include_str!("../../../../file_types/energy_series.json");
 
 // ── EnergySeriesFileType ──────────────────────────────────────────────────────
 

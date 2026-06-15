@@ -36,19 +36,19 @@ impl ApplicationContext {
 
     #[allow(dead_code)]
     pub fn get_start_date(&self) -> DateTime<Local> {
-        *self.refresh.start_date.lock().unwrap()
+        self.start_date
     }
 
     #[allow(dead_code)]
     pub fn get_end_date(&self) -> DateTime<Local> {
-        *self.refresh.end_date.lock().unwrap()
+        self.end_date
     }
 
     pub fn set_localdate(&mut self, start: DateTime<Local>, end: DateTime<Local>) {
-        let mut start_date = self.refresh.start_date.lock().unwrap();
-        let mut end_date = self.refresh.end_date.lock().unwrap();
-        *start_date = start;
-        *end_date = end;
+        self.start_date = start;
+        self.end_date = end;
+        *self.refresh.start_date.lock().unwrap() = start;
+        *self.refresh.end_date.lock().unwrap() = end;
     }
 
     pub fn instant_update(&mut self) {
