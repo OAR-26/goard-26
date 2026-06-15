@@ -1,7 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 use super::gantt_config::GanttConfig;
-use crate::views::components::gantt_job_color::{JobColor, JobColorEnum};
+use crate::views::components::gantt_job_color::JobColor;
+
+#[derive(PartialEq, Clone)]
+pub enum JobColorEnum {
+    Random,
+    ByField,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

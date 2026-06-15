@@ -17,3 +17,5 @@ pub mod refresh_coordinator;
 pub mod import_state;
 pub mod ui_preferences;
 pub mod tab_state_cache;
+pub mod job_sorting;
+pub mod view_type;

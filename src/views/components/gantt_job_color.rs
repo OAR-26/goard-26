@@ -1,8 +1,4 @@
-#[derive(PartialEq, Clone)]
-pub enum JobColorEnum {
-    Random,
-    ByField,
-}
+pub use crate::models::data_structure::ui_preferences::JobColorEnum;
 
 pub struct JobColor {
     pub color: JobColorEnum,

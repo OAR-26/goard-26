@@ -118,7 +118,7 @@ impl JobState {
     }
 }
 
-use crate::views::components::dashboard_components::job_table_sorting::JobSortable;
+use crate::models::data_structure::job_sorting::JobSortable;
 
 #[derive(Clone, Debug)]
 
