@@ -1,4 +1,5 @@
 mod app;
+mod auth_view;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {

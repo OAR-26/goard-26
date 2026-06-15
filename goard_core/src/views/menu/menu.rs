@@ -55,23 +55,6 @@ impl Menu {
                     extra_file_items(ui, app);
 
                     ui.separator();
-
-                    if app.user_connected.is_some() {
-                        ui.label(t!(
-                            "app.menu.connected_as",
-                            user = app.user_connected.as_ref().unwrap()
-                        ));
-                        ui.separator();
-                        if ui.button(t!("app.menu.logout")).clicked() {
-                            app.logout();
-                        }
-                    } else {
-                        if ui.button(t!("app.menu.login")).clicked() {
-                            app.view_type = crate::views::view::ViewType::Authentification;
-                        }
-                    }
-
-                    ui.separator();
                     if ui.button(t!("app.menu.quit")).clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -94,7 +77,6 @@ impl Menu {
                     ViewType::Dashboard => {
                         ui.label(t!("app.job_table.help"));
                     }
-                    ViewType::Authentification => {}
                 }
             });
 

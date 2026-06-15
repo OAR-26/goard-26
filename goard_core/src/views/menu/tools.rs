@@ -4,7 +4,6 @@ use crate::models::data_structure::resource::ResourceState;
 use crate::models::utils::utils::get_all_clusters;
 use crate::models::utils::utils::get_all_hosts;
 use crate::models::utils::utils::get_all_resources;
-use crate::views::menu::tools::egui::Color32;
 use crate::{
     models::data_structure::application_context::ApplicationContext,
     views::view::{View, ViewType},

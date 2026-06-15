@@ -397,7 +397,6 @@ impl GanttChart {
             .get(self.current_view_index)
             .map(|v| v.name.as_str())
             .unwrap_or("View");
-        let is_admin = app.is_admin();
         if supports_hierarchy {
             ui.menu_button(format!("View: {}", current_view_name), |ui| {
                 ui.set_min_width(220.0);
@@ -417,48 +416,28 @@ impl GanttChart {
                                     .or_else(|| backward_compat_preset(&self.gantt_views[i]));
                             ui.close_menu();
                         }
-                        if is_admin {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("🗑").on_hover_text("Delete view").clicked() {
-                                    self.delete_view_confirm = Some(i);
-                                    ui.close_menu();
-                                }
-                                if ui.small_button("✏").on_hover_text("Edit view").clicked() {
-                                    let v = self.gantt_views[i].clone();
-                                    self.edit_view.open_for(i, &v);
-                                    ui.close_menu();
-                                }
-                            });
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("🗑").on_hover_text("Delete view").clicked() {
+                                self.delete_view_confirm = Some(i);
+                                ui.close_menu();
+                            }
+                            if ui.small_button("✏").on_hover_text("Edit view").clicked() {
+                                let v = self.gantt_views[i].clone();
+                                self.edit_view.open_for(i, &v);
+                                ui.close_menu();
+                            }
+                        });
                     });
                 }
                 ui.separator();
-                let create_btn = egui::Button::new("+ Create view");
-                let create_btn = if is_admin { create_btn } else { create_btn.fill(egui::Color32::TRANSPARENT) };
-                let resp = ui.add_enabled(is_admin, create_btn);
-                let resp = if !is_admin { resp.on_hover_text("Admin access required") } else { resp };
-                if resp.clicked() {
+                if ui.button("+ Create view").clicked() {
                     self.create_view.reset_and_open();
                     ui.close_menu();
                 }
             });
         }
 
-        let admin_button = if is_admin {
-            egui::Button::new("Admin")
-        } else {
-            egui::Button::new("Admin")
-                .fill(Color32::from_gray(110))
-                .stroke(egui::Stroke::new(1.0, Color32::from_gray(170)))
-        };
-
-        let response = ui.add(admin_button);
-        if !is_admin {
-            response.clone().on_hover_text(
-                "Accès réservé aux administrateurs. Veuillez vous authentifier.",
-            );
-        }
-        if response.clicked() && is_admin {
+        if ui.button("Admin").clicked() {
             self.admin.open = true;
         }
 

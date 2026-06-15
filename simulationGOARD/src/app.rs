@@ -206,9 +206,6 @@ impl eframe::App for App {
             goard_core::views::view::ViewType::Gantt => {
                 self.gantt_view.render(ui, &mut self.application_context);
             }
-            goard_core::views::view::ViewType::Authentification => {
-                self.dashboard_view.render(ui, &mut self.application_context);
-            }
         });
 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));

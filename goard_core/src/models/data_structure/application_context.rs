@@ -25,7 +25,6 @@ pub struct ApplicationContext {
 
     // Session state
     pub view_type: ViewType,
-    pub user_connected: Option<String>,
     pub is_loading: bool,
     pub filters: JobFilters,
     pub live_data: bool,
@@ -423,15 +422,6 @@ impl ApplicationContext {
         self.filter_jobs();
     }
 
-    pub fn logout(&mut self) {
-        self.user_connected = None;
-        self.view_type = ViewType::Authentification;
-    }
-
-    pub fn is_admin(&self) -> bool {
-        matches!(self.user_connected.as_deref(), Some("admin"))
-    }
-
     fn save_presets_to_file(&self, file_path: &str) {
         if let Ok(json) = serde_json::to_string(&self.prefs.cluster_presets) {
             let _ = std::fs::write(file_path, json);
@@ -457,11 +447,6 @@ impl ApplicationContext {
     pub fn remove_preset(&mut self, name: &str) {
         self.prefs.cluster_presets.retain(|p| p.name != name);
         self.save_presets_to_file("presets.json");
-    }
-
-    pub fn login(&mut self, username: &str) {
-        self.user_connected = Some(username.to_string());
-        self.view_type = ViewType::Dashboard;
     }
 
     pub fn get_unique_owners(&self) -> Vec<String> {
@@ -540,7 +525,6 @@ impl Default for ApplicationContext {
             prefs: UiPreferences::default(),
 
             view_type: ViewType::Gantt,
-            user_connected: None,
             is_loading: false,
             filters: JobFilters::default(),
             live_data: false,
