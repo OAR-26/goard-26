@@ -1,3 +1,4 @@
+use crate::sim_state::{PendingImport, SimState};
 use goard_core::views::main_page::dashboard::Dashboard;
 use goard_core::views::main_page::gantt::GanttChart;
 use goard_core::views::menu::menu::Menu;
@@ -12,12 +13,14 @@ pub struct App {
     pub menu: Menu,
     pub tools: Tools,
     pub application_context: ApplicationContext,
+    pub sim_state: SimState,
 }
 
 impl App {
     pub fn new(import_entries: Vec<Vec<String>>) -> Self {
         let mut application_context = ApplicationContext::default();
         application_context.live_data = false;
+        let mut sim_state = SimState::default();
 
         #[cfg(not(target_arch = "wasm32"))]
         for entry in &import_entries {
@@ -26,12 +29,12 @@ impl App {
                 match std::fs::read_to_string(path) {
                     Ok(content) => {
                         if let Some(target) = anchor_index {
-                            application_context.import.pending_group_target = Some(target);
+                            sim_state.pending_group_target = Some(target);
                         }
-                        match application_context.import_data_from_json(&content, Some(path.clone()), None) {
+                        match sim_state.import_data_from_json(&mut application_context, &content, Some(path.clone()), None) {
                             Ok(()) => {
                                 if anchor_index.is_none() {
-                                    anchor_index = Some(application_context.import.imported_data_sources.len());
+                                    anchor_index = Some(sim_state.imported_data_sources.len());
                                 }
                             }
                             Err(e) => eprintln!("Failed to import {}: {}", path, e),
@@ -48,18 +51,20 @@ impl App {
             menu: Menu::default(),
             tools: Tools::default(),
             application_context,
+            sim_state,
         }
-    }
-
-    fn trigger_file_import(&mut self) {
-        goard_core::file_import::trigger_file_dialog();
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            self.menu.render(ui, &mut self.application_context);
+            self.menu.render_with_file_items(ui, &mut self.application_context, |ui, _app| {
+                if ui.button("📁 Import File").clicked() {
+                    goard_core::file_import::trigger_file_dialog();
+                    ui.close_menu();
+                }
+            });
         });
 
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {
@@ -74,26 +79,32 @@ impl eframe::App for App {
             }
         });
 
+        TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+            self.sim_state.render_tabs(ui, &mut self.application_context);
+        });
+
         self.application_context.check_data_update();
 
-        if self.application_context.import.request_file_import {
-            self.application_context.import.request_file_import = false;
-            self.trigger_file_import();
+        // "+" group button requested a file dialog.
+        if self.sim_state.request_file_import {
+            self.sim_state.request_file_import = false;
+            goard_core::file_import::trigger_file_dialog();
         }
 
+        // File arrived from native picker — park it for type-selection dialog.
         if let Some((file_content, file_path)) = goard_core::file_import::take_file_content() {
-            use goard_core::models::data_structure::import_state::PendingImport;
-            self.application_context.import.pending_import = Some(PendingImport {
+            self.sim_state.pending_import = Some(PendingImport {
                 content: file_content,
                 path: file_path,
                 selected_type_name: None,
             });
         }
 
-        if self.application_context.import.pending_import.is_some() {
+        // Import type-selection dialog.
+        if self.sim_state.pending_import.is_some() {
             use goard_core::models::file_types::FileTypeRegistry;
 
-            let pending = self.application_context.import.pending_import.as_ref().unwrap();
+            let pending = self.sim_state.pending_import.as_ref().unwrap();
             let current_type = pending.selected_type_name.clone();
             let file_label = pending.path.as_deref()
                 .and_then(|p| std::path::Path::new(p).file_name())
@@ -154,15 +165,16 @@ impl eframe::App for App {
                 });
 
             if let Some(t) = new_type {
-                self.application_context.import.pending_import.as_mut().unwrap().selected_type_name = t;
+                self.sim_state.pending_import.as_mut().unwrap().selected_type_name = t;
             }
 
             if do_cancel {
-                self.application_context.import.pending_import = None;
-                self.application_context.import.pending_group_target = None;
+                self.sim_state.pending_import = None;
+                self.sim_state.pending_group_target = None;
             } else if do_import {
-                let pending = self.application_context.import.pending_import.take().unwrap();
-                let result = self.application_context.import_data_from_json(
+                let pending = self.sim_state.pending_import.take().unwrap();
+                let result = self.sim_state.import_data_from_json(
+                    &mut self.application_context,
                     &pending.content,
                     pending.path,
                     pending.selected_type_name.as_deref(),
@@ -203,6 +215,6 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.gantt_view.flush_all_tab_states(&self.application_context);
+        self.sim_state.flush_all_tab_states(&mut self.gantt_view);
     }
 }

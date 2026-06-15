@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 goard_core = { path = "../goard_core" }
 eframe = "0.30.0"
+chrono = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11"

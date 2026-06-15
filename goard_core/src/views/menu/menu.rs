@@ -19,7 +19,6 @@ impl Default for Menu {
     fn default() -> Self {
         let application_options = ApplicationOptions::default();
 
-        // Load saved options from file if it exists
         let options_pane = if std::path::Path::new("options.json").exists() {
             Options::load_from_file("options.json")
         } else {
@@ -30,8 +29,18 @@ impl Default for Menu {
     }
 }
 
-impl View for Menu {
-    fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+impl Menu {
+    /// Render the menu bar. `extra_file_items` is called inside the File dropdown
+    /// before the login/logout and quit entries — use it to inject app-specific
+    /// items (e.g. Import File, Live Data toggle).
+    pub fn render_with_file_items<F>(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &mut ApplicationContext,
+        extra_file_items: F,
+    ) where
+        F: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+    {
         if app.prefs.theme_toggle_requested {
             self.options_pane.toggle_theme(ui.ctx());
             app.prefs.theme_toggle_requested = false;
@@ -40,29 +49,10 @@ impl View for Menu {
             .apply_options(ui.ctx(), &mut app.prefs.font_size);
 
         ui.horizontal(|ui| {
-            // Menu File
             ui.menu_button(t!("app.menu.file"), |ui| {
                 ui.set_max_width(200.0);
                 ui.vertical(|ui| {
-                    // Import File option
-                    if ui.button("📁 Import File").clicked() {
-                        app.import.request_file_import = true;
-                        ui.close_menu();
-                    }
-
-                    ui.add_enabled_ui(!app.live_data, |ui| {
-                        if ui.button("📡 Live Data").clicked() {
-                            app.live_data = true;
-                            // switch_to_data_source(0) sets start_date/end_date to the live
-                            // window BEFORE update_periodically spawns the fetch thread, so
-                            // the thread always fetches the current time range, not the
-                            // previously imported file's historical range.
-                            app.switch_to_data_source(0);
-                            app.update_periodically();
-                            app.instant_update();
-                            ui.close_menu();
-                        }
-                    });
+                    extra_file_items(ui, app);
 
                     ui.separator();
 
@@ -88,17 +78,14 @@ impl View for Menu {
                 });
             });
 
-            // Menu Options
             if ui.button(t!("app.menu.options")).clicked() {
                 self.options_pane.open();
             }
 
-            // Config panel
             if ui.button("⚙ Settings").clicked() {
                 self.settings_panel.open = true;
             }
 
-            // Contextual help
             ui.menu_button("?", |ui| {
                 match app.view_type {
                     ViewType::Gantt => {
@@ -111,9 +98,14 @@ impl View for Menu {
                 }
             });
 
-            // Show External Windows
             self.options_pane.ui(ui, &mut app.prefs.font_size);
             self.settings_panel.show(ui, app);
         });
+    }
+}
+
+impl View for Menu {
+    fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        self.render_with_file_items(ui, app, |_ui, _app| {});
     }
 }

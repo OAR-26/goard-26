@@ -1,4 +1,5 @@
 mod app;
+mod sim_state;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {

@@ -187,6 +187,8 @@ pub struct GanttChart {
     initial_end_s: Option<i64>,
     last_data_source_index: Option<usize>,
     tab_state_cache: TabStateCache,
+    /// Cached (file_path, file_hash) per source key — populated as tabs are visited.
+    tab_file_keys: std::collections::HashMap<usize, (Option<String>, Option<String>)>,
     /// Saved (canvas_width_s, sideways_pan_in_points) per data-source index (Gantt tabs).
     tab_view_state: std::collections::HashMap<usize, (f32, f32, f32)>,
     /// Saved visible (start_s, end_s) per data-source index (energy-only tabs).
@@ -265,6 +267,7 @@ impl Default for GanttChart {
             initial_end_s: None,
             last_data_source_index: None,
             tab_state_cache: TabStateCache::load(),
+            tab_file_keys: std::collections::HashMap::new(),
             tab_view_state: std::collections::HashMap::new(),
             energy_visible: std::collections::HashMap::new(),
             energy_panel_state: std::collections::HashMap::new(),
@@ -291,239 +294,24 @@ impl Default for GanttChart {
 }
 
 impl GanttChart {
-    pub fn render_data_source_tabs(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        ui.add_space(4.0);
-
-        // Pre-collect everything needed so we don't borrow `app` inside the closure.
-        let current_index = app.import.current_data_source_index;
-        let current_group = app.import.current_group_index;
-        let stroke_color = ui.visuals().widgets.active.bg_stroke.color;
-        let text_color = ui.visuals().text_color();
-        let active_fill = ui.visuals().widgets.active.bg_fill;
-        let inactive_fill = ui.visuals().widgets.inactive.bg_fill;
-
-        // Which ds indices belong to at least one group.
-        let grouped_ds: std::collections::HashSet<usize> = app.import.groups.iter()
-            .flat_map(|g| g.member_indices.iter().copied())
-            .collect();
-
-        // Individual (ungrouped) sources.
-        let individual: Vec<(usize, String)> = app.import.imported_data_sources.iter()
-            .enumerate()
-            .filter(|(i, _)| !grouped_ds.contains(&(i + 1)))
-            .map(|(i, ds)| (i + 1, ds.name.clone()))
-            .collect();
-
-        // Groups — collect (gi, group_name, [(ds_idx, member_name)]).
-        let groups_info: Vec<(usize, String, Vec<(usize, String)>)> = app.import.groups.iter()
-            .enumerate()
-            .map(|(gi, g)| {
-                let members = g.member_indices.iter()
-                    .filter_map(|&i| app.import.imported_data_sources.get(i - 1).map(|ds| (i, ds.name.clone())))
-                    .collect();
-                (gi, g.name.clone(), members)
-            })
-            .collect();
-
-        let mut switch_to_ds: Option<usize> = None;
-        let mut switch_to_group: Option<usize> = None;
-        let mut close_ds: Option<usize> = None;
-        let mut close_group_idx: Option<usize> = None;
-        let mut group_target: Option<usize> = None;
-        let mut remove_from_group: Option<(usize, usize)> = None; // (group_idx, ds_idx)
-        let mut disable_live = false;
-
-        ui.horizontal(|ui| {
-            // Live Data tab — only shown when live mode is active.
-            if app.live_data {
-                let is_active = current_index == 0 && current_group.is_none();
-                let fill = if is_active { active_fill } else { inactive_fill };
-                let text = if is_active {
-                    egui::RichText::new("Live Data").strong()
-                } else {
-                    egui::RichText::new("Live Data")
-                };
-                let mut btn = egui::Button::new(text).fill(fill).frame(true);
-                if is_active {
-                    btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
-                }
-                ui.horizontal(|ui| {
-                    if ui.add(btn).clicked() {
-                        switch_to_ds = Some(0);
-                    }
-                    let close = egui::Button::new("×")
-                        .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::new(1.0, text_color));
-                    if ui.add(close).on_hover_text("Disable live data").clicked() {
-                        disable_live = true;
-                    }
-                });
-                ui.add_space(4.0);
-            }
-
-            // Individual ungrouped tabs.
-            for (ds_idx, name) in &individual {
-                let is_active = *ds_idx == current_index && current_group.is_none();
-                let fill = if is_active { active_fill } else { inactive_fill };
-                let text = if is_active {
-                    egui::RichText::new(name).strong()
-                } else {
-                    egui::RichText::new(name.as_str())
-                };
-                let mut btn = egui::Button::new(text).fill(fill).frame(true);
-                if is_active {
-                    btn = btn.stroke(egui::Stroke::new(1.0, stroke_color));
-                }
-                ui.horizontal(|ui| {
-                    if ui.add(btn).clicked() {
-                        switch_to_ds = Some(*ds_idx);
-                    }
-                    // "+" — group with another file.
-                    let plus = egui::Button::new("+")
-                        .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::new(1.0, text_color))
-                        .min_size(egui::vec2(16.0, 16.0));
-                    if ui.add(plus).on_hover_text("Group with another file").clicked() {
-                        group_target = Some(*ds_idx);
-                    }
-                    // "×" — remove.
-                    ui.add_space(-4.0);
-                    let close = egui::Button::new("×")
-                        .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::new(1.0, text_color));
-                    if ui.add(close).clicked() {
-                        close_ds = Some(*ds_idx);
-                    }
-                });
-                ui.add_space(4.0);
-            }
-
-            // Group tabs.
-            for (gi, group_name, members) in &groups_info {
-                let is_active = current_group == Some(*gi);
-                let fill = if is_active { active_fill } else { inactive_fill };
-                let popup_id = ui.make_persistent_id(("group_dd", *gi));
-
-                let text = if is_active {
-                    egui::RichText::new(group_name).strong()
-                } else {
-                    egui::RichText::new(group_name.as_str())
-                };
-
-                // Name button — activates the group.
-                let mut name_btn = egui::Button::new(text).fill(fill).frame(true);
-                if is_active {
-                    name_btn = name_btn.stroke(egui::Stroke::new(1.0, stroke_color));
-                }
-                let name_resp = ui.add(name_btn);
-                if name_resp.clicked() {
-                    switch_to_group = Some(*gi);
-                }
-
-                // Arrow button — toggles the member popup.
-                let arrow_resp = ui.small_button("v");
-                if arrow_resp.clicked() {
-                    ui.memory_mut(|m| m.toggle_popup(popup_id));
-                }
-
-                // Popup anchored below the full tab (name + arrow combined rect).
-                let tab_anchor = name_resp | arrow_resp;
-                egui::popup::popup_below_widget(
-                    ui, popup_id, &tab_anchor,
-                    egui::popup::PopupCloseBehavior::CloseOnClickOutside,
-                    |ui| {
-                        ui.set_min_width(180.0);
-                        for (ds_idx, mn) in members {
-                            ui.horizontal(|ui| {
-                                ui.label(mn);
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui.small_button("🗑")
-                                            .on_hover_text("Delete file")
-                                            .clicked()
-                                        {
-                                            remove_from_group = Some((*gi, *ds_idx));
-                                            ui.memory_mut(|m| m.close_popup());
-                                        }
-                                    },
-                                );
-                            });
-                        }
-                    },
-                );
-
-                // "+" — add another file to this group.
-                let first_member = members.first().map(|(i, _)| *i);
-                let plus = egui::Button::new("+")
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::new(1.0, text_color))
-                    .min_size(egui::vec2(16.0, 16.0));
-                if ui.add(plus).on_hover_text("Add file to group").clicked() {
-                    if let Some(m) = first_member {
-                        group_target = Some(m);
-                    }
-                }
-
-                // "🗑" — delete the group and all its member files.
-                let close = egui::Button::new("🗑")
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::new(1.0, text_color));
-                if ui.add(close).on_hover_text("Delete group and all files").clicked() {
-                    close_group_idx = Some(*gi);
-                }
-
-                ui.add_space(4.0);
-            }
-        });
-
-        // Apply deferred actions (avoids re-borrow of `app` inside closure).
-        if disable_live {
-            app.live_data = false;
-            // Signal the binary-level App to drain channels and stop the refresh thread.
-            app.live_disable_requested = true;
-            app.data.all_jobs.clear();
-            app.data.swap_all_jobs.clear();
-            app.data.all_clusters.clear();
-            app.data.swap_all_clusters.clear();
-            app.data.strata_by_resource_id.clear();
-            app.data.strata_by_host.clear();
-            app.data.strata_by_resource_id_live.clear();
-            app.data.strata_by_host_live.clear();
-            app.data.markers.clear();
-            if app.import.current_data_source_index == 0 {
-                if !app.import.imported_data_sources.is_empty() {
-                    app.switch_to_data_source(1);
-                } else {
-                    app.filter_jobs();
-                }
-            }
-        }
-        if let Some(i) = switch_to_ds               { app.switch_to_data_source(i); }
-        if let Some(gi) = switch_to_group           { app.switch_to_group(gi); }
-        if let Some(i) = close_ds                   { app.close_imported_data_source(i); }
-        if let Some(gi) = close_group_idx           { app.delete_group(gi); }
-        if let Some((gi, di)) = remove_from_group   { app.remove_ds_from_group(gi, di); }
-        if let Some(target) = group_target          {
-            app.import.pending_group_target = Some(target);
-            app.import.request_file_import = true;
-        }
-
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(4.0);
-    }
-
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        let ds_idx = app.import.current_data_source_index;
+        let ds_idx = app.current_source_key;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
             // Save zoom/pan and view index for the tab we are leaving.
             if let Some(old_idx) = self.last_data_source_index {
                 self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
                 self.tab_view_index.insert(old_idx, self.current_view_index);
                 self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
-                self.persist_tab_state(app, old_idx);
+                // Persist old tab using its cached file keys.
+                let old_keys = self.tab_file_keys.get(&old_idx).cloned();
+                if let Some((path, hash)) = old_keys {
+                    if let Some(h) = hash {
+                        self.persist_tab_state(old_idx, false, path.as_deref(), &h);
+                    }
+                }
             }
+            // Cache current tab's file keys so we can persist it later.
+            self.tab_file_keys.insert(ds_idx, (app.current_file_path.clone(), app.current_file_hash.clone()));
 
             let start_s = app.get_start_date().timestamp();
             let end_s = app.get_end_date().timestamp();
@@ -549,7 +337,9 @@ impl GanttChart {
                 self.options.rect_height = saved_row_h;
             } else if ds_idx > 0 {
                 // First visit this session — try persistent cache.
-                self.restore_from_cache(app, ds_idx);
+                if let Some(hash) = app.current_file_hash.as_deref() {
+                    self.restore_from_cache(ds_idx, app.current_file_path.as_deref(), hash);
+                }
             }
 
             // Restore view index for this tab; reset to 0 if no saved state so we
@@ -580,8 +370,7 @@ impl GanttChart {
                         .or_else(|| backward_compat_preset(view));
                 }
             } else {
-                let type_name = app.import.imported_data_sources
-                    .get(ds_idx - 1).map(|ds| ds.file_type_name.clone()).unwrap_or_default();
+                let type_name = app.current_file_type_name.clone();
                 let registry = FileTypeRegistry::default();
                 if let Some(levels) = registry.find_by_name(&type_name).and_then(|t| t.hierarchy_levels()) {
                     // File type has its own fixed hierarchy — ignore view index.
@@ -748,17 +537,17 @@ impl GanttChart {
     }
 
     /// Persist `tab_idx`'s state to the on-disk cache.
-    /// For the currently active tab, always read from `self.options` / `self.energy` (live).
-    /// For background tabs, read from the in-memory HashMaps (last-left snapshot).
-    /// Skip tabs that were never visited this session (no HashMap entry, not active).
-    pub fn persist_tab_state(&mut self, app: &ApplicationContext, tab_idx: usize) {
+    /// `is_active` — whether this is the currently visible tab (reads live options vs snapshot).
+    /// `file_path` / `file_hash` — provided by the caller (SimState); core has no import knowledge.
+    pub fn persist_tab_state(
+        &mut self,
+        tab_idx: usize,
+        is_active: bool,
+        file_path: Option<&str>,
+        file_hash: &str,
+    ) {
         if tab_idx == 0 { return; }
-        let Some(ds) = app.import.imported_data_sources.get(tab_idx - 1) else { return };
-        let Some(hash) = ds.file_hash.as_deref() else { return };
-
-        let is_active = tab_idx == app.import.current_data_source_index;
-        // Skip tabs that were never visited this session — we have nothing to save for them,
-        // and using self.options (active tab's state) as a fallback would corrupt their entry.
+        // Skip tabs never visited this session — nothing to save.
         if !is_active && !self.tab_view_state.contains_key(&tab_idx) { return; }
 
         let (w, pan, rh) = if is_active {
@@ -788,26 +577,13 @@ impl GanttChart {
             energy_fit: fit,
             energy_panel_height: ph,
         };
-        self.tab_state_cache.store(ds.file_path.as_deref(), hash, state);
+        self.tab_state_cache.store(file_path, file_hash, state);
         self.tab_state_cache.save_to_disk();
     }
 
-    /// Flush all visited/active imported tabs to the cache at once (called on app exit).
-    pub fn flush_all_tab_states(&mut self, app: &ApplicationContext) {
-        let n = app.import.imported_data_sources.len();
-        for tab_idx in 1..=n {
-            self.persist_tab_state(app, tab_idx);
-        }
-    }
-
     /// Restore tab state from the on-disk cache (first visit this session).
-    /// Applies directly to `self.options` and seeds energy/view-index maps.
-    /// Does NOT seed `tab_view_state` — that map only holds last-left snapshots so that
-    /// `persist_tab_state` can detect whether a tab was visited this session.
-    fn restore_from_cache(&mut self, app: &ApplicationContext, ds_idx: usize) {
-        let Some(ds) = app.import.imported_data_sources.get(ds_idx - 1) else { return };
-        let Some(hash) = ds.file_hash.as_deref() else { return };
-        let Some(saved) = self.tab_state_cache.lookup(ds.file_path.as_deref(), hash) else { return };
+    fn restore_from_cache(&mut self, ds_idx: usize, file_path: Option<&str>, file_hash: &str) {
+        let Some(saved) = self.tab_state_cache.lookup(file_path, file_hash) else { return };
         self.options.canvas_width_s = saved.canvas_width_s;
         self.options.sideways_pan_in_points = saved.sideways_pan;
         self.options.rect_height = saved.row_height;
@@ -851,17 +627,21 @@ impl View for GanttChart {
         self.options.job_color_field  = app.prefs.gantt_config.job_color_field.clone();
         self.options.field_colors = cfg_field_colors(&app.prefs.gantt_config.field_colors);
 
-        self.render_data_source_tabs(ui, app);
-
-        let ds_idx = app.import.current_data_source_index;
+        let ds_idx = app.current_source_key;
         if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
             // Save zoom/pan and view index for the tab we are leaving (UI-click switches land here).
             if let Some(old_idx) = self.last_data_source_index {
                 self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
                 self.tab_view_index.insert(old_idx, self.current_view_index);
                 self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
-                self.persist_tab_state(app, old_idx);
+                let old_keys = self.tab_file_keys.get(&old_idx).cloned();
+                if let Some((path, hash)) = old_keys {
+                    if let Some(h) = hash {
+                        self.persist_tab_state(old_idx, false, path.as_deref(), &h);
+                    }
+                }
             }
+            self.tab_file_keys.insert(ds_idx, (app.current_file_path.clone(), app.current_file_hash.clone()));
 
             let start_s = app.get_start_date().timestamp();
             let end_s = app.get_end_date().timestamp();
@@ -887,7 +667,9 @@ impl View for GanttChart {
                 self.options.rect_height = saved_row_h;
             } else if ds_idx > 0 {
                 // First visit this session — try persistent cache.
-                self.restore_from_cache(app, ds_idx);
+                if let Some(hash) = app.current_file_hash.as_deref() {
+                    self.restore_from_cache(ds_idx, app.current_file_path.as_deref(), hash);
+                }
             }
 
             // Restore view index for this tab; reset to 0 if no saved state so we
@@ -918,8 +700,7 @@ impl View for GanttChart {
         // other code paths (tab clicks, view dropdown) may have set previously.
         if ds_idx != 0 {
             use crate::models::file_types::FileTypeRegistry;
-            let type_name = app.import.imported_data_sources
-                .get(ds_idx - 1).map(|ds| ds.file_type_name.as_str()).unwrap_or("");
+            let type_name = app.current_file_type_name.as_str();
             if let Some(levels) = FileTypeRegistry::default()
                 .find_by_name(type_name)
                 .and_then(|t| t.hierarchy_levels())
@@ -954,7 +735,7 @@ impl View for GanttChart {
             };
         }
 
-        if app.import.current_data_source_index == 0 {
+        if app.live_data {
             app.data.all_jobs.retain(|j| j.id != 0);
         }
 
@@ -991,7 +772,7 @@ impl View for GanttChart {
             get_all_resources(&app.get_current_clusters())
         };
 
-        if app.import.current_data_source_index == 0 {
+        if app.live_data {
             app.data.all_jobs.push(Job {
                 id: 0,
                 owner: "all_resources".to_string(),
@@ -1347,17 +1128,18 @@ impl View for GanttChart {
                             .collect();
 
                         let raw_multi = app.get_current_energy_series_multi();
-                        let in_group = app.import.current_group_index.is_some();
+                        let in_group = app.current_group_active;
                         energy_series = if raw_multi.is_empty() {
                             // No raw energy files — estimate from Gantt jobs.
                             vec![("Estimated".to_string(),
                                 energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource))]
                         } else if in_group {
                             // Group with Gantt member + raw energy files: estimated series first, then raw.
-                            let gantt_name = app.import.imported_data_sources
-                                .get(app.import.current_data_source_index.saturating_sub(1))
-                                .map(|ds| ds.name.clone())
-                                .unwrap_or_else(|| "Gantt".to_string());
+                            let gantt_name = if app.current_source_name.is_empty() {
+                                "Gantt".to_string()
+                            } else {
+                                app.current_source_name.clone()
+                            };
                             let mut all = vec![(
                                 format!("{} (est.)", gantt_name),
                                 energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource),

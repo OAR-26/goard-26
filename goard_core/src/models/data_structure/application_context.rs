@@ -5,36 +5,22 @@ use super::resource::ResourceState;
 use super::cpu::Cpu;
 use super::host::Host;
 use super::resource::Resource;
-use super::import_state::{ImportedDataSource, ImportState};
 use super::live_data_state::LiveDataState;
 use super::refresh_coordinator::RefreshCoordinator;
 use super::ui_preferences::UiPreferences;
-use crate::models::utils::parser::get_dead_intervals_from_json;
 use crate::models::utils::utils::{get_clusters_for_job, get_hosts_for_job};
 use crate::models::data_structure::job_sorting::JobSortable;
 use crate::models::data_structure::view_type::ViewType;
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{DateTime, Local};
 use serde_json::Value;
 use std::collections::HashMap;
 
 // Re-export so external callers can keep using `application_context::ClusterPreset`
 pub use super::ui_preferences::ClusterPreset;
 
-/*
-`ApplicationContext` is the central state container.
-Fields are split into four focused sub-structs:
-  - `data`    — live job/cluster/strata data (LiveDataState)
-  - `refresh` — background-thread coordination: dates, channels, refresh rate (RefreshCoordinator)
-  - `import`  — imported file tabs (ImportState)
-  - `prefs`   — user-facing preferences and Gantt display state (UiPreferences)
-
-Session state (view_type, auth, loading, filters) stays flat here because
-it spans multiple domains and is needed by nearly every caller.
-*/
 pub struct ApplicationContext {
     pub data: LiveDataState,
     pub refresh: RefreshCoordinator,
-    pub import: ImportState,
     pub prefs: UiPreferences,
 
     // Session state
@@ -56,6 +42,19 @@ pub struct ApplicationContext {
     // Signals set by views; consumed and acted on by the binary-level App (liveOAR).
     pub refresh_requested: bool,
     pub live_disable_requested: bool,
+
+    // Flat display state — set by the binary when switching sources.
+    // Core has no knowledge of how sources are managed; it just renders these fields.
+    pub current_source_key: usize,
+    pub current_source_name: String,
+    pub current_group_active: bool,
+    pub current_energy_series: Vec<(String, Vec<(i64, f64)>)>,
+    pub show_energy: bool,
+    pub show_gantt_panel: bool,
+    pub current_file_path: Option<String>,
+    pub current_file_hash: Option<String>,
+    pub current_file_type_name: String,
+    pub current_supports_hierarchy: bool,
 }
 
 impl ApplicationContext {
@@ -63,9 +62,7 @@ impl ApplicationContext {
         if let Ok(new_jobs) = self.refresh.jobs_receiver.try_recv() {
             if !self.live_data { return; }
             self.data.swap_all_jobs = new_jobs;
-            if self.import.current_data_source_index == 0 {
-                self.is_loading = false;
-            }
+            self.is_loading = false;
         }
     }
 
@@ -99,10 +96,6 @@ impl ApplicationContext {
                         }
                     }
                 }
-            }
-
-            if self.import.current_data_source_index != 0 {
-                return;
             }
 
             fn extract_ints_from_value(v: &Value) -> Vec<i32> {
@@ -410,9 +403,7 @@ impl ApplicationContext {
     }
 
     pub fn check_dead_intervals_update(&mut self) {
-        if !self.live_data || self.import.current_data_source_index != 0 {
-            return;
-        }
+        if !self.live_data { return; }
         if let Ok(intervals) = self.refresh.dead_intervals_receiver.try_recv() {
             self.data.dead_intervals = intervals;
         }
@@ -509,523 +500,34 @@ impl ApplicationContext {
             .collect();
     }
 
-    pub fn import_data_from_json(&mut self, json_str: &str, file_path: Option<String>, type_name: Option<&str>) -> Result<(), String> {
-        use crate::models::file_types::FileTypeRegistry;
-
-        let registry = FileTypeRegistry::default();
-        let file_type = if let Some(name) = type_name {
-            registry.all_types().find(|t| t.name() == name)
-                .ok_or_else(|| format!("Unknown file type: {}", name))?
-        } else {
-            registry
-                .detect(json_str)
-                .ok_or_else(|| "Unrecognized file format — no matching file type found.".to_string())?
-        };
-
-        let errors = file_type.validate(json_str);
-        if !errors.is_empty() {
-            let msg = errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
-            return Err(format!("Validation failed: {}", msg));
-        }
-
-        let parsed = file_type.parse(json_str)?;
-
-        let base_name = file_path
-            .as_ref()
-            .and_then(|p| std::path::Path::new(p).file_stem())
-            .and_then(|s| s.to_str())
-            .unwrap_or("Imported Data");
-        let name = self.generate_unique_name(base_name);
-
-        let file_hash = Some(
-            crate::models::data_structure::tab_state_cache::compute_file_hash(json_str.as_bytes())
-        );
-
-        // Normalize to absolute path so cache lookups are consistent regardless of
-        // whether the file was opened via CLI (relative) or the file picker (absolute).
-        let file_path = file_path.map(|p| {
-            std::fs::canonicalize(&p)
-                .ok()
-                .and_then(|c| c.to_str().map(str::to_string))
-                .unwrap_or(p)
-        });
-
-        self.import.imported_data_sources.push(ImportedDataSource {
-            name,
-            file_path,
-            file_hash,
-            file_type_name: file_type.name().to_string(),
-            visualization_targets: file_type.visualization_targets().to_vec(),
-            raw_energy_series: parsed.raw_energy_series,
-            markers: parsed.markers,
-            jobs: parsed.jobs,
-            clusters: parsed.clusters,
-            strata: parsed.resources,
-        });
-
-        let new_index = self.import.imported_data_sources.len();
-
-        if let Some(target_ds) = self.import.pending_group_target.take() {
-            // Find existing group that already contains target_ds, or create a new one.
-            let existing = self.import.groups.iter().position(|g| g.member_indices.contains(&target_ds));
-            if let Some(gi) = existing {
-                self.import.groups[gi].member_indices.push(new_index);
-                let gi = gi; // borrow ends
-                self.switch_to_group(gi);
-            } else {
-                let name = self.next_group_name();
-                self.import.groups.push(crate::models::data_structure::import_state::DataSourceGroup {
-                    name,
-                    member_indices: vec![target_ds, new_index],
-                });
-                let gi = self.import.groups.len() - 1;
-                self.switch_to_group(gi);
-            }
-        } else {
-            self.switch_to_data_source(new_index);
-        }
-
-        Ok(())
-    }
-
-    fn next_group_name(&self) -> String {
-        format!("group{}", self.import.groups.len() + 1)
-    }
-
-    pub fn switch_to_group(&mut self, group_idx: usize) {
-        use crate::models::file_types::VisualizationTarget;
-        let Some(group) = self.import.groups.get(group_idx) else { return; };
-        let members = group.member_indices.clone();
-
-        // Find the gantt-capable member to drive jobs/clusters/strata.
-        let gantt_member = members.iter().copied().find(|&i| {
-            self.import.imported_data_sources.get(i - 1)
-                .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::Gantt))
-                .unwrap_or(false)
-        }).or_else(|| members.first().copied());
-
-        if let Some(mi) = gantt_member {
-            self.switch_to_data_source(mi); // clears current_group_index
-        }
-        self.import.current_group_index = Some(group_idx);
-    }
-
-    pub fn close_group(&mut self, group_idx: usize) {
-        if group_idx >= self.import.groups.len() { return; }
-        if self.import.current_group_index == Some(group_idx) {
-            self.import.current_group_index = None;
-            self.switch_to_data_source(0);
-        } else if let Some(cur) = self.import.current_group_index {
-            if cur > group_idx {
-                self.import.current_group_index = Some(cur - 1);
-            }
-        }
-        self.import.groups.remove(group_idx);
-    }
-
-    /// Delete a group AND every file it contains.
-    pub fn delete_group(&mut self, group_idx: usize) {
-        if group_idx >= self.import.groups.len() { return; }
-
-        let was_active = self.import.current_group_index == Some(group_idx);
-
-        // Determine "left" target BEFORE any removal (indices shift during removal).
-        // Visual tab order: [Live] [individual files by ds_idx] [groups by group_idx]
-        let target_after_delete: Option<(bool, usize)> = if was_active {
-            if group_idx > 0 {
-                // Previous group — its index is unchanged after removing group_idx.
-                Some((true, group_idx - 1))
-            } else {
-                // Find last individual (ungrouped) file not belonging to this group.
-                let members_set: std::collections::HashSet<usize> =
-                    self.import.groups[group_idx].member_indices.iter().copied().collect();
-                let other_grouped: std::collections::HashSet<usize> = self.import.groups.iter()
-                    .enumerate()
-                    .filter(|(i, _)| *i != group_idx)
-                    .flat_map(|(_, g)| g.member_indices.iter().copied())
-                    .collect();
-                let last_individual = (1..=self.import.imported_data_sources.len())
-                    .filter(|i| !members_set.contains(i) && !other_grouped.contains(i))
-                    .max();
-                last_individual.map(|ds_idx| {
-                    // Adjust for how many member files with index < ds_idx will be removed.
-                    let shift = members_set.iter().filter(|&&m| m < ds_idx).count();
-                    (false, ds_idx - shift)
-                })
-                // None → no individual files; fall back to live data or nothing
-            }
-        } else {
-            None
-        };
-
-        // Switch away if this group was active.
-        if was_active {
-            self.import.current_group_index = None;
-            self.import.current_data_source_index = 0;
-        }
-
-        // Collect member indices; sort descending so removals don't shift later indices.
-        let mut members = self.import.groups[group_idx].member_indices.clone();
-        members.sort_unstable_by(|a, b| b.cmp(a));
-
-        // Remove the group record first.
-        self.import.groups.remove(group_idx);
-        if let Some(cur) = self.import.current_group_index {
-            if cur > group_idx {
-                self.import.current_group_index = Some(cur - 1);
-            }
-        }
-
-        // Delete each member file, adjusting all remaining group indices each time.
-        for ds_idx in members {
-            if ds_idx == 0 || ds_idx > self.import.imported_data_sources.len() { continue; }
-
-            // Shift every surviving group's member indices above this removal.
-            for g in &mut self.import.groups {
-                for i in &mut g.member_indices {
-                    if *i > ds_idx { *i -= 1; }
-                }
-            }
-
-            self.import.imported_data_sources.remove(ds_idx - 1);
-
-            match self.import.current_data_source_index.cmp(&ds_idx) {
-                std::cmp::Ordering::Greater => self.import.current_data_source_index -= 1,
-                std::cmp::Ordering::Equal   => self.import.current_data_source_index = 0,
-                _ => {}
-            }
-        }
-
-        // Apply the "left" target now that all indices are final.
-        if was_active {
-            match target_after_delete {
-                Some((true, gi)) if gi < self.import.groups.len() => {
-                    self.switch_to_group(gi);
-                }
-                Some((false, ds)) if ds > 0 && ds <= self.import.imported_data_sources.len() => {
-                    self.switch_to_data_source(ds);
-                }
-                _ => {
-                    // No left neighbour: live data if available, else nothing (index 0).
-                    if self.live_data {
-                        self.switch_to_data_source(0);
-                    }
-                    // else: already at 0 with cleared data from the loop above.
-                }
-            }
-        }
-
-        self.filter_jobs();
-    }
-
-    /// Delete a ds that belongs to a group: removes it from the group AND from
-    /// imported_data_sources entirely. If ≤1 member remains the group dissolves.
-    pub fn remove_ds_from_group(&mut self, group_idx: usize, ds_idx: usize) {
-        if group_idx >= self.import.groups.len() { return; }
-
-        // Drop ds_idx from group membership.
-        self.import.groups[group_idx].member_indices.retain(|&i| i != ds_idx);
-        let remaining_count = self.import.groups[group_idx].member_indices.len();
-
-        // Shift every group's member indices that are above ds_idx (removal will renumber them).
-        for g in &mut self.import.groups {
-            for i in &mut g.member_indices {
-                if *i > ds_idx { *i -= 1; }
-            }
-        }
-
-        // Actually delete the data source (adjusts current_data_source_index, calls filter_jobs).
-        self.close_imported_data_source(ds_idx);
-
-        // Dissolve group if ≤1 member survives.
-        if remaining_count <= 1 {
-            let was_active = self.import.current_group_index == Some(group_idx);
-            // Indices already adjusted above.
-            let survivor = self.import.groups.get(group_idx)
-                .and_then(|g| g.member_indices.first().copied());
-            self.close_group(group_idx);
-            if was_active {
-                if let Some(m) = survivor {
-                    self.switch_to_data_source(m);
-                }
-            }
-        } else if self.import.current_group_index == Some(group_idx) {
-            self.switch_to_group(group_idx);
-        }
-    }
-
-    fn generate_unique_name(&self, base_name: &str) -> String {
-        let mut name = base_name.to_string();
-        let mut counter = 1;
-        while self.import.imported_data_sources.iter().any(|ds| ds.name == name) {
-            name = format!("{} ({})", base_name, counter);
-            counter += 1;
-        }
-        name
-    }
-
-    pub fn get_current_data_source_name(&self) -> String {
-        if self.import.current_data_source_index == 0 {
-            "Live Data".to_string()
-        } else {
-            self.import.imported_data_sources
-                .get(self.import.current_data_source_index - 1)
-                .map(|ds| ds.name.clone())
-                .unwrap_or("Unknown".to_string())
-        }
-    }
-
-    pub fn switch_to_data_source(&mut self, index: usize) {
-        self.import.current_group_index = None;
-        if index == 0 {
-            self.import.current_data_source_index = 0;
-            self.data.all_jobs = self.data.swap_all_jobs.clone();
-            self.data.all_clusters = self.data.swap_all_clusters.clone();
-            if !self.data.strata_by_resource_id_live.is_empty() {
-                self.data.strata_by_resource_id = self.data.strata_by_resource_id_live.clone();
-                self.data.strata_by_host = self.data.strata_by_host_live.clone();
-            } else {
-                self.data.strata_by_resource_id.clear();
-                self.data.strata_by_host.clear();
-            }
-            self.data.dead_intervals = get_dead_intervals_from_json("./data/data.json");
-            let live_now = Local::now();
-            let half = chrono::Duration::seconds(self.prefs.gantt_config.default_timespan_s / 2);
-            self.set_localdate(live_now - half, live_now + half);
-            let now = chrono::Utc::now().timestamp();
-            self.data.standby_upto.clear();
-            self.data.markers.clear();
-            for (rid, r) in &self.data.strata_by_resource_id_live {
-                if r.state.as_deref() == Some("Absent") {
-                    if let Some(upto) = r.available_upto {
-                        if upto > now && upto > 0 {
-                            self.data.standby_upto.insert(*rid, upto);
-                        }
-                    }
-                }
-            }
-        } else if self.import.imported_data_sources.get(index - 1).is_some() {
-            self.import.current_data_source_index = index;
-            self.data.dead_intervals.clear();
-            self.data.standby_upto.clear();
-            self.data.markers = self.import.imported_data_sources[index - 1].markers.clone();
-            let strata = self.import.imported_data_sources[index - 1].strata.clone();
-            self.data.strata_by_resource_id.clear();
-            self.data.strata_by_host.clear();
-            for r in &strata {
-                if let Some(rid) = r.resource_id {
-                    self.data.strata_by_resource_id.insert(rid, r.clone());
-                }
-                let host = r.host.as_deref().unwrap_or("").trim().to_string();
-                let net = r.network_address.as_deref().unwrap_or("").trim().to_string();
-                if !host.is_empty() {
-                    self.data.strata_by_host.entry(host.clone()).or_insert_with(|| r.clone());
-                    if let Some(short) = host.split('.').next() {
-                        if !short.is_empty() {
-                            self.data.strata_by_host.entry(short.to_string()).or_insert_with(|| r.clone());
-                        }
-                    }
-                }
-                if !net.is_empty() {
-                    self.data.strata_by_host.entry(net.clone()).or_insert_with(|| r.clone());
-                    if let Some(short) = net.split('.').next() {
-                        if !short.is_empty() {
-                            self.data.strata_by_host.entry(short.to_string()).or_insert_with(|| r.clone());
-                        }
-                    }
-                }
-            }
-        } else {
-            return;
-        }
-
-        let jobs: Vec<Job> = self.get_current_jobs().to_vec();
-
-        if index != 0 {
-            let mut min_time = i64::MAX;
-            let mut max_time = i64::MIN;
-
-            for job in jobs.iter().filter(|j| j.id != 0) {
-                min_time = min_time.min(job.start_time).min(job.get_end_date());
-                max_time = max_time.max(job.start_time).max(job.get_end_date());
-            }
-
-            if min_time == i64::MAX {
-                if let Some(series) = self.import.imported_data_sources
-                    .get(index - 1)
-                    .and_then(|ds| ds.raw_energy_series.as_deref())
-                {
-                    for &(ts, _) in series {
-                        min_time = min_time.min(ts);
-                        max_time = max_time.max(ts);
-                    }
-                }
-                if min_time == i64::MAX {
-                    for m in &self.data.markers {
-                        min_time = min_time.min(m.timestamp_s);
-                        max_time = max_time.max(m.timestamp_s);
-                    }
-                }
-            }
-
-            if min_time != i64::MAX && max_time != i64::MIN {
-                let padding = (max_time - min_time) / 10;
-                let start_time = Local.timestamp_opt(min_time - padding, 0).unwrap();
-                let end_time = Local.timestamp_opt(max_time + padding, 0).unwrap();
-                self.set_localdate(start_time, end_time);
-            }
-        }
-
-        self.filter_jobs();
-    }
-
-    pub fn close_imported_data_source(&mut self, index: usize) -> bool {
-        if index == 0 {
-            return false;
-        }
-        let actual_index = index - 1;
-        if actual_index < self.import.imported_data_sources.len() {
-            self.import.imported_data_sources.remove(actual_index);
-            if self.import.current_data_source_index > index {
-                self.import.current_data_source_index -= 1;
-            } else if self.import.current_data_source_index == index {
-                // Switch to the tab to the left; fall back to 0 if this was the first.
-                let target = if index > 1 { index - 1 } else { 0 };
-                if target == 0 && !self.live_data {
-                    self.import.current_data_source_index = 0;
-                    self.data.all_jobs.clear();
-                    self.data.swap_all_jobs.clear();
-                    self.data.all_clusters.clear();
-                    self.data.swap_all_clusters.clear();
-                    self.data.strata_by_resource_id.clear();
-                    self.data.strata_by_host.clear();
-                    self.data.markers.clear();
-                } else {
-                    self.switch_to_data_source(target);
-                }
-            }
-            self.filter_jobs();
-            return true;
-        }
-        false
-    }
-
-    pub fn get_all_data_source_names(&self) -> Vec<String> {
-        let mut names = vec!["Live Data".to_string()];
-        for ds in &self.import.imported_data_sources {
-            names.push(ds.name.clone());
-        }
-        names
-    }
-
     pub fn get_current_jobs(&self) -> &[Job] {
-        if self.import.current_data_source_index == 0 {
-            &self.data.all_jobs
-        } else {
-            self.import.imported_data_sources
-                .get(self.import.current_data_source_index - 1)
-                .map(|ds| &ds.jobs as &[Job])
-                .unwrap_or(&self.data.all_jobs)
-        }
+        &self.data.all_jobs
     }
 
     pub fn get_current_clusters(&self) -> &Vec<Cluster> {
-        if self.import.current_data_source_index == 0 {
-            &self.data.all_clusters
-        } else {
-            self.import.imported_data_sources
-                .get(self.import.current_data_source_index - 1)
-                .map(|ds| &ds.clusters)
-                .unwrap_or(&self.data.all_clusters)
-        }
+        &self.data.all_clusters
     }
 
     pub fn show_energy_diagram(&self) -> bool {
-        use crate::models::file_types::VisualizationTarget;
-        if let Some(gi) = self.import.current_group_index {
-            return self.import.groups.get(gi).map(|g| {
-                g.member_indices.iter().any(|&i| {
-                    self.import.imported_data_sources.get(i - 1)
-                        .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram))
-                        .unwrap_or(false)
-                })
-            }).unwrap_or(false);
-        }
-        if self.import.current_data_source_index == 0 {
-            return true;
-        }
-        self.import.imported_data_sources
-            .get(self.import.current_data_source_index - 1)
-            .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram))
-            .unwrap_or(true)
+        self.show_energy
     }
 
     pub fn show_gantt(&self) -> bool {
-        use crate::models::file_types::VisualizationTarget;
-        if let Some(gi) = self.import.current_group_index {
-            return self.import.groups.get(gi).map(|g| {
-                g.member_indices.iter().any(|&i| {
-                    self.import.imported_data_sources.get(i - 1)
-                        .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::Gantt))
-                        .unwrap_or(false)
-                })
-            }).unwrap_or(false);
-        }
-        if self.import.current_data_source_index == 0 {
-            return true;
-        }
-        self.import.imported_data_sources
-            .get(self.import.current_data_source_index - 1)
-            .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::Gantt))
-            .unwrap_or(true)
+        self.show_gantt_panel
     }
 
-    /// Whether the current data source's file type supports Gantt hierarchy/view controls.
     pub fn current_file_type_supports_hierarchy(&self) -> bool {
-        use crate::models::file_types::FileTypeRegistry;
-        let idx = self.import.current_data_source_index;
-        if idx == 0 { return true; }
-        let name = self.import.imported_data_sources.get(idx - 1)
-            .map(|ds| ds.file_type_name.clone())
-            .unwrap_or_default();
-        FileTypeRegistry::default()
-            .find_by_name(&name)
-            .map(|t| t.supports_hierarchy_controls())
-            .unwrap_or(true)
+        self.current_supports_hierarchy
     }
 
     pub fn get_current_energy_series(&self) -> Option<&[(i64, f64)]> {
-        self.get_current_energy_series_multi().into_iter().next()
-            .map(|(_, s)| s)
+        self.current_energy_series.first().map(|(_, s)| s.as_slice())
     }
 
-    /// Returns all energy series for the current source/group.
-    /// Single source → 0 or 1 entry. Group with N energy files → N entries.
-    /// Each entry is (file_name, raw_series_slice).
     pub fn get_current_energy_series_multi(&self) -> Vec<(&str, &[(i64, f64)])> {
-        use crate::models::file_types::VisualizationTarget;
-        if let Some(gi) = self.import.current_group_index {
-            if let Some(g) = self.import.groups.get(gi) {
-                let result: Vec<(&str, &[(i64, f64)])> = g.member_indices.iter()
-                    .filter_map(|&i| {
-                        let ds = self.import.imported_data_sources.get(i - 1)?;
-                        if !ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram) {
-                            return None;
-                        }
-                        let s = ds.raw_energy_series.as_deref()?;
-                        Some((ds.name.as_str(), s))
-                    })
-                    .collect();
-                return result;
-            }
-        }
-        if self.import.current_data_source_index == 0 {
-            return Vec::new();
-        }
-        self.import.imported_data_sources
-            .get(self.import.current_data_source_index - 1)
-            .and_then(|ds| ds.raw_energy_series.as_deref().map(|s| vec![(ds.name.as_str(), s)]))
-            .unwrap_or_default()
+        self.current_energy_series.iter()
+            .map(|(name, s)| (name.as_str(), s.as_slice()))
+            .collect()
     }
 }
 
@@ -1035,7 +537,6 @@ impl Default for ApplicationContext {
         let mut context = Self {
             data: LiveDataState::default(),
             refresh: RefreshCoordinator::new(now),
-            import: ImportState::default(),
             prefs: UiPreferences::default(),
 
             view_type: ViewType::Gantt,
@@ -1050,6 +551,16 @@ impl Default for ApplicationContext {
             live_refresh_paused: false,
             refresh_requested: false,
             live_disable_requested: false,
+            current_source_key: 0,
+            current_source_name: String::new(),
+            current_group_active: false,
+            current_energy_series: Vec::new(),
+            show_energy: true,
+            show_gantt_panel: true,
+            current_file_path: None,
+            current_file_hash: None,
+            current_file_type_name: String::new(),
+            current_supports_hierarchy: true,
         };
         context.prefs.cluster_presets = ApplicationContext::load_presets_from_file("presets.json");
         // Center the initial live-data window on now using default_timespan so
