@@ -24,7 +24,7 @@ use eframe::egui;
 use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle};
 
 use panels::{
-    AdminAction, AdminPanelState, CreatePresetPanel, CreateViewPanel, EditPresetPanel,
+    CreatePresetPanel, CreateViewPanel, EditPresetPanel,
     EditViewPanel, EnergyPanelState, PresetPanelAction, ViewFormAction,
 };
 
@@ -208,7 +208,6 @@ pub struct GanttChart {
     delete_preset_confirm: Option<String>,
 
     energy: EnergyPanelState,
-    admin: AdminPanelState,
     create_view: CreateViewPanel,
     create_preset: CreatePresetPanel,
     edit_view: EditViewPanel,
@@ -280,7 +279,6 @@ impl Default for GanttChart {
             current_view_index: 0,
             leaf_info_presets: config.leaf_info_presets,
             energy: energy_panel,
-            admin: AdminPanelState::default(),
             create_view: CreateViewPanel::default(),
             create_preset: CreatePresetPanel::default(),
             edit_view: EditViewPanel::default(),
@@ -435,10 +433,6 @@ impl GanttChart {
                     ui.close_menu();
                 }
             });
-        }
-
-        if ui.button("Admin").clicked() {
-            self.admin.open = true;
         }
 
         ui.add_space(6.0);
@@ -718,12 +712,7 @@ impl View for GanttChart {
             app.data.all_jobs.retain(|j| j.id != 0);
         }
 
-        let selected_cluster_names: Option<Vec<String>> = app
-            .filters
-            .selected_preset
-            .as_ref()
-            .and_then(|n| app.prefs.cluster_presets.iter().find(|p| p.name == *n))
-            .map(|p| p.clusters.clone());
+        let selected_cluster_names: Option<Vec<String>> = app.filters.selected_cluster_names.clone();
 
         let all_hosts = if let Some(cluster_names) = &selected_cluster_names {
             app.get_current_clusters()
@@ -777,21 +766,6 @@ impl View for GanttChart {
         }
 
         // ── Dialog panels ─────────────────────────────────────────────────────
-        let cluster_names: Vec<String> = app.get_current_clusters()
-            .iter().map(|c| c.name.clone()).collect();
-        let presets_snap = app.prefs.cluster_presets.clone();
-        for action in self.admin.show(ui, &presets_snap, &cluster_names) {
-            match action {
-                AdminAction::SavePreset { preset, remove_old } => {
-                    if let Some(old) = remove_old { app.remove_preset(&old); }
-                    app.add_or_update_preset(preset);
-                }
-                AdminAction::DeletePreset(name) => app.remove_preset(&name),
-            }
-        }
-
-
-
         let presets_for_view = self.leaf_info_presets.clone();
         for action in self.create_view.show(ui, &presets_for_view) {
             match action {

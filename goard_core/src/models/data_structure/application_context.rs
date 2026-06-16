@@ -15,9 +15,6 @@ use chrono::{DateTime, Local};
 use serde_json::Value;
 use std::collections::HashMap;
 
-// Re-export so external callers can keep using `application_context::ClusterPreset`
-pub use super::ui_preferences::ClusterPreset;
-
 pub struct ApplicationContext {
     pub data: LiveDataState,
     pub refresh: RefreshCoordinator,
@@ -422,33 +419,6 @@ impl ApplicationContext {
         self.filter_jobs();
     }
 
-    fn save_presets_to_file(&self, file_path: &str) {
-        if let Ok(json) = serde_json::to_string(&self.prefs.cluster_presets) {
-            let _ = std::fs::write(file_path, json);
-        }
-    }
-
-    fn load_presets_from_file(file_path: &str) -> Vec<ClusterPreset> {
-        match std::fs::read_to_string(file_path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => Vec::new(),
-        }
-    }
-
-    pub fn add_or_update_preset(&mut self, preset: ClusterPreset) {
-        if let Some(existing) = self.prefs.cluster_presets.iter_mut().find(|p| p.name == preset.name) {
-            *existing = preset;
-        } else {
-            self.prefs.cluster_presets.push(preset);
-        }
-        self.save_presets_to_file("presets.json");
-    }
-
-    pub fn remove_preset(&mut self, name: &str) {
-        self.prefs.cluster_presets.retain(|p| p.name != name);
-        self.save_presets_to_file("presets.json");
-    }
-
     pub fn get_unique_owners(&self) -> Vec<String> {
         let mut owners: Vec<String> = self.data.all_jobs.iter().map(|job| job.owner.clone()).collect();
         owners.retain(|owner| owner != "all_resources");
@@ -459,10 +429,7 @@ impl ApplicationContext {
 
     pub fn filter_jobs(&mut self) {
         let current_jobs = self.get_current_jobs();
-
-        let selected_cluster_names: Option<Vec<String>> = self.filters.selected_preset.as_ref()
-            .and_then(|preset_name| self.prefs.cluster_presets.iter().find(|p| p.name == *preset_name))
-            .map(|preset| preset.clusters.clone());
+        let selected_cluster_names = self.filters.selected_cluster_names.clone();
 
         self.data.filtered_jobs = current_jobs
             .iter()
@@ -546,7 +513,6 @@ impl Default for ApplicationContext {
             current_file_type_name: String::new(),
             current_supports_hierarchy: true,
         };
-        context.prefs.cluster_presets = ApplicationContext::load_presets_from_file("presets.json");
         // Center the initial live-data window on now using default_timespan so
         // the "now" line appears at the center of the Gantt on first load.
         let half = chrono::Duration::seconds(context.prefs.gantt_config.default_timespan_s / 2);

@@ -7,7 +7,9 @@ pub struct JobFilters {
     pub states: Option<Vec<JobState>>,
     pub scheduled_start_time: Option<i64>,
     pub wall_time: Option<i64>,
-    pub selected_preset: Option<String>,
+    /// Cluster names to restrict the view to. Set directly by the binary
+    /// (e.g. resolved from an app-level preset) — core has no preset concept.
+    pub selected_cluster_names: Option<Vec<String>>,
 }
 
 #[allow(dead_code)]
@@ -22,7 +24,7 @@ impl JobFilters {
             states: filter.states.clone(),
             scheduled_start_time: filter.scheduled_start_time,
             wall_time: filter.wall_time,
-            selected_preset: filter.selected_preset.clone(),
+            selected_cluster_names: filter.selected_cluster_names.clone(),
         }
     }
 
@@ -42,8 +44,8 @@ impl JobFilters {
         self.wall_time = Some(wall_time);
     }
 
-    pub fn set_selected_preset(&mut self, preset_name: Option<String>) {
-        self.selected_preset = preset_name;
+    pub fn set_selected_cluster_names(&mut self, cluster_names: Option<Vec<String>>) {
+        self.selected_cluster_names = cluster_names;
     }
 
     pub fn reset(&mut self) {

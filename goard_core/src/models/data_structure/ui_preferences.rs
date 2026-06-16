@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use super::gantt_config::GanttConfig;
 use crate::views::components::gantt_job_color::JobColor;
 
@@ -9,20 +7,12 @@ pub enum JobColorEnum {
     ByField,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ClusterPreset {
-    pub name: String,
-    pub clusters: Vec<String>,
-}
-
 /// User-facing preferences and Gantt display state.
 pub struct UiPreferences {
     pub font_size: i32,
     pub see_all_jobs: bool,
     pub theme_toggle_requested: bool,
     pub gantt_config: GanttConfig,
-    pub cluster_presets: Vec<ClusterPreset>,
     pub job_color: JobColor,
     /// Set to true when Apply is clicked in ConfigPanel; GanttChart syncs options once then clears.
     pub config_reload_requested: bool,
@@ -48,7 +38,6 @@ impl Default for UiPreferences {
             see_all_jobs: false,
             theme_toggle_requested: false,
             gantt_config,
-            cluster_presets: Vec::new(),
             job_color,
             config_reload_requested: false,
             current_gantt_view_name: String::new(),

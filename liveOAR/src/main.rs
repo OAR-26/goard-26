@@ -1,5 +1,6 @@
 mod app;
 mod auth_view;
+mod cluster_presets;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {

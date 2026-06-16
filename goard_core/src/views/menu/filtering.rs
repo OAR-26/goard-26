@@ -1,7 +1,7 @@
 use crate::models::data_structure::{
     application_context::ApplicationContext, filters::JobFilters, job::JobState,
 };
-use eframe::egui::{self, Grid, Stroke};
+use eframe::egui::{self, Grid};
 use strum::IntoEnumIterator;
 
 /* `Filtering` manages the job filtering UI and functionality.
@@ -62,35 +62,6 @@ impl Filtering {
                         .show(ui, |ui| {
                             self.render_states_selector(ui);
                         });
-                    ui.add_space(10.0);
-
-                    ui.label("Cluster Presets");
-                    ui.horizontal_wrapped(|ui| {
-                        let none_selected = self.temp_filters.selected_preset.is_none();
-                        let none_button = egui::Button::new("None")
-                            .selected(none_selected)
-                            .stroke(Stroke::new(1.0, ui.visuals().widgets.inactive.bg_stroke.color));
-                        if ui.add(none_button).clicked() {
-                            self.temp_filters.selected_preset = None;
-                        }
-
-                        for preset in &app.prefs.cluster_presets {
-                            let is_selected = self
-                                .temp_filters
-                                .selected_preset
-                                .as_deref()
-                                .map(|name| name == preset.name)
-                                .unwrap_or(false);
-
-                            let preset_button = egui::Button::new(&preset.name)
-                                .selected(is_selected)
-                                .stroke(Stroke::new(1.0, ui.visuals().widgets.inactive.bg_stroke.color));
-                            if ui.add(preset_button).clicked() {
-                                self.temp_filters.selected_preset = Some(preset.name.clone());
-                            }
-                        }
-                    });
-
                     ui.add_space(20.0);
 
                     ui.horizontal(|ui| {

@@ -1,4 +1,5 @@
 use crate::auth_view::{AuthOutcome, AuthView};
+use crate::cluster_presets::ClusterPresetState;
 use goard_core::models::utils::secret::Secret;
 use goard_core::views::main_page::dashboard::Dashboard;
 use goard_core::views::main_page::gantt::GanttChart;
@@ -16,6 +17,7 @@ pub struct App {
     pub secret: Secret,
     pub tools: Tools,
     pub application_context: ApplicationContext,
+    cluster_presets: ClusterPresetState,
     auth_active: bool,
     connected_as: Option<String>,
 }
@@ -33,6 +35,7 @@ impl App {
             menu: Menu::default(),
             tools: Tools::default(),
             application_context,
+            cluster_presets: ClusterPresetState::default(),
             auth_active: true,
             connected_as: None,
         }
@@ -101,6 +104,18 @@ impl eframe::App for App {
                     self.tools.render(ui, &mut self.application_context);
                 }
             }
+        });
+
+        TopBottomPanel::top("preset_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                self.cluster_presets.show_selector(ui, &mut self.application_context);
+                if ui.button("Manage presets").clicked() {
+                    self.cluster_presets.open_admin();
+                }
+            });
+            let cluster_names: Vec<String> = self.application_context.get_current_clusters()
+                .iter().map(|c| c.name.clone()).collect();
+            self.cluster_presets.show_admin(ui, &cluster_names);
         });
 
         self.application_context.check_data_update();
