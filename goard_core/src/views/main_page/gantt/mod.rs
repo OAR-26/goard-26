@@ -518,6 +518,32 @@ impl GanttChart {
         std::mem::replace(&mut self.pending_navigation_refresh, false)
     }
 
+    /// Notify the chart that the data source at `removed_idx` (1-based) was
+    /// removed by the binary's tab management. Per-tab caches are keyed by
+    /// position, so without this the tab that slides into the vacated slot
+    /// would inherit whatever was cached there instead of its own state.
+    pub fn handle_tab_removed(&mut self, removed_idx: usize) {
+        fn shift<V>(map: &mut std::collections::HashMap<usize, V>, removed_idx: usize) {
+            let shifted: std::collections::HashMap<usize, V> = std::mem::take(map)
+                .into_iter()
+                .filter(|(k, _)| *k != removed_idx)
+                .map(|(k, v)| if k > removed_idx { (k - 1, v) } else { (k, v) })
+                .collect();
+            *map = shifted;
+        }
+        shift(&mut self.tab_file_keys, removed_idx);
+        shift(&mut self.tab_view_state, removed_idx);
+        shift(&mut self.energy_visible, removed_idx);
+        shift(&mut self.energy_panel_state, removed_idx);
+        shift(&mut self.tab_view_index, removed_idx);
+
+        self.last_data_source_index = match self.last_data_source_index {
+            Some(idx) if idx == removed_idx => None,
+            Some(idx) if idx > removed_idx => Some(idx - 1),
+            other => other,
+        };
+    }
+
     /// Persist `tab_idx`'s state to the on-disk cache.
     /// `is_active` — whether this is the currently visible tab (reads live options vs snapshot).
     /// `file_path` / `file_hash` — provided by the caller (SimState); core has no import knowledge.

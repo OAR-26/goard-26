@@ -79,7 +79,7 @@ impl eframe::App for App {
         });
 
         TopBottomPanel::top("tab_bar").show(ctx, |ui| {
-            self.sim_state.render_tabs(ui, &mut self.application_context);
+            self.sim_state.render_tabs(ui, &mut self.application_context, &mut self.gantt_view);
         });
 
         self.application_context.refresh_filters();

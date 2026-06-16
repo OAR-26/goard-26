@@ -184,7 +184,7 @@ impl SimState {
         self.sync_to_app(app);
     }
 
-    pub fn delete_group(&mut self, group_idx: usize, app: &mut ApplicationContext) {
+    pub fn delete_group(&mut self, group_idx: usize, app: &mut ApplicationContext, gantt_view: &mut GanttChart) {
         if group_idx >= self.groups.len() { return; }
         let was_active = self.current_group_index == Some(group_idx);
         let target_after_delete: Option<(bool, usize)> = if was_active {
@@ -201,10 +201,16 @@ impl SimState {
                 let last_individual = (1..=self.imported_data_sources.len())
                     .filter(|i| !members_set.contains(i) && !other_grouped.contains(i))
                     .max();
-                last_individual.map(|ds_idx| {
+                if let Some(ds_idx) = last_individual {
                     let shift = members_set.iter().filter(|&&m| m < ds_idx).count();
-                    (false, ds_idx - shift)
-                })
+                    Some((false, ds_idx - shift))
+                } else if self.groups.len() > 1 {
+                    // No individual files either — fall back to the next group,
+                    // which shifts into slot 0 once this group is removed.
+                    Some((true, 0))
+                } else {
+                    None
+                }
             }
         } else {
             None
@@ -229,6 +235,7 @@ impl SimState {
                 }
             }
             self.imported_data_sources.remove(ds_idx - 1);
+            gantt_view.handle_tab_removed(ds_idx);
             match self.current_data_source_index.cmp(&ds_idx) {
                 std::cmp::Ordering::Greater => self.current_data_source_index -= 1,
                 std::cmp::Ordering::Equal   => self.current_data_source_index = 0,
@@ -249,7 +256,7 @@ impl SimState {
         app.filter_jobs();
     }
 
-    pub fn remove_ds_from_group(&mut self, group_idx: usize, ds_idx: usize, app: &mut ApplicationContext) {
+    pub fn remove_ds_from_group(&mut self, group_idx: usize, ds_idx: usize, app: &mut ApplicationContext, gantt_view: &mut GanttChart) {
         if group_idx >= self.groups.len() { return; }
         self.groups[group_idx].member_indices.retain(|&i| i != ds_idx);
         let remaining_count = self.groups[group_idx].member_indices.len();
@@ -258,7 +265,7 @@ impl SimState {
                 if *i > ds_idx { *i -= 1; }
             }
         }
-        self.close_imported_data_source(ds_idx, app);
+        self.close_imported_data_source(ds_idx, app, gantt_view);
         if remaining_count <= 1 {
             let was_active = self.current_group_index == Some(group_idx);
             let survivor = self.groups.get(group_idx)
@@ -274,15 +281,31 @@ impl SimState {
         }
     }
 
-    pub fn close_imported_data_source(&mut self, index: usize, app: &mut ApplicationContext) -> bool {
+    pub fn close_imported_data_source(&mut self, index: usize, app: &mut ApplicationContext, gantt_view: &mut GanttChart) -> bool {
         if index == 0 { return false; }
         let actual_index = index - 1;
         if actual_index < self.imported_data_sources.len() {
             self.imported_data_sources.remove(actual_index);
+            gantt_view.handle_tab_removed(index);
+            // Other groups reference data sources by position — keep them in sync.
+            for g in &mut self.groups {
+                for i in &mut g.member_indices {
+                    if *i > index { *i -= 1; }
+                }
+            }
             if self.current_data_source_index > index {
                 self.current_data_source_index -= 1;
             } else if self.current_data_source_index == index {
-                let target = if index > 1 { index - 1 } else { 0 };
+                let target = if index > 1 {
+                    // Left neighbor — unaffected by the removal, still valid.
+                    index - 1
+                } else if !self.imported_data_sources.is_empty() {
+                    // No left neighbor — the tab that was to the right has
+                    // shifted into this same 1-based slot after removal.
+                    index
+                } else {
+                    0
+                };
                 if target == 0 {
                     self.current_data_source_index = 0;
                     app.data.all_jobs.clear();
@@ -291,6 +314,9 @@ impl SimState {
                     app.data.strata_by_host.clear();
                     app.data.markers.clear();
                     self.sync_to_app(app);
+                } else if let Some(gi) = self.groups.iter().position(|g| g.member_indices.contains(&target)) {
+                    // The fallback slot belongs to a group — activate the group, not the bare file.
+                    self.switch_to_group(gi, app);
                 } else {
                     self.switch_to_data_source(target, app);
                 }
@@ -455,7 +481,7 @@ impl SimState {
     // Tab bar rendering (moved from GanttChart::render_data_source_tabs)
     // -----------------------------------------------------------------------
 
-    pub fn render_tabs(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+    pub fn render_tabs(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext, gantt_view: &mut GanttChart) {
         ui.add_space(4.0);
 
         let current_index = self.current_data_source_index;
@@ -588,9 +614,9 @@ impl SimState {
         // Apply deferred actions.
         if let Some(i) = switch_to_ds               { self.switch_to_data_source(i, app); }
         if let Some(gi) = switch_to_group           { self.switch_to_group(gi, app); }
-        if let Some(i) = close_ds                   { self.close_imported_data_source(i, app); }
-        if let Some(gi) = close_group_idx           { self.delete_group(gi, app); }
-        if let Some((gi, di)) = remove_from_group   { self.remove_ds_from_group(gi, di, app); }
+        if let Some(i) = close_ds                   { self.close_imported_data_source(i, app, gantt_view); }
+        if let Some(gi) = close_group_idx           { self.delete_group(gi, app, gantt_view); }
+        if let Some((gi, di)) = remove_from_group   { self.remove_ds_from_group(gi, di, app, gantt_view); }
         if let Some(target) = group_target {
             self.pending_group_target = Some(target);
             self.request_file_import = true;
