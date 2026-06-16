@@ -15,6 +15,8 @@ use goard_core::models::data_structure::resource::{Resource, ResourceState};
 use goard_core::models::utils::utils::{get_clusters_for_job, get_hosts_for_job};
 
 use crate::refresh_coordinator::RefreshCoordinator;
+
+#[cfg(not(target_arch = "wasm32"))]
 use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json};
 
 #[cfg(target_arch = "wasm32")]

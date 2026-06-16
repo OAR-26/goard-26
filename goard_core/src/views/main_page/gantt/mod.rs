@@ -92,7 +92,7 @@ fn load_views_config() -> ViewsConfig {
         leaf_info_presets: vec![],
     };
     #[cfg(target_arch = "wasm32")]
-    let content = include_str!("../../../../views.json").to_string();
+    let content = include_str!("../../../../../views.json").to_string();
     #[cfg(not(target_arch = "wasm32"))]
     let Ok(content) = std::fs::read_to_string("views.json") else { return fallback; };
     let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else { return fallback; };

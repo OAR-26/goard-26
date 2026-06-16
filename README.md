@@ -64,9 +64,12 @@ cargo run --release -- --live examples/oar.json+examples/energy.json
 
 #### Web (WASM)
 
+Web builds target `liveOAR` only (`simulationGOARD` has no wasm entry point yet).
+
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install --locked trunk
+cd liveOAR
 trunk serve
 ```
 Access at `http://127.0.0.1:8080/index.html#dev`
@@ -76,6 +79,7 @@ Access at `http://127.0.0.1:8080/index.html#dev`
 #### Web Deployment
 
 ```bash
+cd liveOAR
 trunk build --release
 ```
 

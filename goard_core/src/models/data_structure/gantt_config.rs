@@ -152,7 +152,7 @@ impl Default for GanttConfig {
 impl GanttConfig {
     pub fn load() -> Self {
         #[cfg(target_arch = "wasm32")]
-        let content = include_str!("../../../config.toml").to_string();
+        let content = include_str!("../../../../config.toml").to_string();
         #[cfg(not(target_arch = "wasm32"))]
         let content = match std::fs::read_to_string("config.toml") {
             Ok(c) => c,
