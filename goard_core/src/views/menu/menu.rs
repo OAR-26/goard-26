@@ -41,12 +41,34 @@ impl Menu {
     ) where
         F: FnOnce(&mut egui::Ui, &mut ApplicationContext),
     {
+        let _ = self.render_with_extras(ui, app, extra_file_items, |_ui, _app| {});
+    }
+
+    /// Same as `render_with_file_items`, but also takes `extra_settings`,
+    /// rendered as its own section inside the Settings window — use it to
+    /// let a binary add its own settings (e.g. an SSH host field) without
+    /// core knowing what they're for. Returns true the frame core's Apply
+    /// button is clicked, so the caller can persist what `extra_settings`
+    /// was editing using the same button instead of needing its own.
+    pub fn render_with_extras<F1, F2>(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &mut ApplicationContext,
+        extra_file_items: F1,
+        extra_settings: F2,
+    ) -> bool
+    where
+        F1: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+        F2: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+    {
         if app.prefs.theme_toggle_requested {
             self.options_pane.toggle_theme(ui.ctx());
             app.prefs.theme_toggle_requested = false;
         }
         self.options_pane
             .apply_options(ui.ctx(), &mut app.prefs.font_size);
+
+        let mut settings_applied = false;
 
         ui.horizontal(|ui| {
             ui.menu_button(t!("app.menu.file"), |ui| {
@@ -81,8 +103,10 @@ impl Menu {
             });
 
             self.options_pane.ui(ui, &mut app.prefs.font_size);
-            self.settings_panel.show(ui, app);
+            settings_applied = self.settings_panel.show_with_extra(ui, app, extra_settings);
         });
+
+        settings_applied
     }
 }
 

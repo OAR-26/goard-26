@@ -43,7 +43,19 @@ fn color_row(ui: &mut egui::Ui, label: &str, c: &mut RgbColor) {
 
 impl SettingsPanel {
     pub fn show(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        if !self.open { return; }
+        self.show_with_extra(ui, app, |_ui, _app| {});
+    }
+
+    /// Same as `show`, but `extra` is rendered as its own section inside the
+    /// Settings window, after core's sections — use it to let a binary add
+    /// its own settings (e.g. an SSH host field) without core knowing what
+    /// they're for. Returns true the frame core's Apply button is clicked,
+    /// so the caller can persist whatever `extra` was editing at the same time.
+    pub fn show_with_extra<F>(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext, extra: F) -> bool
+    where
+        F: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+    {
+        if !self.open { return false; }
 
         // Initialise draft on open.
         if self.draft.is_none() {
@@ -64,14 +76,6 @@ impl SettingsPanel {
                 ScrollArea::vertical()
                     .max_height(ui.available_height() - 40.0)
                     .show(ui, |ui| {
-
-                    // ── SSH ──────────────────────────────────────────────────
-                    ui.heading("SSH");
-                    ui.horizontal(|ui| {
-                        ui.label("Host:");
-                        ui.text_edit_singleline(&mut cfg.ssh_host);
-                    });
-                    ui.add_space(6.0);
 
                     // ── General ──────────────────────────────────────────────
                     ui.heading("General");
@@ -250,6 +254,10 @@ impl SettingsPanel {
                     color_row(ui, "Suspected", &mut cfg.state_colors_light.suspected);
                     color_row(ui, "Dead",      &mut cfg.state_colors_light.dead);
                     color_row(ui, "Standby",   &mut cfg.state_colors_light.standby);
+                    ui.add_space(6.0);
+
+                    // ── App-specific settings ──────────────────────────────────
+                    extra(ui, app);
                 });
 
                 ui.add_space(6.0);
@@ -294,5 +302,7 @@ impl SettingsPanel {
             self.draft = None;
             self.open = false;
         }
+
+        apply
     }
 }

@@ -73,7 +73,6 @@ pub struct GanttConfig  {
     pub hatch_spacing: f32,
     pub job_block_border: bool,
     pub job_block_border_width: f32,
-    pub ssh_host: String,
     /// Navigation step buttons: (n, unit) pairs, smallest to largest.
     /// Each entry produces one ◀/▶ button pair.
     pub nav_steps: Vec<(i64, String)>,
@@ -142,7 +141,6 @@ impl Default for GanttConfig {
             hatch_spacing: 10.0,
             job_block_border: false,
             job_block_border_width: 2.5,
-            ssh_host: "grenoble.g5k".to_string(),
             nav_steps: vec![(1, "day".to_string()), (1, "week".to_string())],
             field_colors: std::collections::HashMap::new(),
         }
@@ -152,9 +150,9 @@ impl Default for GanttConfig {
 impl GanttConfig {
     pub fn load() -> Self {
         #[cfg(target_arch = "wasm32")]
-        let content = include_str!("../../../../config.toml").to_string();
+        let content = include_str!("../../../config.toml").to_string();
         #[cfg(not(target_arch = "wasm32"))]
-        let content = match std::fs::read_to_string("config.toml") {
+        let content = match std::fs::read_to_string("goard_core/config.toml") {
             Ok(c) => c,
             Err(_) => return Self::default(),
         };
@@ -239,7 +237,6 @@ impl GanttConfig {
             hatch_spacing:              f64("hatch_spacing").map(|v| v as f32).unwrap_or(def.hatch_spacing),
             job_block_border:           bool("job_block_border").unwrap_or(def.job_block_border),
             job_block_border_width:     f64("job_block_border_width").map(|v| v as f32).unwrap_or(def.job_block_border_width),
-            ssh_host:                   str_("ssh_host").map(|s| s.to_string()).unwrap_or(def.ssh_host),
             nav_steps: {
                 val.get("nav_steps")
                     .and_then(|v| v.as_array())
@@ -279,12 +276,7 @@ impl GanttConfig {
             }).collect()
         };
         let content = format!(
-"# ── SSH (live data only) ──────────────────────────────────────────────────────
-
-# SSH host used to fetch live OAR data (oarstat command is run on this host)
-ssh_host = \"{ssh_host}\"
-
-# ── General behaviour ─────────────────────────────────────────────────────────
+"# ── General behaviour ─────────────────────────────────────────────────────────
 
 # Truncate open-ended Absent intervals to 'now' when a Standby period applies
 standby_truncate_state_to_now = {standby}
@@ -401,7 +393,6 @@ Standby   = \"{standby_light}\"
 # Add [field_colors.<fieldname>] sections to map field values to colors.
 # Values not listed fall back to hash-based random color.
 {field_colors_toml}",
-            ssh_host             = self.ssh_host,
             standby              = self.standby_truncate_to_now,
             besteffort           = self.besteffort_truncate_to_now,
             min_state            = self.min_state_duration_s,
@@ -438,6 +429,6 @@ Standby   = \"{standby_light}\"
             dead_light           = hex(self.state_colors_light.dead),
             standby_light        = hex(self.state_colors_light.standby),
         );
-        let _ = std::fs::write("config.toml", content);
+        let _ = std::fs::write("goard_core/config.toml", content);
     }
 }

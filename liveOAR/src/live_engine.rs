@@ -22,11 +22,31 @@ use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json
 #[cfg(target_arch = "wasm32")]
 use crate::mocker::{mock_jobs, mock_stratas};
 
+/// SSH host used to fetch live OAR data — read from liveOAR's own
+/// `live_config.toml`. `goard_core` has no notion of SSH/live connections at
+/// all, so this setting lives entirely in this crate.
+#[cfg(not(target_arch = "wasm32"))]
+fn load_ssh_host() -> String {
+    match std::fs::read_to_string("liveOAR/live_config.toml") {
+        Ok(content) => toml::from_str::<toml::Value>(&content)
+            .ok()
+            .and_then(|v| v.get("ssh_host").and_then(|s| s.as_str()).map(str::to_string))
+            .unwrap_or_else(|| "grenoble.g5k".to_string()),
+        Err(_) => "grenoble.g5k".to_string(),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_ssh_host() -> String {
+    "grenoble.g5k".to_string()
+}
+
 /// Owns the background-thread polling machinery that pulls live data from an
 /// OAR cluster over SSH. `goard_core` has no notion of "live" — this engine
 /// writes results directly into `ApplicationContext.data` once ready.
 pub struct LiveEngine {
     pub refresh: RefreshCoordinator,
+    ssh_host: String,
     /// Swap buffer — background thread writes here; promoted to app.data.all_jobs
     /// once the matching resource update has rebuilt the cluster hierarchy.
     swap_all_jobs: Vec<Job>,
@@ -37,8 +57,29 @@ impl LiveEngine {
     pub fn new(now: DateTime<Local>) -> Self {
         Self {
             refresh: RefreshCoordinator::new(now),
+            ssh_host: load_ssh_host(),
             swap_all_jobs: Vec::new(),
             swap_all_clusters: Vec::new(),
+        }
+    }
+
+    pub fn ssh_host(&self) -> &str {
+        &self.ssh_host
+    }
+
+    /// Updates the SSH host and persists it to `live_config.toml`.
+    pub fn set_ssh_host(&mut self, host: String) {
+        self.ssh_host = host;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let content = format!(
+                "# liveOAR-only settings. goard_core's config.toml has no notion of SSH/live\n\
+                 # connections — this file is read by liveOAR alone.\n\n\
+                 # SSH host used to fetch live OAR data (oarstat command is run on this host)\n\
+                 ssh_host = \"{}\"\n",
+                self.ssh_host
+            );
+            let _ = std::fs::write("liveOAR/live_config.toml", content);
         }
     }
 
@@ -391,7 +432,7 @@ impl LiveEngine {
         let jobs_sender = self.refresh.jobs_sender.clone();
         let resources_sender = self.refresh.resources_sender.clone();
         let dead_intervals_sender = self.refresh.dead_intervals_sender.clone();
-        let ssh_host = app.prefs.gantt_config.ssh_host.clone();
+        let ssh_host = self.ssh_host.clone();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -433,7 +474,7 @@ impl LiveEngine {
         let is_refreshing = self.refresh.is_refreshing.clone();
         let start_date = self.refresh.start_date.clone();
         let end_date = self.refresh.end_date.clone();
-        let ssh_host = app.prefs.gantt_config.ssh_host.clone();
+        let ssh_host = self.ssh_host.clone();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
