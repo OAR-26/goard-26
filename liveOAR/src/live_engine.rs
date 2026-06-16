@@ -343,22 +343,30 @@ impl LiveEngine {
         }
     }
 
-    /// Drains pending background-thread results into `app.data`, then syncs
-    /// the generic refresh-status flags core reads for display.
+    /// Drains pending background-thread results into `app.data`.
     pub fn poll(&mut self, app: &mut ApplicationContext) {
         self.check_job_update(app);
         self.check_ressource_update(app);
         self.check_dead_intervals_update(app);
 
-        app.is_refreshing = *self.refresh.is_refreshing.lock().unwrap_or_else(|p| p.into_inner());
-        app.live_refresh_paused = *self.refresh.refresh_rate.lock().unwrap_or_else(|p| p.into_inner()) == u64::MAX;
-
-        // Apply the rate preference Tools' dropdown wrote onto the app context.
-        *self.refresh.refresh_rate.lock().unwrap() = app.desired_refresh_rate_s;
-
         // Keep the background thread's polling window in sync with the current view.
         *self.refresh.start_date.lock().unwrap() = app.start_date;
         *self.refresh.end_date.lock().unwrap() = app.end_date;
+    }
+
+    /// Current refresh rate in seconds (`u64::MAX` = paused/never).
+    pub fn refresh_rate(&self) -> u64 {
+        *self.refresh.refresh_rate.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Set the refresh rate in seconds (`u64::MAX` = paused/never).
+    pub fn set_refresh_rate(&self, rate_s: u64) {
+        *self.refresh.refresh_rate.lock().unwrap() = rate_s;
+    }
+
+    /// Whether a background fetch is currently in flight.
+    pub fn is_refreshing(&self) -> bool {
+        *self.refresh.is_refreshing.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     pub fn instant_update(&mut self, app: &mut ApplicationContext) {

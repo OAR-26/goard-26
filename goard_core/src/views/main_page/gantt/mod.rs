@@ -509,6 +509,15 @@ impl GanttChart {
         }
     }
 
+    /// True (and clears the flag) if timeline navigation since the last call
+    /// (pan/zoom/jump) means fresher data for the visible window would be
+    /// useful. Core has no refresh engine of its own — a binary backed by a
+    /// live data source can poll this after `render()` and act on it however
+    /// it likes; one with no such engine can simply ignore it.
+    pub fn take_navigation_refresh_request(&mut self) -> bool {
+        std::mem::replace(&mut self.pending_navigation_refresh, false)
+    }
+
     /// Persist `tab_idx`'s state to the on-disk cache.
     /// `is_active` — whether this is the currently visible tab (reads live options vs snapshot).
     /// `file_path` / `file_hash` — provided by the caller (SimState); core has no import knowledge.
@@ -1113,15 +1122,6 @@ impl View for GanttChart {
                     let start = Local.timestamp_opt(visible_start_s, 0).unwrap();
                     let end = Local.timestamp_opt(visible_end_s, 0).unwrap();
                     app.set_localdate(start, end);
-
-                    if self.pending_navigation_refresh {
-                        if app.live_refresh_paused {
-                            self.pending_navigation_refresh = false;
-                        } else if !app.is_refreshing {
-                            app.refresh_requested = true;
-                            self.pending_navigation_refresh = false;
-                        }
-                    }
                 });
             });
         });

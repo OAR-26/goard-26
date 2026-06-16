@@ -108,6 +108,7 @@ impl eframe::App for App {
                         &mut self.application_context,
                         &mut self.gantt_view,
                         |ui, app| {
+                            let current_rate = self.live_engine.refresh_rate();
                             ui.menu_button("🕓 Refresh rate", |ui| {
                                 ui.set_min_width(70.0);
                                 let refresh_rates = [
@@ -117,27 +118,28 @@ impl eframe::App for App {
                                     (u64::MAX, "Never"),
                                 ];
                                 for (rate, label) in refresh_rates {
-                                    let selected = app.desired_refresh_rate_s == rate;
+                                    let selected = current_rate == rate;
                                     let display_label = if selected {
                                         format!("{} ✔", label)
                                     } else {
                                         label.to_string()
                                     };
                                     if ui.selectable_label(selected, display_label).clicked() {
-                                        app.desired_refresh_rate_s = rate;
+                                        self.live_engine.set_refresh_rate(rate);
                                         ui.close_menu();
                                     }
                                 }
                             });
 
+                            let is_refreshing = self.live_engine.is_refreshing();
                             let refresh_btn = egui::Button::new("⟳");
-                            let refresh_btn_response = if app.is_refreshing {
+                            let refresh_btn_response = if is_refreshing {
                                 ui.add_enabled(false, refresh_btn)
                             } else {
                                 ui.add(refresh_btn)
                             };
                             if refresh_btn_response.clicked() {
-                                app.refresh_requested = true;
+                                self.live_engine.instant_update(app);
                             }
                         },
                         |ui, app| {
@@ -172,17 +174,12 @@ impl eframe::App for App {
         self.live_engine.poll(&mut self.application_context);
         self.application_context.refresh_filters();
 
-        if self.application_context.refresh_requested {
-            self.application_context.refresh_requested = false;
-            self.live_engine.instant_update(&mut self.application_context);
-        }
-
         TopBottomPanel::bottom("status_bar")
             .resizable(false)
             .exact_height(18.0)
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if self.application_context.is_refreshing {
+                    if self.live_engine.is_refreshing() {
                         ui.add(egui::Spinner::new().size(12.0));
                         ui.label(egui::RichText::new(goard_core::refreshing_text()).small());
                     }
@@ -197,6 +194,11 @@ impl eframe::App for App {
                 self.gantt_view.render(ui, &mut self.application_context);
             }
         });
+
+        // Timeline navigation (pan/zoom/jump) asked for fresher data — skip if paused.
+        if self.gantt_view.take_navigation_refresh_request() && self.live_engine.refresh_rate() != u64::MAX {
+            self.live_engine.instant_update(&mut self.application_context);
+        }
 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }

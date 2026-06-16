@@ -19,17 +19,6 @@ pub struct ApplicationContext {
     pub start_date: DateTime<Local>,
     pub end_date: DateTime<Local>,
 
-    // Status flags — set by the binary each frame, read by core for display
-    // (spinner, disabled refresh button). Core has no refresh engine of its own.
-    pub is_refreshing: bool,
-    pub live_refresh_paused: bool,
-    /// Refresh-rate preference set via Tools' dropdown; the binary applies it
-    /// to its own refresh engine.
-    pub desired_refresh_rate_s: u64,
-
-    // Signals set by views; consumed and acted on by the binary-level App.
-    pub refresh_requested: bool,
-
     // Flat display state — set by the binary when switching sources.
     // Core has no knowledge of how sources are managed; it just renders these fields.
     pub current_source_key: usize,
@@ -150,10 +139,6 @@ impl Default for ApplicationContext {
 
             start_date: now,
             end_date: now,
-            is_refreshing: false,
-            live_refresh_paused: false,
-            desired_refresh_rate_s: 30,
-            refresh_requested: false,
             current_source_key: 0,
             current_source_name: String::new(),
             current_group_active: false,

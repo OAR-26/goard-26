@@ -176,7 +176,7 @@ impl Tools {
                 use std::collections::HashSet;
                 use crate::views::main_page::gantt::jobs::strata_field_value;
 
-                let status = if app.is_refreshing { "refreshing" } else if app.is_loading { "loading" } else { "ready" };
+                let status = if app.is_loading { "loading" } else { "ready" };
 
                 let view_name = app.prefs.current_gantt_view_name.clone();
                 let levels = app.prefs.current_gantt_view_levels.clone();
