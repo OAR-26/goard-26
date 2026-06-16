@@ -156,14 +156,14 @@ impl Tools {
                             ];
 
                             for (rate, label) in refresh_rates {
-                                let selected = *app.refresh.refresh_rate.lock().unwrap() == rate;
+                                let selected = app.desired_refresh_rate_s == rate;
                                 let display_label = if selected {
                                     format!("{} ✔", label)
                                 } else {
                                     label.to_string()
                                 };
                                 if ui.selectable_label(selected, display_label).clicked() {
-                                    app.update_refresh_rate(rate);
+                                    app.desired_refresh_rate_s = rate;
                                     ui.close_menu();
                                 }
                             }
@@ -171,13 +171,13 @@ impl Tools {
                     );
 
                     let refresh_btn = egui::Button::new("⟳");
-                    let refresh_btn_response = if *app.refresh.is_refreshing.lock().unwrap() {
+                    let refresh_btn_response = if app.is_refreshing {
                         ui.add_enabled(false, refresh_btn)
                     } else {
                         ui.add(refresh_btn)
                     };
                     if refresh_btn_response.clicked() {
-                        app.instant_update();
+                        app.refresh_requested = true;
                     }
                 }
             });
@@ -189,8 +189,7 @@ impl Tools {
                 use std::collections::HashSet;
                 use crate::views::main_page::gantt::jobs::strata_field_value;
 
-                let refreshing = *app.refresh.is_refreshing.lock().unwrap_or_else(|p| p.into_inner());
-                let status = if refreshing { "refreshing" } else if app.is_loading { "loading" } else { "ready" };
+                let status = if app.is_refreshing { "refreshing" } else if app.is_loading { "loading" } else { "ready" };
 
                 let view_name = app.prefs.current_gantt_view_name.clone();
                 let levels = app.prefs.current_gantt_view_levels.clone();

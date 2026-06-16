@@ -2148,9 +2148,11 @@ checksum = "b4ce301924b7887e9d637144fdade93f9dfff9b60981d4ac161db09720d39aa5"
 name = "liveOAR"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "console_error_panic_hook",
  "eframe",
  "env_logger",
+ "getrandom 0.2.15",
  "goard_core",
  "js-sys",
  "log",

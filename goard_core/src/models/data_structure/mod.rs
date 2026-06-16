@@ -11,9 +11,8 @@ pub mod host;
 pub mod cpu;
 pub mod strata;
 
-pub mod live_data_state;
+pub mod job_data;
 pub mod marker;
-pub mod refresh_coordinator;
 pub mod ui_preferences;
 pub mod tab_state_cache;
 pub mod job_sorting;

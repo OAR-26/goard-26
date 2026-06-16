@@ -1,6 +1,6 @@
 use chrono::Local;
 
-use crate::models::data_structure::{
+use goard_core::models::data_structure::{
     job::{Job, JobState},
     resource::ResourceState,
     strata::Strata,

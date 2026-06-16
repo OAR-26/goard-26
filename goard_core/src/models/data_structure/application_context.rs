@@ -1,43 +1,38 @@
 use super::filters::JobFilters;
 use super::job::Job;
 use super::cluster::Cluster;
-use super::resource::ResourceState;
-use super::cpu::Cpu;
-use super::host::Host;
-use super::resource::Resource;
-use super::live_data_state::LiveDataState;
-use super::refresh_coordinator::RefreshCoordinator;
+use super::job_data::JobData;
 use super::ui_preferences::UiPreferences;
-use crate::models::utils::utils::{get_clusters_for_job, get_hosts_for_job};
 use crate::models::data_structure::job_sorting::JobSortable;
 use crate::models::data_structure::view_type::ViewType;
 use chrono::{DateTime, Local};
-use serde_json::Value;
-use std::collections::HashMap;
 
 pub struct ApplicationContext {
-    pub data: LiveDataState,
-    pub refresh: RefreshCoordinator,
+    pub data: JobData,
     pub prefs: UiPreferences,
 
     // Session state
     pub view_type: ViewType,
     pub is_loading: bool,
     pub filters: JobFilters,
+    /// Whether the current view represents a live snapshot (vs. imported/static
+    /// data). Core uses this only to decide rendering choices (e.g. synthesizing
+    /// the "all resources" virtual job); it has no idea how live data is fetched.
     pub live_data: bool,
 
-    // Direct time window — kept in sync with refresh.start_date/end_date.
-    // Views read these directly instead of locking the Mutex every frame.
     pub start_date: DateTime<Local>,
     pub end_date: DateTime<Local>,
 
-    // Runtime state synced from RefreshCoordinator each frame by check_data_update().
+    // Status flags — set by the binary each frame, read by core for display
+    // (spinner, disabled refresh button). Core has no refresh engine of its own.
     pub is_refreshing: bool,
     pub live_refresh_paused: bool,
+    /// Refresh-rate preference set via Tools' dropdown; the binary applies it
+    /// to its own refresh engine.
+    pub desired_refresh_rate_s: u64,
 
-    // Signals set by views; consumed and acted on by the binary-level App (liveOAR).
+    // Signals set by views; consumed and acted on by the binary-level App.
     pub refresh_requested: bool,
-    pub live_disable_requested: bool,
 
     // Flat display state — set by the binary when switching sources.
     // Core has no knowledge of how sources are managed; it just renders these fields.
@@ -54,368 +49,25 @@ pub struct ApplicationContext {
 }
 
 impl ApplicationContext {
-    pub fn check_job_update(&mut self) {
-        if let Ok(new_jobs) = self.refresh.jobs_receiver.try_recv() {
-            if !self.live_data { return; }
-            self.data.swap_all_jobs = new_jobs;
-            self.is_loading = false;
-        }
+    pub fn get_start_date(&self) -> DateTime<Local> {
+        self.start_date
     }
 
-    pub fn check_ressource_update(&mut self) {
-        if let Ok(new_resources) = self.refresh.resources_receiver.try_recv() {
-            if !self.live_data { return; }
-            // Always keep live-only caches current so switching back to live is instant.
-            self.data.strata_by_resource_id_live.clear();
-            for r in new_resources.iter() {
-                if let Some(rid) = r.resource_id {
-                    self.data.strata_by_resource_id_live.insert(rid, r.clone());
-                }
-            }
-            self.data.strata_by_host_live.clear();
-            for r in new_resources.iter() {
-                let host = r.host.as_deref().unwrap_or("").trim().to_string();
-                let net = r.network_address.as_deref().unwrap_or("").trim().to_string();
-                if !host.is_empty() {
-                    self.data.strata_by_host_live.entry(host.clone()).or_insert_with(|| r.clone());
-                    if let Some(short) = host.split('.').next() {
-                        if !short.is_empty() {
-                            self.data.strata_by_host_live.entry(short.to_string()).or_insert_with(|| r.clone());
-                        }
-                    }
-                }
-                if !net.is_empty() {
-                    self.data.strata_by_host_live.entry(net.clone()).or_insert_with(|| r.clone());
-                    if let Some(short) = net.split('.').next() {
-                        if !short.is_empty() {
-                            self.data.strata_by_host_live.entry(short.to_string()).or_insert_with(|| r.clone());
-                        }
-                    }
-                }
-            }
-
-            fn extract_ints_from_value(v: &Value) -> Vec<i32> {
-                fn extract_ints_from_str(s: &str) -> Vec<i32> {
-                    let mut out: Vec<i32> = Vec::new();
-                    let mut cur: i64 = 0;
-                    let mut in_num = false;
-                    for ch in s.chars() {
-                        if ch.is_ascii_digit() {
-                            in_num = true;
-                            cur = cur * 10 + (ch as i64 - '0' as i64);
-                        } else if in_num {
-                            if (0..=i32::MAX as i64).contains(&cur) {
-                                out.push(cur as i32);
-                            }
-                            cur = 0;
-                            in_num = false;
-                        }
-                    }
-                    if in_num && (0..=i32::MAX as i64).contains(&cur) {
-                        out.push(cur as i32);
-                    }
-                    out
-                }
-
-                match v {
-                    Value::Null => Vec::new(),
-                    Value::Bool(_) => Vec::new(),
-                    Value::Number(n) => n
-                        .as_i64()
-                        .filter(|i| (0..=i32::MAX as i64).contains(i))
-                        .map(|i| vec![i as i32])
-                        .unwrap_or_default(),
-                    Value::String(s) => extract_ints_from_str(s),
-                    Value::Array(arr) => {
-                        let mut all: Vec<i32> = Vec::new();
-                        for x in arr {
-                            all.extend(extract_ints_from_value(x));
-                        }
-                        all
-                    }
-                    Value::Object(_) => Vec::new(),
-                }
-            }
-
-            let mut cpuset_by_host: HashMap<String, Vec<i32>> = HashMap::new();
-            for r in new_resources.iter() {
-                let host = r.host.as_deref().unwrap_or("").trim();
-                if host.is_empty() {
-                    continue;
-                }
-                if let Some(v) = r.cpuset.as_ref() {
-                    let ints = extract_ints_from_value(v);
-                    if !ints.is_empty() {
-                        cpuset_by_host
-                            .entry(host.to_string())
-                            .or_default()
-                            .extend(ints);
-                    }
-                }
-            }
-
-            self.data.strata_by_resource_id.clear();
-            for r in new_resources.iter() {
-                if let Some(rid) = r.resource_id {
-                    self.data.strata_by_resource_id.insert(rid, r.clone());
-                }
-            }
-
-            let now = chrono::Utc::now().timestamp();
-            self.data.standby_upto.clear();
-            for r in new_resources.iter() {
-                if r.state.as_deref() == Some("Absent") {
-                    if let (Some(rid), Some(upto)) = (r.resource_id, r.available_upto) {
-                        if upto > now && upto > 0 {
-                            self.data.standby_upto.insert(rid, upto);
-                        }
-                    }
-                }
-            }
-
-            self.data.strata_by_host.clear();
-            for r in new_resources.iter() {
-                let host = r.host.as_deref().unwrap_or("").trim();
-                let net = r.network_address.as_deref().unwrap_or("").trim();
-
-                if !host.is_empty() {
-                    self.data.strata_by_host
-                        .entry(host.to_string())
-                        .or_insert_with(|| r.clone());
-                    let short = host.split('.').next().unwrap_or(host).trim();
-                    if !short.is_empty() {
-                        self.data.strata_by_host
-                            .entry(short.to_string())
-                            .or_insert_with(|| r.clone());
-                    }
-                }
-
-                if !net.is_empty() {
-                    self.data.strata_by_host
-                        .entry(net.to_string())
-                        .or_insert_with(|| r.clone());
-                    let short = net.split('.').next().unwrap_or(net).trim();
-                    if !short.is_empty() {
-                        self.data.strata_by_host
-                            .entry(short.to_string())
-                            .or_insert_with(|| r.clone());
-                    }
-                }
-
-                fn non_empty_value(v: &Value) -> bool {
-                    match v {
-                        Value::Null => false,
-                        Value::Bool(_) => true,
-                        Value::Number(_) => true,
-                        Value::String(s) => !s.trim().is_empty(),
-                        Value::Array(arr) => arr.iter().any(non_empty_value),
-                        Value::Object(obj) => !obj.is_empty(),
-                    }
-                }
-                for k in [host, net] {
-                    if k.is_empty() {
-                        continue;
-                    }
-                    if let Some(existing) = self.data.strata_by_host.get(k).cloned() {
-                        let existing_score = existing.comment.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false) as i32
-                            + existing.cpuset.as_ref().map(non_empty_value).unwrap_or(false) as i32
-                            + existing.cputype.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false) as i32
-                            + existing.nodemodel.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false) as i32;
-                        let new_score = r.comment.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false) as i32
-                            + r.cpuset.as_ref().map(non_empty_value).unwrap_or(false) as i32
-                            + r.cputype.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false) as i32
-                            + r.nodemodel.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false) as i32;
-                        if new_score > existing_score {
-                            self.data.strata_by_host.insert(k.to_string(), r.clone());
-                        }
-                    }
-                }
-            }
-
-            for s in self.data.strata_by_host.values_mut() {
-                let host_key = s.host.as_deref().unwrap_or("").trim();
-                if host_key.is_empty() {
-                    continue;
-                }
-                if let Some(ints) = cpuset_by_host.get(host_key) {
-                    let mut ints = ints.clone();
-                    ints.sort_unstable();
-                    ints.dedup();
-                    if !ints.is_empty() {
-                        let arr: Vec<Value> = ints
-                            .into_iter()
-                            .map(|i| Value::Number(serde_json::Number::from(i)))
-                            .collect();
-                        s.cpuset = Some(Value::Array(arr));
-                    }
-                }
-            }
-
-            // Build cluster hierarchy in O(n) using index maps for find-or-create.
-            // Background thread sends a complete resource snapshot each cycle, so we
-            // clear and rebuild from scratch to avoid stale/duplicate entries.
-            self.data.swap_all_clusters.clear();
-            let mut cluster_idx: HashMap<String, usize> = HashMap::new();
-            let mut host_idx: HashMap<(usize, String), usize> = HashMap::new();
-            let mut cpu_idx: HashMap<(usize, usize, String), usize> = HashMap::new();
-
-            let parse_state = |s: Option<&str>| match s.unwrap_or("") {
-                "Dead"   => ResourceState::Dead,
-                "Alive"  => ResourceState::Alive,
-                "Absent" => ResourceState::Absent,
-                _        => ResourceState::Unknown,
-            };
-
-            for resource in new_resources.iter() {
-                let cluster_name = resource.cluster.as_deref().unwrap_or("").trim().to_string();
-                if cluster_name.is_empty() { continue; }
-                let host_name = resource.host.as_deref().unwrap_or("").trim().to_string();
-                let cpu_name  = resource.cputype.as_deref().unwrap_or("").trim().to_string();
-                let rid       = resource.resource_id.unwrap_or(0);
-                let state     = parse_state(resource.state.as_deref());
-
-                // O(1) find-or-create cluster
-                let ci = if let Some(&i) = cluster_idx.get(&cluster_name) {
-                    i
-                } else {
-                    let i = self.data.swap_all_clusters.len();
-                    self.data.swap_all_clusters.push(Cluster {
-                        name: cluster_name.clone(),
-                        hosts: Vec::new(),
-                        resource_ids: Vec::new(),
-                        state: ResourceState::Unknown,
-                    });
-                    cluster_idx.insert(cluster_name.clone(), i);
-                    i
-                };
-
-                // O(1) find-or-create host
-                let hi = if let Some(&i) = host_idx.get(&(ci, host_name.clone())) {
-                    i
-                } else {
-                    let i = self.data.swap_all_clusters[ci].hosts.len();
-                    self.data.swap_all_clusters[ci].hosts.push(Host {
-                        name: host_name.clone(),
-                        cpus: Vec::new(),
-                        network_address: resource.network_address.as_deref().unwrap_or("").to_string(),
-                        resource_ids: Vec::new(),
-                        state: ResourceState::Unknown,
-                    });
-                    host_idx.insert((ci, host_name.clone()), i);
-                    i
-                };
-
-                // O(1) find-or-create CPU
-                let ki = if let Some(&i) = cpu_idx.get(&(ci, hi, cpu_name.clone())) {
-                    i
-                } else {
-                    let i = self.data.swap_all_clusters[ci].hosts[hi].cpus.len();
-                    self.data.swap_all_clusters[ci].hosts[hi].cpus.push(Cpu {
-                        name: cpu_name.clone(),
-                        resources: Vec::new(),
-                        core_count: resource.core_count.unwrap_or(0) as i32,
-                        cpufreq: resource.cpufreq.as_deref().unwrap_or("").parse::<f32>().unwrap_or(0.0),
-                        chassis: resource.chassis.as_deref().unwrap_or("").to_string(),
-                        resource_ids: Vec::new(),
-                    });
-                    cpu_idx.insert((ci, hi, cpu_name), i);
-                    i
-                };
-
-                // Push resource and propagate resource_id up the hierarchy
-                self.data.swap_all_clusters[ci].hosts[hi].cpus[ki].resources.push(Resource {
-                    id: rid, state, thread_count: resource.thread_count.unwrap_or(0) as i32,
-                });
-                self.data.swap_all_clusters[ci].hosts[hi].cpus[ki].resource_ids.push(rid);
-                self.data.swap_all_clusters[ci].hosts[hi].resource_ids.push(rid);
-                self.data.swap_all_clusters[ci].resource_ids.push(rid);
-            }
-
-            for job in self.data.swap_all_jobs.iter_mut() {
-                job.clusters = get_clusters_for_job(job, &self.data.swap_all_clusters);
-                job.hosts = get_hosts_for_job(job, &self.data.swap_all_clusters);
-                job.update_majority_resource_state(&self.data.swap_all_clusters);
-            }
-
-            for cluster in self.data.swap_all_clusters.iter_mut() {
-                for host in cluster.hosts.iter_mut() {
-                    let mut dead_count = 0;
-                    let mut alive_count = 0;
-                    let mut absent_count = 0;
-                    for cpu in host.cpus.iter() {
-                        for resource in cpu.resources.iter() {
-                            match resource.state {
-                                ResourceState::Dead => dead_count += 1,
-                                ResourceState::Alive => alive_count += 1,
-                                ResourceState::Absent => absent_count += 1,
-                                _ => (),
-                            }
-                        }
-                    }
-                    host.state = if dead_count >= alive_count && dead_count >= absent_count {
-                        ResourceState::Dead
-                    } else if absent_count >= dead_count && absent_count >= alive_count {
-                        ResourceState::Absent
-                    } else if alive_count > dead_count && alive_count > absent_count {
-                        ResourceState::Alive
-                    } else {
-                        ResourceState::Unknown
-                    };
-                }
-            }
-
-            for cluster in self.data.swap_all_clusters.iter_mut() {
-                let mut dead_count = 0;
-                let mut alive_count = 0;
-                let mut absent_count = 0;
-                for host in cluster.hosts.iter() {
-                    match host.state {
-                        ResourceState::Dead => dead_count += 1,
-                        ResourceState::Alive => alive_count += 1,
-                        ResourceState::Absent => absent_count += 1,
-                        _ => (),
-                    }
-                }
-                cluster.state = if dead_count >= alive_count && dead_count >= absent_count {
-                    ResourceState::Dead
-                } else if absent_count >= dead_count && absent_count >= alive_count {
-                    ResourceState::Absent
-                } else if alive_count > dead_count && alive_count > absent_count {
-                    ResourceState::Alive
-                } else {
-                    ResourceState::Unknown
-                };
-            }
-
-            let has_job_0 = self.data.all_jobs.iter().any(|job| job.id == 0);
-            if has_job_0 {
-                let job_0 = self.data.all_jobs.iter().find(|job| job.id == 0).unwrap().clone();
-                self.data.swap_all_jobs.push(job_0);
-            }
-
-            self.data.all_jobs = self.data.swap_all_jobs.clone();
-            self.data.all_clusters = self.data.swap_all_clusters.clone();
-        }
+    pub fn get_end_date(&self) -> DateTime<Local> {
+        self.end_date
     }
 
-    pub fn check_dead_intervals_update(&mut self) {
-        if !self.live_data { return; }
-        if let Ok(intervals) = self.refresh.dead_intervals_receiver.try_recv() {
-            self.data.dead_intervals = intervals;
-        }
+    pub fn set_localdate(&mut self, start: DateTime<Local>, end: DateTime<Local>) {
+        self.start_date = start;
+        self.end_date = end;
     }
 
-    pub fn check_data_update(&mut self) {
-        self.is_refreshing = *self.refresh.is_refreshing.lock().unwrap_or_else(|p| p.into_inner());
-        self.live_refresh_paused = *self.refresh.refresh_rate.lock().unwrap_or_else(|p| p.into_inner()) == u64::MAX;
-
-        self.check_job_update();
-        self.check_ressource_update();
-        self.check_dead_intervals_update();
-
+    /// Generic per-frame refresh: re-applies the time window to filters and
+    /// re-filters jobs. Any binary can call this after updating `self.data`,
+    /// regardless of where that data came from.
+    pub fn refresh_filters(&mut self) {
         self.filters.set_scheduled_start_time(self.start_date.timestamp());
         self.filters.set_wall_time(self.end_date.timestamp());
-
         self.filter_jobs();
     }
 
@@ -487,8 +139,7 @@ impl Default for ApplicationContext {
     fn default() -> Self {
         let now: DateTime<Local> = Local::now();
         let mut context = Self {
-            data: LiveDataState::default(),
-            refresh: RefreshCoordinator::new(now),
+            data: JobData::default(),
             prefs: UiPreferences::default(),
 
             view_type: ViewType::Gantt,
@@ -500,8 +151,8 @@ impl Default for ApplicationContext {
             end_date: now,
             is_refreshing: false,
             live_refresh_paused: false,
+            desired_refresh_rate_s: 30,
             refresh_requested: false,
-            live_disable_requested: false,
             current_source_key: 0,
             current_source_name: String::new(),
             current_group_active: false,
@@ -518,8 +169,6 @@ impl Default for ApplicationContext {
         let half = chrono::Duration::seconds(context.prefs.gantt_config.default_timespan_s / 2);
         context.start_date = now - half;
         context.end_date   = now + half;
-        *context.refresh.start_date.lock().unwrap() = now - half;
-        *context.refresh.end_date.lock().unwrap()   = now + half;
         context
     }
 }

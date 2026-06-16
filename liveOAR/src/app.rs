@@ -1,5 +1,6 @@
 use crate::auth_view::{AuthOutcome, AuthView};
 use crate::cluster_presets::ClusterPresetState;
+use crate::live_engine::LiveEngine;
 use goard_core::models::utils::secret::Secret;
 use goard_core::views::main_page::dashboard::Dashboard;
 use goard_core::views::main_page::gantt::GanttChart;
@@ -18,6 +19,7 @@ pub struct App {
     pub tools: Tools,
     pub application_context: ApplicationContext,
     cluster_presets: ClusterPresetState,
+    live_engine: LiveEngine,
     auth_active: bool,
     connected_as: Option<String>,
 }
@@ -26,7 +28,8 @@ impl App {
     pub fn new() -> Self {
         let mut application_context = ApplicationContext::default();
         application_context.live_data = true;
-        application_context.update_periodically();
+        let mut live_engine = LiveEngine::new(chrono::Local::now());
+        live_engine.update_periodically(&mut application_context);
         App {
             secret: Secret::default(),
             dashboard_view: Dashboard::default(),
@@ -36,6 +39,7 @@ impl App {
             tools: Tools::default(),
             application_context,
             cluster_presets: ClusterPresetState::default(),
+            live_engine,
             auth_active: true,
             connected_as: None,
         }
@@ -118,20 +122,12 @@ impl eframe::App for App {
             self.cluster_presets.show_admin(ui, &cluster_names);
         });
 
-        self.application_context.check_data_update();
+        self.live_engine.poll(&mut self.application_context);
+        self.application_context.refresh_filters();
 
         if self.application_context.refresh_requested {
             self.application_context.refresh_requested = false;
-            self.application_context.instant_update();
-        }
-
-        if self.application_context.live_disable_requested {
-            self.application_context.live_disable_requested = false;
-            *self.application_context.refresh.refresh_rate.lock().unwrap() = u64::MAX;
-            *self.application_context.refresh.is_refreshing.lock().unwrap() = false;
-            while self.application_context.refresh.jobs_receiver.try_recv().is_ok() {}
-            while self.application_context.refresh.resources_receiver.try_recv().is_ok() {}
-            while self.application_context.refresh.dead_intervals_receiver.try_recv().is_ok() {}
+            self.live_engine.instant_update(&mut self.application_context);
         }
 
         TopBottomPanel::bottom("status_bar")

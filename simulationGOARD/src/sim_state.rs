@@ -80,9 +80,7 @@ impl SimState {
         if index == 0 {
             self.current_data_source_index = 0;
             app.data.all_jobs.clear();
-            app.data.swap_all_jobs.clear();
             app.data.all_clusters.clear();
-            app.data.swap_all_clusters.clear();
             app.data.strata_by_resource_id.clear();
             app.data.strata_by_host.clear();
             app.data.markers.clear();
@@ -288,9 +286,7 @@ impl SimState {
                 if target == 0 {
                     self.current_data_source_index = 0;
                     app.data.all_jobs.clear();
-                    app.data.swap_all_jobs.clear();
                     app.data.all_clusters.clear();
-                    app.data.swap_all_clusters.clear();
                     app.data.strata_by_resource_id.clear();
                     app.data.strata_by_host.clear();
                     app.data.markers.clear();

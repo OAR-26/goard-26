@@ -1,6 +1,6 @@
-use crate::models::data_structure::job::{Job, JobState};
-use crate::models::data_structure::resource::{DeadInterval, ResourceState};
-use crate::models::data_structure::strata::Strata;
+use goard_core::models::data_structure::job::{Job, JobState};
+use goard_core::models::data_structure::resource::{DeadInterval, ResourceState};
+use goard_core::models::data_structure::strata::Strata;
 
 use serde_json::Value;
 use std::collections::HashMap;

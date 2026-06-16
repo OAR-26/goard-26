@@ -83,7 +83,7 @@ impl eframe::App for App {
             self.sim_state.render_tabs(ui, &mut self.application_context);
         });
 
-        self.application_context.check_data_update();
+        self.application_context.refresh_filters();
 
         // "+" group button requested a file dialog.
         if self.sim_state.request_file_import {

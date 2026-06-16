@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Local};
 
-use super::{job::Job, resource::DeadInterval, strata::Strata};
+use goard_core::models::data_structure::{job::Job, resource::DeadInterval, strata::Strata};
 
 /// Owns every field that background refresh threads share with the UI thread:
 /// the date window, refresh rate, refresh-in-progress flag, and all MPSC channels.
