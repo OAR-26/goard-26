@@ -14,6 +14,5 @@ pub mod strata;
 pub mod job_data;
 pub mod marker;
 pub mod ui_preferences;
-pub mod tab_state_cache;
 pub mod job_sorting;
 pub mod view_type;

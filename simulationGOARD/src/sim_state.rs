@@ -6,9 +6,10 @@ use goard_core::models::data_structure::cluster::Cluster;
 use goard_core::models::data_structure::job::Job;
 use goard_core::models::data_structure::marker::GanttMarker;
 use goard_core::models::data_structure::strata::Strata;
-use goard_core::models::data_structure::tab_state_cache::{compute_file_hash, TabStateCache};
 use goard_core::models::file_types::{FileTypeRegistry, VisualizationTarget};
-use goard_core::views::main_page::gantt::GanttChart;
+use goard_core::views::main_page::gantt::{GanttChart, GanttViewSnapshot};
+
+use crate::tab_state_cache::{compute_file_hash, TabStateCache, TabViewState};
 
 // ---------------------------------------------------------------------------
 // Data types (moved from goard_core/src/models/data_structure/import_state.rs)
@@ -41,7 +42,10 @@ pub struct PendingImport {
 }
 
 // ---------------------------------------------------------------------------
-// SimState — owns all file/tab/group management
+// SimState — owns all file/tab/group management, including per-tab view
+// memory (zoom/pan/selected view/energy panel state/hierarchy). goard_core
+// has no notion of any of this — it just renders whatever GanttViewSnapshot
+// it's handed.
 // ---------------------------------------------------------------------------
 
 pub struct SimState {
@@ -52,6 +56,9 @@ pub struct SimState {
     pub groups: Vec<DataSourceGroup>,
     pub current_group_index: Option<usize>,
     pub pending_group_target: Option<usize>,
+    /// In-session view memory per data-source index (1-based).
+    tab_snapshots: std::collections::HashMap<usize, GanttViewSnapshot>,
+    /// Cross-session view memory, keyed by file identity.
     tab_state_cache: TabStateCache,
 }
 
@@ -65,6 +72,7 @@ impl Default for SimState {
             groups: Vec::new(),
             current_group_index: None,
             pending_group_target: None,
+            tab_snapshots: std::collections::HashMap::new(),
             tab_state_cache: TabStateCache::load(),
         }
     }
@@ -72,10 +80,124 @@ impl Default for SimState {
 
 impl SimState {
     // -----------------------------------------------------------------------
+    // View-snapshot bookkeeping
+    // -----------------------------------------------------------------------
+
+    /// Hierarchy levels this index should force (file types with a mandatory
+    /// layout), or `None` to follow whatever Gantt View is selected.
+    fn hierarchy_override_for(&self, index: usize) -> Option<Vec<String>> {
+        if index == 0 { return None; }
+        let ds = self.imported_data_sources.get(index - 1)?;
+        FileTypeRegistry::default()
+            .find_by_name(&ds.file_type_name)
+            .and_then(|t| t.hierarchy_levels())
+    }
+
+    fn build_default_snapshot(&self, app: &ApplicationContext, hierarchy_override: Option<Vec<String>>) -> GanttViewSnapshot {
+        let start_s = app.get_start_date().timestamp();
+        let end_s = app.get_end_date().timestamp();
+        let default_width = app.prefs.gantt_config.default_timespan_s as f32;
+        let span_s = (end_s - start_s) as f32;
+        let canvas_width_s = if span_s > 0.0 && span_s < default_width {
+            span_s.max(10.0)
+        } else {
+            default_width
+        };
+        GanttViewSnapshot {
+            initial_start_s: start_s,
+            initial_end_s: end_s,
+            canvas_width_s,
+            sideways_pan_in_points: 0.0,
+            rect_height: app.prefs.gantt_config.gantt_row_height,
+            current_view_index: 0,
+            energy_y_bounds: None,
+            energy_fit_to_figure: true,
+            energy_panel_height: app.prefs.gantt_config.energy_panel_height,
+            energy_visible_range: None,
+            hierarchy_override,
+        }
+    }
+
+    /// Snapshot to apply for `index`: in-session memory, else the on-disk
+    /// cache (by file identity), else a fresh default.
+    fn snapshot_for(&mut self, index: usize, app: &ApplicationContext) -> GanttViewSnapshot {
+        if let Some(s) = self.tab_snapshots.get(&index) {
+            return s.clone();
+        }
+        let hierarchy_override = self.hierarchy_override_for(index);
+        if index > 0 {
+            if let Some(ds) = self.imported_data_sources.get(index - 1) {
+                if let Some(hash) = ds.file_hash.as_deref() {
+                    if let Some(saved) = self.tab_state_cache.lookup(ds.file_path.as_deref(), hash) {
+                        return GanttViewSnapshot {
+                            initial_start_s: app.get_start_date().timestamp(),
+                            initial_end_s: app.get_end_date().timestamp(),
+                            canvas_width_s: saved.canvas_width_s,
+                            sideways_pan_in_points: saved.sideways_pan,
+                            rect_height: saved.row_height,
+                            current_view_index: saved.view_index,
+                            energy_y_bounds: saved.energy_y_min.zip(saved.energy_y_max),
+                            energy_fit_to_figure: saved.energy_fit,
+                            energy_panel_height: saved.energy_panel_height,
+                            energy_visible_range: None,
+                            hierarchy_override,
+                        };
+                    }
+                }
+            }
+        }
+        self.build_default_snapshot(app, hierarchy_override)
+    }
+
+    fn persist_snapshot_to_disk(&mut self, file_path: Option<&str>, file_hash: &str, snap: &GanttViewSnapshot) {
+        let state = TabViewState {
+            canvas_width_s: snap.canvas_width_s,
+            sideways_pan: snap.sideways_pan_in_points,
+            row_height: snap.rect_height,
+            view_index: snap.current_view_index,
+            energy_y_min: snap.energy_y_bounds.map(|b| b.0),
+            energy_y_max: snap.energy_y_bounds.map(|b| b.1),
+            energy_fit: snap.energy_fit_to_figure,
+            energy_panel_height: snap.energy_panel_height,
+        };
+        self.tab_state_cache.store(file_path, file_hash, state);
+        self.tab_state_cache.save_to_disk();
+    }
+
+    /// Captures `gantt_view`'s live state into in-session memory for `index`,
+    /// and to disk if it's backed by a file.
+    fn capture_for(&mut self, index: usize, gantt_view: &GanttChart) {
+        if index == 0 { return; }
+        let snap = gantt_view.capture_view_snapshot();
+        let file_id = self.imported_data_sources.get(index - 1)
+            .and_then(|ds| ds.file_hash.clone().map(|hash| (ds.file_path.clone(), hash)));
+        if let Some((path, hash)) = file_id {
+            self.persist_snapshot_to_disk(path.as_deref(), &hash, &snap);
+        }
+        self.tab_snapshots.insert(index, snap);
+    }
+
+    /// Shifts in-session snapshot keys after a data source at `removed_idx`
+    /// (1-based) was removed — mirrors how `imported_data_sources` shifts.
+    fn shift_snapshots_after_removal(&mut self, removed_idx: usize) {
+        let shifted: std::collections::HashMap<usize, GanttViewSnapshot> = std::mem::take(&mut self.tab_snapshots)
+            .into_iter()
+            .filter(|(k, _)| *k != removed_idx)
+            .map(|(k, v)| if k > removed_idx { (k - 1, v) } else { (k, v) })
+            .collect();
+        self.tab_snapshots = shifted;
+    }
+
+    // -----------------------------------------------------------------------
     // Core switch logic
     // -----------------------------------------------------------------------
 
-    pub fn switch_to_data_source(&mut self, index: usize, app: &mut ApplicationContext) {
+    pub fn switch_to_data_source(&mut self, index: usize, app: &mut ApplicationContext, gantt_view: &mut GanttChart) {
+        let old_index = self.current_data_source_index;
+        if old_index != index || self.current_group_index.is_some() {
+            self.capture_for(old_index, gantt_view);
+        }
+
         self.current_group_index = None;
         if index == 0 {
             self.current_data_source_index = 0;
@@ -151,11 +273,15 @@ impl SimState {
         } else {
             return;
         }
+
+        let snapshot = self.snapshot_for(index, app);
+        gantt_view.apply_view_snapshot(&snapshot);
+
         self.sync_to_app(app);
         app.filter_jobs();
     }
 
-    pub fn switch_to_group(&mut self, group_idx: usize, app: &mut ApplicationContext) {
+    pub fn switch_to_group(&mut self, group_idx: usize, app: &mut ApplicationContext, gantt_view: &mut GanttChart) {
         let Some(group) = self.groups.get(group_idx) else { return; };
         let members = group.member_indices.clone();
         let gantt_member = members.iter().copied().find(|&i| {
@@ -164,17 +290,17 @@ impl SimState {
                 .unwrap_or(false)
         }).or_else(|| members.first().copied());
         if let Some(mi) = gantt_member {
-            self.switch_to_data_source(mi, app);
+            self.switch_to_data_source(mi, app, gantt_view); // clears current_group_index
         }
         self.current_group_index = Some(group_idx);
         self.sync_to_app(app);
     }
 
-    pub fn close_group(&mut self, group_idx: usize, app: &mut ApplicationContext) {
+    pub fn close_group(&mut self, group_idx: usize, app: &mut ApplicationContext, gantt_view: &mut GanttChart) {
         if group_idx >= self.groups.len() { return; }
         if self.current_group_index == Some(group_idx) {
             self.current_group_index = None;
-            self.switch_to_data_source(0, app);
+            self.switch_to_data_source(0, app, gantt_view);
         } else if let Some(cur) = self.current_group_index {
             if cur > group_idx {
                 self.current_group_index = Some(cur - 1);
@@ -235,7 +361,7 @@ impl SimState {
                 }
             }
             self.imported_data_sources.remove(ds_idx - 1);
-            gantt_view.handle_tab_removed(ds_idx);
+            self.shift_snapshots_after_removal(ds_idx);
             match self.current_data_source_index.cmp(&ds_idx) {
                 std::cmp::Ordering::Greater => self.current_data_source_index -= 1,
                 std::cmp::Ordering::Equal   => self.current_data_source_index = 0,
@@ -245,10 +371,10 @@ impl SimState {
         if was_active {
             match target_after_delete {
                 Some((true, gi)) if gi < self.groups.len() => {
-                    self.switch_to_group(gi, app);
+                    self.switch_to_group(gi, app, gantt_view);
                 }
                 Some((false, ds)) if ds > 0 && ds <= self.imported_data_sources.len() => {
-                    self.switch_to_data_source(ds, app);
+                    self.switch_to_data_source(ds, app, gantt_view);
                 }
                 _ => { self.sync_to_app(app); }
             }
@@ -270,14 +396,14 @@ impl SimState {
             let was_active = self.current_group_index == Some(group_idx);
             let survivor = self.groups.get(group_idx)
                 .and_then(|g| g.member_indices.first().copied());
-            self.close_group(group_idx, app);
+            self.close_group(group_idx, app, gantt_view);
             if was_active {
                 if let Some(m) = survivor {
-                    self.switch_to_data_source(m, app);
+                    self.switch_to_data_source(m, app, gantt_view);
                 }
             }
         } else if self.current_group_index == Some(group_idx) {
-            self.switch_to_group(group_idx, app);
+            self.switch_to_group(group_idx, app, gantt_view);
         }
     }
 
@@ -286,7 +412,7 @@ impl SimState {
         let actual_index = index - 1;
         if actual_index < self.imported_data_sources.len() {
             self.imported_data_sources.remove(actual_index);
-            gantt_view.handle_tab_removed(index);
+            self.shift_snapshots_after_removal(index);
             // Other groups reference data sources by position — keep them in sync.
             for g in &mut self.groups {
                 for i in &mut g.member_indices {
@@ -316,9 +442,9 @@ impl SimState {
                     self.sync_to_app(app);
                 } else if let Some(gi) = self.groups.iter().position(|g| g.member_indices.contains(&target)) {
                     // The fallback slot belongs to a group — activate the group, not the bare file.
-                    self.switch_to_group(gi, app);
+                    self.switch_to_group(gi, app, gantt_view);
                 } else {
-                    self.switch_to_data_source(target, app);
+                    self.switch_to_data_source(target, app, gantt_view);
                 }
             }
             app.filter_jobs();
@@ -334,6 +460,7 @@ impl SimState {
     pub fn import_data_from_json(
         &mut self,
         app: &mut ApplicationContext,
+        gantt_view: &mut GanttChart,
         json_str: &str,
         file_path: Option<String>,
         type_name: Option<&str>,
@@ -380,7 +507,7 @@ impl SimState {
             let existing = self.groups.iter().position(|g| g.member_indices.contains(&target_ds));
             if let Some(gi) = existing {
                 self.groups[gi].member_indices.push(new_index);
-                self.switch_to_group(gi, app);
+                self.switch_to_group(gi, app, gantt_view);
             } else {
                 let gname = self.next_group_name();
                 self.groups.push(DataSourceGroup {
@@ -388,10 +515,10 @@ impl SimState {
                     member_indices: vec![target_ds, new_index],
                 });
                 let gi = self.groups.len() - 1;
-                self.switch_to_group(gi, app);
+                self.switch_to_group(gi, app, gantt_view);
             }
         } else {
-            self.switch_to_data_source(new_index, app);
+            self.switch_to_data_source(new_index, app, gantt_view);
         }
         Ok(())
     }
@@ -416,61 +543,47 @@ impl SimState {
 
     pub fn sync_to_app(&self, app: &mut ApplicationContext) {
         let in_group = self.current_group_index.is_some();
-        app.current_group_active = in_group;
-        app.current_source_key = self.current_data_source_index;
 
         if in_group {
             let gi = self.current_group_index.unwrap();
             if let Some(g) = self.groups.get(gi) {
-                app.show_energy = g.member_indices.iter().any(|&i| {
-                    self.imported_data_sources.get(i - 1)
-                        .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram))
-                        .unwrap_or(false)
-                });
-                app.show_gantt_panel = g.member_indices.iter().any(|&i| {
+                let has_gantt = g.member_indices.iter().any(|&i| {
                     self.imported_data_sources.get(i - 1)
                         .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::Gantt))
                         .unwrap_or(false)
                 });
-                app.current_energy_series = g.member_indices.iter().filter_map(|&i| {
+                let has_energy = g.member_indices.iter().any(|&i| {
+                    self.imported_data_sources.get(i - 1)
+                        .map(|ds| ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram))
+                        .unwrap_or(false)
+                });
+                app.show_gantt_panel = has_gantt;
+                app.show_energy = has_energy;
+                app.show_estimated_with_energy = has_gantt && has_energy;
+                app.show_hierarchy_controls = true;
+                app.data.energy_series = g.member_indices.iter().filter_map(|&i| {
                     let ds = self.imported_data_sources.get(i - 1)?;
                     if !ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram) { return None; }
                     Some((ds.name.clone(), ds.raw_energy_series.clone().unwrap_or_default()))
                 }).collect();
-                app.current_source_name = g.member_indices.iter().find_map(|&i| {
-                    let ds = self.imported_data_sources.get(i - 1)?;
-                    if ds.visualization_targets.contains(&VisualizationTarget::Gantt) {
-                        Some(ds.name.clone())
-                    } else { None }
-                }).unwrap_or_default();
-                app.current_file_path = None;
-                app.current_file_hash = None;
-                app.current_file_type_name = String::new();
-                app.current_supports_hierarchy = true;
             }
         } else if self.current_data_source_index == 0 {
             app.show_energy = true;
             app.show_gantt_panel = true;
-            app.current_energy_series = Vec::new();
-            app.current_source_name = String::new();
-            app.current_file_path = None;
-            app.current_file_hash = None;
-            app.current_file_type_name = String::new();
-            app.current_supports_hierarchy = true;
+            app.show_estimated_with_energy = false;
+            app.show_hierarchy_controls = true;
+            app.data.energy_series = Vec::new();
         } else {
             let idx = self.current_data_source_index;
             if let Some(ds) = self.imported_data_sources.get(idx - 1) {
                 app.show_energy = ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram);
                 app.show_gantt_panel = ds.visualization_targets.contains(&VisualizationTarget::Gantt);
-                app.current_energy_series = ds.raw_energy_series.as_ref()
+                app.show_estimated_with_energy = false;
+                app.data.energy_series = ds.raw_energy_series.as_ref()
                     .map(|s| vec![(ds.name.clone(), s.clone())])
                     .unwrap_or_default();
-                app.current_source_name = ds.name.clone();
-                app.current_file_path = ds.file_path.clone();
-                app.current_file_hash = ds.file_hash.clone();
-                app.current_file_type_name = ds.file_type_name.clone();
                 let registry = FileTypeRegistry::default();
-                app.current_supports_hierarchy = registry.find_by_name(&ds.file_type_name)
+                app.show_hierarchy_controls = registry.find_by_name(&ds.file_type_name)
                     .map(|t| t.supports_hierarchy_controls())
                     .unwrap_or(true);
             }
@@ -612,8 +725,8 @@ impl SimState {
         });
 
         // Apply deferred actions.
-        if let Some(i) = switch_to_ds               { self.switch_to_data_source(i, app); }
-        if let Some(gi) = switch_to_group           { self.switch_to_group(gi, app); }
+        if let Some(i) = switch_to_ds               { self.switch_to_data_source(i, app, gantt_view); }
+        if let Some(gi) = switch_to_group           { self.switch_to_group(gi, app, gantt_view); }
         if let Some(i) = close_ds                   { self.close_imported_data_source(i, app, gantt_view); }
         if let Some(gi) = close_group_idx           { self.delete_group(gi, app, gantt_view); }
         if let Some((gi, di)) = remove_from_group   { self.remove_ds_from_group(gi, di, app, gantt_view); }
@@ -632,19 +745,17 @@ impl SimState {
     // -----------------------------------------------------------------------
 
     pub fn flush_all_tab_states(&mut self, gantt_view: &mut GanttChart) {
-        let n = self.imported_data_sources.len();
-        for tab_idx in 1..=n {
-            if let Some(ds) = self.imported_data_sources.get(tab_idx - 1) {
-                if let Some(hash) = ds.file_hash.as_deref() {
-                    let is_active = tab_idx == self.current_data_source_index
-                        && self.current_group_index.is_none();
-                    gantt_view.persist_tab_state(
-                        tab_idx,
-                        is_active,
-                        ds.file_path.as_deref(),
-                        hash,
-                    );
-                }
+        // Capture the currently active individual tab's live state first.
+        if self.current_group_index.is_none() && self.current_data_source_index > 0 {
+            self.capture_for(self.current_data_source_index, gantt_view);
+        }
+        let snapshots = self.tab_snapshots.clone();
+        for (idx, snap) in snapshots {
+            if idx == 0 { continue; }
+            let file_id = self.imported_data_sources.get(idx - 1)
+                .and_then(|ds| ds.file_hash.clone().map(|hash| (ds.file_path.clone(), hash)));
+            if let Some((path, hash)) = file_id {
+                self.persist_snapshot_to_disk(path.as_deref(), &hash, &snap);
             }
         }
     }

@@ -3376,6 +3376,8 @@ dependencies = [
  "goard_core",
  "js-sys",
  "log",
+ "serde",
+ "serde_json",
  "toml 0.8.20",
  "wasm-bindgen",
  "wasm-bindgen-futures",

@@ -141,8 +141,6 @@ fn save_views_config(views: &[GanttView], presets: &[types::LeafInfoPreset]) {
     }
 }
 
-use crate::models::data_structure::tab_state_cache::{TabStateCache, TabViewState};
-
 use self::types::{gutter_stripes_total_w, Info, Options, GUTTER_WIDTH};
 
 
@@ -185,18 +183,14 @@ pub struct GanttChart {
     job_details_windows: Vec<JobDetailsWindow>,
     initial_start_s: Option<i64>,
     initial_end_s: Option<i64>,
-    last_data_source_index: Option<usize>,
-    tab_state_cache: TabStateCache,
-    /// Cached (file_path, file_hash) per source key — populated as tabs are visited.
-    tab_file_keys: std::collections::HashMap<usize, (Option<String>, Option<String>)>,
-    /// Saved (canvas_width_s, sideways_pan_in_points) per data-source index (Gantt tabs).
-    tab_view_state: std::collections::HashMap<usize, (f32, f32, f32)>,
-    /// Saved visible (start_s, end_s) per data-source index (energy-only tabs).
-    energy_visible: std::collections::HashMap<usize, (i64, i64)>,
-    /// Saved energy panel state (y_bounds, fit_to_figure, panel_height) per data-source index.
-    energy_panel_state: std::collections::HashMap<usize, (Option<(f64, f64)>, bool, f32)>,
-    /// Saved current_view_index per data-source index.
-    tab_view_index: std::collections::HashMap<usize, usize>,
+    /// Fixed hierarchy levels pushed by the binary (e.g. a file type with a
+    /// mandatory layout) — when set, takes precedence over the View dropdown.
+    /// Core has no idea why; it just renders these levels instead.
+    hierarchy_override: Option<Vec<String>>,
+    /// Visible (start_s, end_s) for energy-only sources (no Gantt canvas to
+    /// derive it from pixel-pan). Set directly by nav controls / drag; a
+    /// binary that wants to persist/restore this across switches owns that.
+    current_energy_visible: Option<(i64, i64)>,
 
     gantt_views: Vec<GanttView>,
     current_view_index: usize,
@@ -261,13 +255,8 @@ impl Default for GanttChart {
             job_details_windows: Vec::new(),
             initial_start_s: None,
             initial_end_s: None,
-            last_data_source_index: None,
-            tab_state_cache: TabStateCache::load(),
-            tab_file_keys: std::collections::HashMap::new(),
-            tab_view_state: std::collections::HashMap::new(),
-            energy_visible: std::collections::HashMap::new(),
-            energy_panel_state: std::collections::HashMap::new(),
-            tab_view_index: std::collections::HashMap::new(),
+            hierarchy_override: None,
+            current_energy_visible: None,
             last_canvas_usable_width_px: 1.0,
             pending_navigation_refresh: false,
             delete_view_confirm: None,
@@ -290,102 +279,32 @@ impl Default for GanttChart {
 
 impl GanttChart {
     pub fn render_compact_toolbar(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        let ds_idx = app.current_source_key;
-        if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
-            // Save zoom/pan and view index for the tab we are leaving.
-            if let Some(old_idx) = self.last_data_source_index {
-                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
-                self.tab_view_index.insert(old_idx, self.current_view_index);
-                self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
-                // Persist old tab using its cached file keys.
-                let old_keys = self.tab_file_keys.get(&old_idx).cloned();
-                if let Some((path, hash)) = old_keys {
-                    if let Some(h) = hash {
-                        self.persist_tab_state(old_idx, false, path.as_deref(), &h);
-                    }
-                }
-            }
-            // Cache current tab's file keys so we can persist it later.
-            self.tab_file_keys.insert(ds_idx, (app.current_file_path.clone(), app.current_file_hash.clone()));
-
-            let start_s = app.get_start_date().timestamp();
-            let end_s = app.get_end_date().timestamp();
-            self.initial_start_s = Some(start_s);
-            self.initial_end_s = Some(end_s);
-            self.last_data_source_index = Some(ds_idx);
-            // For imported files, clamp the visible window to the data span so the
-            // canvas doesn't show empty space beyond the file's time range.
-            // For live data (ds_idx == 0), the load window is only ±N hours but the
-            // user may want a wider default_timespan — don't clamp.
-            if ds_idx != 0 {
-                let span_s = (end_s - start_s) as f32;
-                if span_s > 0.0 && span_s < self.options.canvas_width_s {
-                    self.options.canvas_width_s = span_s.max(10.0);
-                    self.options.sideways_pan_in_points = 0.0;
-                }
-            }
-
-            // Restore zoom/pan if this tab was visited before; overrides span-based defaults.
-            if let Some(&(saved_width, saved_pan, saved_row_h)) = self.tab_view_state.get(&ds_idx) {
-                self.options.canvas_width_s = saved_width;
-                self.options.sideways_pan_in_points = saved_pan;
-                self.options.rect_height = saved_row_h;
-            } else if ds_idx > 0 {
-                // First visit this session — try persistent cache.
-                if let Some(hash) = app.current_file_hash.as_deref() {
-                    self.restore_from_cache(ds_idx, app.current_file_path.as_deref(), hash);
-                }
-            }
-
-            // Restore view index for this tab; reset to 0 if no saved state so we
-            // don't inherit the previous tab's view index.
-            self.current_view_index = self.tab_view_index.get(&ds_idx)
-                .copied()
-                .unwrap_or(0)
-                .min(self.gantt_views.len().saturating_sub(1));
-
-            // Restore energy panel state if this tab was visited before.
-            if let Some(&(y_bounds, fit, height)) = self.energy_panel_state.get(&ds_idx) {
-                self.energy.y_bounds = y_bounds;
-                self.energy.fit_to_figure = fit;
-                self.energy.panel_height = height;
-            }
-
-            // Apply or restore aggregation levels when the data source changes.
-            use crate::models::file_types::FileTypeRegistry;
-            if ds_idx == 0 {
-                // Back to live data → restore the active view's preset levels.
-                if let Some(view) = self.gantt_views.get(self.current_view_index) {
-                    self.options.levels = view.levels.clone();
-                    self.options.resource_filter = view.filter.clone();
-                    self.options.leaf_label_template = view.leaf_label_template.clone();
-                    self.options.sort_by_label = view.sort_by_label;
-                    self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
-                        .cloned()
-                        .or_else(|| backward_compat_preset(view));
-                }
-            } else {
-                let type_name = app.current_file_type_name.clone();
-                let registry = FileTypeRegistry::default();
-                if let Some(levels) = registry.find_by_name(&type_name).and_then(|t| t.hierarchy_levels()) {
-                    // File type has its own fixed hierarchy — ignore view index.
-                    self.options.levels = levels;
-                    self.options.resource_filter = None;
-                    self.options.leaf_label_template = None;
-                } else if let Some(view) = self.gantt_views.get(self.current_view_index) {
-                    // OAR-style file — apply the restored view.
-                    self.options.levels = view.levels.clone();
-                    self.options.resource_filter = view.filter.clone();
-                    self.options.leaf_label_template = view.leaf_label_template.clone();
-                    self.options.sort_by_label = view.sort_by_label;
-                    self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
-                        .cloned()
-                        .or_else(|| backward_compat_preset(view));
-                }
-            }
+        // First-ever frame bootstrap — a binary that manages multiple sources
+        // is expected to call `apply_view_snapshot` right after switching, which
+        // overrides this; this only matters before that's ever happened (e.g.
+        // a binary with a single perpetual source, like a live feed).
+        if self.initial_start_s.is_none() {
+            self.initial_start_s = Some(app.get_start_date().timestamp());
+            self.initial_end_s = Some(app.get_end_date().timestamp());
         }
 
-        let supports_hierarchy = app.current_file_type_supports_hierarchy();
+        // Every frame: apply the binary's fixed hierarchy override if present,
+        // else follow whatever Gantt View is currently selected.
+        if let Some(levels) = &self.hierarchy_override {
+            self.options.levels = levels.clone();
+            self.options.resource_filter = None;
+            self.options.leaf_label_template = None;
+        } else if let Some(view) = self.gantt_views.get(self.current_view_index) {
+            self.options.levels = view.levels.clone();
+            self.options.resource_filter = view.filter.clone();
+            self.options.leaf_label_template = view.leaf_label_template.clone();
+            self.options.sort_by_label = view.sort_by_label;
+            self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
+                .cloned()
+                .or_else(|| backward_compat_preset(view));
+        }
+
+        let supports_hierarchy = app.show_hierarchy_controls;
 
         // "View" dropdown in the top toolbar — mirrors the tab row below
         let current_view_name = self.gantt_views
@@ -435,22 +354,6 @@ impl GanttChart {
         ui.add_space(6.0);
 
         // Quick timeline navigation
-        let base_font = TextStyle::Body.resolve(ui.style());
-        let gutter_width = compute_gutter_width(
-            ui.ctx(),
-            &base_font,
-            &self.options,
-            app,
-            &app.get_current_clusters(),
-        );
-        let fallback_usable_width = (ui.available_width() - gutter_width).max(1.0);
-        let canvas_usable_width = if self.last_canvas_usable_width_px > 1.0 {
-            self.last_canvas_usable_width_px
-        } else {
-            fallback_usable_width
-        };
-        let points_per_second = canvas_usable_width / self.options.canvas_width_s;
-
         fn fmt_nav(s: i64) -> String {
             if s % (7 * 86_400) == 0  { format!("{}w", s / (7 * 86_400)) }
             else if s % 86_400 == 0   { format!("{}d", s / 86_400) }
@@ -464,14 +367,14 @@ impl GanttChart {
         // ◀ buttons: largest step first (reverse order)
         for &step_s in steps.iter().rev() {
             if ui.small_button(format!("◀ {}", fmt_nav(step_s))).clicked() {
-                let (vs, ve) = self.current_visible_window(app, ds_idx);
-                self.set_visible_window(app, ds_idx, vs - step_s, ve - step_s);
+                let (vs, ve) = self.current_visible_window(app);
+                self.set_visible_window(app, vs - step_s, ve - step_s);
             }
         }
 
         // Jump-to button
         if ui.small_button("🕐").on_hover_text("Jump to date/time").clicked() {
-            let (vs, ve) = self.current_visible_window(app, ds_idx);
+            let (vs, ve) = self.current_visible_window(app);
             let center_s = vs + (ve - vs) / 2;
             let dt = Local.timestamp_opt(center_s, 0).single()
                 .unwrap_or_else(Local::now);
@@ -484,8 +387,8 @@ impl GanttChart {
         // ▶ buttons: smallest step first (forward order)
         for &step_s in steps.iter() {
             if ui.small_button(format!("{} ▶", fmt_nav(step_s))).clicked() {
-                let (vs, ve) = self.current_visible_window(app, ds_idx);
-                self.set_visible_window(app, ds_idx, vs + step_s, ve + step_s);
+                let (vs, ve) = self.current_visible_window(app);
+                self.set_visible_window(app, vs + step_s, ve + step_s);
             }
         }
 
@@ -501,10 +404,10 @@ impl GanttChart {
                 ));
                 self.pending_navigation_refresh = true;
             } else {
-                let (vs, ve) = self.current_visible_window(app, ds_idx);
+                let (vs, ve) = self.current_visible_window(app);
                 let width = (ve - vs).max(1);
                 let now_s = chrono::Utc::now().timestamp();
-                self.set_visible_window(app, ds_idx, now_s - width / 2, now_s + width / 2);
+                self.set_visible_window(app, now_s - width / 2, now_s + width / 2);
             }
         }
     }
@@ -529,7 +432,7 @@ impl GanttChart {
     /// Current visible (start_s, end_s) window, regardless of whether this
     /// tab is showing the Gantt canvas (pixel-pan based) or an energy-only
     /// view (tracked directly in seconds) — nav controls shouldn't care which.
-    fn current_visible_window(&self, app: &ApplicationContext, ds_idx: usize) -> (i64, i64) {
+    fn current_visible_window(&self, app: &ApplicationContext) -> (i64, i64) {
         if app.show_gantt() {
             let usable = self.last_canvas_usable_width_px.max(1.0);
             let init_s = self.initial_start_s.unwrap_or_else(|| chrono::Utc::now().timestamp());
@@ -540,14 +443,14 @@ impl GanttChart {
         } else {
             let default_vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
             let default_ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
-            self.energy_visible.get(&ds_idx).copied().unwrap_or((default_vs, default_ve))
+            self.current_energy_visible.unwrap_or((default_vs, default_ve))
         }
     }
 
     /// Sets the visible window, writing to whichever representation this
-    /// tab actually reads (Gantt pixel-pan, or the energy-only seconds map),
+    /// tab actually reads (Gantt pixel-pan, or the energy-only seconds field),
     /// and flags that a refresh would be useful for the new window.
-    fn set_visible_window(&mut self, app: &ApplicationContext, ds_idx: usize, new_vs: i64, new_ve: i64) {
+    fn set_visible_window(&mut self, app: &ApplicationContext, new_vs: i64, new_ve: i64) {
         if app.show_gantt() {
             let usable = self.last_canvas_usable_width_px.max(1.0);
             let init_s = self.initial_start_s.unwrap_or(new_vs);
@@ -556,93 +459,70 @@ impl GanttChart {
             self.options.sideways_pan_in_points = (init_s as f32 - new_vs as f32) * usable / canvas_w;
             self.options.zoom_to_relative_s_range = None;
         } else {
-            self.energy_visible.insert(ds_idx, (new_vs, new_ve));
+            self.current_energy_visible = Some((new_vs, new_ve));
         }
         self.pending_navigation_refresh = true;
     }
 
-    /// Notify the chart that the data source at `removed_idx` (1-based) was
-    /// removed by the binary's tab management. Per-tab caches are keyed by
-    /// position, so without this the tab that slides into the vacated slot
-    /// would inherit whatever was cached there instead of its own state.
-    pub fn handle_tab_removed(&mut self, removed_idx: usize) {
-        fn shift<V>(map: &mut std::collections::HashMap<usize, V>, removed_idx: usize) {
-            let shifted: std::collections::HashMap<usize, V> = std::mem::take(map)
-                .into_iter()
-                .filter(|(k, _)| *k != removed_idx)
-                .map(|(k, v)| if k > removed_idx { (k - 1, v) } else { (k, v) })
-                .collect();
-            *map = shifted;
+    /// Sets a fixed hierarchy override (e.g. a file type with a mandatory
+    /// layout). `None` reverts to following the selected Gantt View.
+    pub fn set_hierarchy_override(&mut self, levels: Option<Vec<String>>) {
+        self.hierarchy_override = levels;
+    }
+
+    /// Captures everything about the current view worth remembering across
+    /// a source switch — zoom/pan, selected Gantt View, energy panel state,
+    /// and the hierarchy override. Core has no notion of "tabs"; a binary
+    /// that wants per-tab memory captures one of these before switching away
+    /// and applies it (or a freshly-built default) after switching to a
+    /// source it hasn't seen yet.
+    pub fn capture_view_snapshot(&self) -> GanttViewSnapshot {
+        GanttViewSnapshot {
+            initial_start_s: self.initial_start_s.unwrap_or(0),
+            initial_end_s: self.initial_end_s.unwrap_or(0),
+            canvas_width_s: self.options.canvas_width_s,
+            sideways_pan_in_points: self.options.sideways_pan_in_points,
+            rect_height: self.options.rect_height,
+            current_view_index: self.current_view_index,
+            energy_y_bounds: self.energy.y_bounds,
+            energy_fit_to_figure: self.energy.fit_to_figure,
+            energy_panel_height: self.energy.panel_height,
+            energy_visible_range: self.current_energy_visible,
+            hierarchy_override: self.hierarchy_override.clone(),
         }
-        shift(&mut self.tab_file_keys, removed_idx);
-        shift(&mut self.tab_view_state, removed_idx);
-        shift(&mut self.energy_visible, removed_idx);
-        shift(&mut self.energy_panel_state, removed_idx);
-        shift(&mut self.tab_view_index, removed_idx);
-
-        self.last_data_source_index = match self.last_data_source_index {
-            Some(idx) if idx == removed_idx => None,
-            Some(idx) if idx > removed_idx => Some(idx - 1),
-            other => other,
-        };
     }
 
-    /// Persist `tab_idx`'s state to the on-disk cache.
-    /// `is_active` — whether this is the currently visible tab (reads live options vs snapshot).
-    /// `file_path` / `file_hash` — provided by the caller (SimState); core has no import knowledge.
-    pub fn persist_tab_state(
-        &mut self,
-        tab_idx: usize,
-        is_active: bool,
-        file_path: Option<&str>,
-        file_hash: &str,
-    ) {
-        if tab_idx == 0 { return; }
-        // Skip tabs never visited this session — nothing to save.
-        if !is_active && !self.tab_view_state.contains_key(&tab_idx) { return; }
-
-        let (w, pan, rh) = if is_active {
-            (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height)
-        } else {
-            self.tab_view_state.get(&tab_idx).copied()
-                .unwrap_or((self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height))
-        };
-        let vi = if is_active {
-            self.current_view_index
-        } else {
-            self.tab_view_index.get(&tab_idx).copied().unwrap_or(self.current_view_index)
-        };
-        let (y_bounds, fit, ph) = if is_active {
-            (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height)
-        } else {
-            self.energy_panel_state.get(&tab_idx).copied()
-                .unwrap_or((self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height))
-        };
-        let state = TabViewState {
-            canvas_width_s: w,
-            sideways_pan: pan,
-            row_height: rh,
-            view_index: vi,
-            energy_y_min: y_bounds.map(|b| b.0),
-            energy_y_max: y_bounds.map(|b| b.1),
-            energy_fit: fit,
-            energy_panel_height: ph,
-        };
-        self.tab_state_cache.store(file_path, file_hash, state);
-        self.tab_state_cache.save_to_disk();
+    /// Applies a previously captured (or freshly built) snapshot.
+    pub fn apply_view_snapshot(&mut self, snap: &GanttViewSnapshot) {
+        self.initial_start_s = Some(snap.initial_start_s);
+        self.initial_end_s = Some(snap.initial_end_s);
+        self.options.canvas_width_s = snap.canvas_width_s;
+        self.options.sideways_pan_in_points = snap.sideways_pan_in_points;
+        self.options.rect_height = snap.rect_height;
+        self.options.zoom_to_relative_s_range = None;
+        self.current_view_index = snap.current_view_index.min(self.gantt_views.len().saturating_sub(1));
+        self.energy.y_bounds = snap.energy_y_bounds;
+        self.energy.fit_to_figure = snap.energy_fit_to_figure;
+        self.energy.panel_height = snap.energy_panel_height;
+        self.current_energy_visible = snap.energy_visible_range;
+        self.hierarchy_override = snap.hierarchy_override.clone();
     }
+}
 
-    /// Restore tab state from the on-disk cache (first visit this session).
-    fn restore_from_cache(&mut self, ds_idx: usize, file_path: Option<&str>, file_hash: &str) {
-        let Some(saved) = self.tab_state_cache.lookup(file_path, file_hash) else { return };
-        self.options.canvas_width_s = saved.canvas_width_s;
-        self.options.sideways_pan_in_points = saved.sideways_pan;
-        self.options.rect_height = saved.row_height;
-        let vi = saved.view_index.min(self.gantt_views.len().saturating_sub(1));
-        self.tab_view_index.insert(ds_idx, vi);
-        let y_bounds = saved.energy_y_min.zip(saved.energy_y_max);
-        self.energy_panel_state.insert(ds_idx, (y_bounds, saved.energy_fit, saved.energy_panel_height));
-    }
+/// See `GanttChart::capture_view_snapshot`/`apply_view_snapshot`.
+#[derive(Clone, Debug)]
+pub struct GanttViewSnapshot {
+    pub initial_start_s: i64,
+    pub initial_end_s: i64,
+    pub canvas_width_s: f32,
+    pub sideways_pan_in_points: f32,
+    pub rect_height: f32,
+    pub current_view_index: usize,
+    pub energy_y_bounds: Option<(f64, f64)>,
+    pub energy_fit_to_figure: bool,
+    pub energy_panel_height: f32,
+    pub energy_visible_range: Option<(i64, i64)>,
+    pub hierarchy_override: Option<Vec<String>>,
 }
 
 impl View for GanttChart {
@@ -676,88 +556,20 @@ impl View for GanttChart {
         self.options.job_color_field  = app.prefs.gantt_config.job_color_field.clone();
         self.options.field_colors = cfg_field_colors(&app.prefs.gantt_config.field_colors);
 
-        let ds_idx = app.current_source_key;
-        if self.initial_start_s.is_none() || self.last_data_source_index != Some(ds_idx) {
-            // Save zoom/pan and view index for the tab we are leaving (UI-click switches land here).
-            if let Some(old_idx) = self.last_data_source_index {
-                self.tab_view_state.insert(old_idx, (self.options.canvas_width_s, self.options.sideways_pan_in_points, self.options.rect_height));
-                self.tab_view_index.insert(old_idx, self.current_view_index);
-                self.energy_panel_state.insert(old_idx, (self.energy.y_bounds, self.energy.fit_to_figure, self.energy.panel_height));
-                let old_keys = self.tab_file_keys.get(&old_idx).cloned();
-                if let Some((path, hash)) = old_keys {
-                    if let Some(h) = hash {
-                        self.persist_tab_state(old_idx, false, path.as_deref(), &h);
-                    }
-                }
-            }
-            self.tab_file_keys.insert(ds_idx, (app.current_file_path.clone(), app.current_file_hash.clone()));
-
-            let start_s = app.get_start_date().timestamp();
-            let end_s = app.get_end_date().timestamp();
-            self.initial_start_s = Some(start_s);
-            self.initial_end_s = Some(end_s);
-            self.last_data_source_index = Some(ds_idx);
-            // For imported files, clamp the visible window to the data span so the
-            // canvas doesn't show empty space beyond the file's time range.
-            // For live data (ds_idx == 0), the load window is only ±N hours but the
-            // user may want a wider default_timespan — don't clamp.
-            if ds_idx != 0 {
-                let span_s = (end_s - start_s) as f32;
-                if span_s > 0.0 && span_s < self.options.canvas_width_s {
-                    self.options.canvas_width_s = span_s.max(10.0);
-                    self.options.sideways_pan_in_points = 0.0;
-                }
-            }
-
-            // Restore zoom/pan if this tab was visited before.
-            if let Some(&(saved_width, saved_pan, saved_row_h)) = self.tab_view_state.get(&ds_idx) {
-                self.options.canvas_width_s = saved_width;
-                self.options.sideways_pan_in_points = saved_pan;
-                self.options.rect_height = saved_row_h;
-            } else if ds_idx > 0 {
-                // First visit this session — try persistent cache.
-                if let Some(hash) = app.current_file_hash.as_deref() {
-                    self.restore_from_cache(ds_idx, app.current_file_path.as_deref(), hash);
-                }
-            }
-
-            // Restore view index for this tab; reset to 0 if no saved state so we
-            // don't inherit the previous tab's view index.
-            self.current_view_index = self.tab_view_index.get(&ds_idx)
-                .copied()
-                .unwrap_or(0)
-                .min(self.gantt_views.len().saturating_sub(1));
-            if let Some(view) = self.gantt_views.get(self.current_view_index) {
-                self.options.levels = view.levels.clone();
-                self.options.resource_filter = view.filter.clone();
-                self.options.leaf_label_template = view.leaf_label_template.clone();
-                self.options.sort_by_label = view.sort_by_label;
-                self.options.leaf_info_preset = resolve_leaf_preset(&self.leaf_info_presets, &view.leaf_infos)
-                    .cloned()
-                    .or_else(|| backward_compat_preset(view));
-            }
-
-            // Restore energy panel state if this tab was visited before.
-            if let Some(&(y_bounds, fit, height)) = self.energy_panel_state.get(&ds_idx) {
-                self.energy.y_bounds = y_bounds;
-                self.energy.fit_to_figure = fit;
-                self.energy.panel_height = height;
-            }
+        // First-ever frame bootstrap — see `render_compact_toolbar`.
+        if self.initial_start_s.is_none() {
+            self.initial_start_s = Some(app.get_start_date().timestamp());
+            self.initial_end_s = Some(app.get_end_date().timestamp());
         }
 
-        // Every frame: enforce the correct hierarchy levels regardless of what
-        // other code paths (tab clicks, view dropdown) may have set previously.
-        if ds_idx != 0 {
-            use crate::models::file_types::FileTypeRegistry;
-            let type_name = app.current_file_type_name.as_str();
-            if let Some(levels) = FileTypeRegistry::default()
-                .find_by_name(type_name)
-                .and_then(|t| t.hierarchy_levels())
-            {
-                self.options.levels = levels;
-                self.options.resource_filter = None;
-                self.options.leaf_label_template = None;
-            }
+        // Every frame: enforce the binary's fixed hierarchy override if
+        // present, else follow whatever Gantt View is currently selected —
+        // regardless of what other code paths (tab clicks, view dropdown)
+        // may have set previously.
+        if let Some(levels) = &self.hierarchy_override {
+            self.options.levels = levels.clone();
+            self.options.resource_filter = None;
+            self.options.leaf_label_template = None;
         } else if let Some(view) = self.gantt_views.get(self.current_view_index) {
             self.options.levels = view.levels.clone();
             self.options.resource_filter = view.filter.clone();
@@ -1004,10 +816,10 @@ impl View for GanttChart {
                 })();
                 match parsed {
                     Ok(target_s) => {
-                        let (vs, ve) = self.current_visible_window(app, ds_idx);
+                        let (vs, ve) = self.current_visible_window(app);
                         let width = ve - vs;
                         let new_vs = target_s - width / 2;
-                        self.set_visible_window(app, ds_idx, new_vs, new_vs + width);
+                        self.set_visible_window(app, new_vs, new_vs + width);
                         self.jump_dialog_open = false;
                         self.jump_error = None;
                     }
@@ -1153,20 +965,16 @@ impl View for GanttChart {
                             .collect();
 
                         let raw_multi = app.get_current_energy_series_multi();
-                        let in_group = app.current_group_active;
+                        let combine_with_estimate = app.show_estimated_with_energy;
                         energy_series = if raw_multi.is_empty() {
                             // No raw energy files — estimate from Gantt jobs.
                             vec![("Estimated".to_string(),
                                 energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource))]
-                        } else if in_group {
-                            // Group with Gantt member + raw energy files: estimated series first, then raw.
-                            let gantt_name = if app.current_source_name.is_empty() {
-                                "Gantt".to_string()
-                            } else {
-                                app.current_source_name.clone()
-                            };
+                        } else if combine_with_estimate {
+                            // Gantt source combined with separate energy-file sources:
+                            // estimated series first, then each raw one.
                             let mut all = vec![(
-                                format!("{} (est.)", gantt_name),
+                                "Estimated".to_string(),
                                 energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource),
                             )];
                             for (name, s) in &raw_multi {
@@ -1192,7 +1000,7 @@ impl View for GanttChart {
             // Energy-only source: use saved visible range if available, else full data bounds.
             let default_vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
             let default_ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
-            let (vs, ve) = self.energy_visible.get(&ds_idx).copied().unwrap_or((default_vs, default_ve));
+            let (vs, ve) = self.current_energy_visible.unwrap_or((default_vs, default_ve));
             visible_range = Some((vs, ve));
             let raw_multi = app.get_current_energy_series_multi();
             energy_series = if raw_multi.is_empty() {
@@ -1258,7 +1066,7 @@ impl View for GanttChart {
                         self.pending_navigation_refresh = true;
                     } else {
                         // Energy-only: persist visible range directly.
-                        self.energy_visible.insert(ds_idx, (new_vs, new_ve));
+                        self.current_energy_visible = Some((new_vs, new_ve));
                     }
                 }
             }

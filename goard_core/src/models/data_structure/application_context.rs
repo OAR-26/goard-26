@@ -19,18 +19,24 @@ pub struct ApplicationContext {
     pub start_date: DateTime<Local>,
     pub end_date: DateTime<Local>,
 
-    // Flat display state — set by the binary when switching sources.
-    // Core has no knowledge of how sources are managed; it just renders these fields.
-    pub current_source_key: usize,
-    pub current_source_name: String,
-    pub current_group_active: bool,
-    pub current_energy_series: Vec<(String, Vec<(i64, f64)>)>,
+    // Flat display state — set by the binary. Core has no knowledge of tabs,
+    // groups, files, or how sources are managed; it just renders these.
     pub show_energy: bool,
     pub show_gantt_panel: bool,
-    pub current_file_path: Option<String>,
-    pub current_file_hash: Option<String>,
-    pub current_file_type_name: String,
-    pub current_supports_hierarchy: bool,
+
+    /// One-shot signal: the binary just swapped the active data source.
+    /// Core reads this once to refit its view to the new data, then clears it.
+    /// Carries no identity — core doesn't track *which* source, just that it changed.
+    pub source_changed: bool,
+
+    /// Whether the Gantt's hierarchy-view controls (the "View:" dropdown)
+    /// should be shown/interactive for the current source.
+    pub show_hierarchy_controls: bool,
+
+    /// Whether to additionally show a job-based energy estimate alongside
+    /// the raw energy series for the current source (e.g. a Gantt source
+    /// combined with separate energy-file sources sharing one view).
+    pub show_estimated_with_energy: bool,
 
     /// Whether to synthesize the "all resources" virtual job row in the Gantt
     /// each frame. File-imported OAR data already carries this row from the
@@ -111,16 +117,12 @@ impl ApplicationContext {
         self.show_gantt_panel
     }
 
-    pub fn current_file_type_supports_hierarchy(&self) -> bool {
-        self.current_supports_hierarchy
-    }
-
     pub fn get_current_energy_series(&self) -> Option<&[(i64, f64)]> {
-        self.current_energy_series.first().map(|(_, s)| s.as_slice())
+        self.data.energy_series.first().map(|(_, s)| s.as_slice())
     }
 
     pub fn get_current_energy_series_multi(&self) -> Vec<(&str, &[(i64, f64)])> {
-        self.current_energy_series.iter()
+        self.data.energy_series.iter()
             .map(|(name, s)| (name.as_str(), s.as_slice()))
             .collect()
     }
@@ -139,16 +141,11 @@ impl Default for ApplicationContext {
 
             start_date: now,
             end_date: now,
-            current_source_key: 0,
-            current_source_name: String::new(),
-            current_group_active: false,
-            current_energy_series: Vec::new(),
             show_energy: true,
             show_gantt_panel: true,
-            current_file_path: None,
-            current_file_hash: None,
-            current_file_type_name: String::new(),
-            current_supports_hierarchy: true,
+            source_changed: false,
+            show_hierarchy_controls: true,
+            show_estimated_with_energy: false,
             show_all_resources_row: false,
         };
         // Center the initial window on now using default_timespan so

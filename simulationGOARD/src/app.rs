@@ -34,7 +34,7 @@ impl App {
                         if let Some(target) = anchor_index {
                             sim_state.pending_group_target = Some(target);
                         }
-                        match sim_state.import_data_from_json(&mut application_context, &content, Some(path.clone()), None) {
+                        match sim_state.import_data_from_json(&mut application_context, &mut gantt_view, &content, Some(path.clone()), None) {
                             Ok(()) => {
                                 if anchor_index.is_none() {
                                     anchor_index = Some(sim_state.imported_data_sources.len());
@@ -203,6 +203,7 @@ impl eframe::App for App {
                 let pending = self.sim_state.pending_import.take().unwrap();
                 let result = self.sim_state.import_data_from_json(
                     &mut self.application_context,
+                    &mut self.gantt_view,
                     &pending.content,
                     pending.path,
                     pending.selected_type_name.as_deref(),

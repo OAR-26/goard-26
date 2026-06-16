@@ -19,6 +19,11 @@ pub struct JobData {
 
     /// Active markers from the current data source.
     pub markers: Vec<GanttMarker>,
+
+    /// Raw energy series for the current data source: (series name, points).
+    /// Empty when there's no measured energy data — the Gantt falls back to
+    /// estimating from job allocations.
+    pub energy_series: Vec<(String, Vec<(i64, f64)>)>,
 }
 
 impl Default for JobData {
@@ -32,6 +37,7 @@ impl Default for JobData {
             dead_intervals: HashMap::new(),
             standby_upto: HashMap::new(),
             markers: Vec::new(),
+            energy_series: Vec::new(),
         }
     }
 }
