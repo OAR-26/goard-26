@@ -19,7 +19,6 @@ pub struct App {
 impl App {
     pub fn new(import_entries: Vec<Vec<String>>) -> Self {
         let mut application_context = ApplicationContext::default();
-        application_context.live_data = false;
         let mut sim_state = SimState::default();
 
         #[cfg(not(target_arch = "wasm32"))]

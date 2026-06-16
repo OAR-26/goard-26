@@ -31,7 +31,7 @@ impl Default for Tools {
  */
 impl View for Tools {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        self.render_impl(ui, app, None, |_ui, _app| {});
+        self.render_impl(ui, app, None, |_ui, _app| {}, |_ui, _app| {});
     }
 }
 
@@ -42,32 +42,39 @@ impl Tools {
         app: &mut ApplicationContext,
         gantt: &mut GanttChart,
     ) {
-        self.render_impl(ui, app, Some(gantt), |_ui, _app| {});
+        self.render_impl(ui, app, Some(gantt), |_ui, _app| {}, |_ui, _app| {});
     }
 
-    /// Same as `render_with_gantt`, but `filter_extra` is rendered inside the
-    /// Filters window — use it to inject app-specific filter controls (e.g. a
-    /// cluster-preset quick-select) without core knowing about presets.
-    pub fn render_with_gantt_and_filter_extra<F>(
+    /// Same as `render_with_gantt`, but with two injection points:
+    /// `toolbar_extra` is rendered in the toolbar's right-side quick-actions
+    /// area (e.g. a refresh-rate control), and `filter_extra` is rendered
+    /// inside the Filters window (e.g. a cluster-preset quick-select). Core
+    /// has no notion of refresh engines or presets — these let a binary add
+    /// its own controls without core knowing what they're for.
+    pub fn render_with_gantt_and_extras<F1, F2>(
         &mut self,
         ui: &mut egui::Ui,
         app: &mut ApplicationContext,
         gantt: &mut GanttChart,
-        filter_extra: F,
+        toolbar_extra: F1,
+        filter_extra: F2,
     ) where
-        F: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+        F1: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+        F2: FnOnce(&mut egui::Ui, &mut ApplicationContext),
     {
-        self.render_impl(ui, app, Some(gantt), filter_extra);
+        self.render_impl(ui, app, Some(gantt), toolbar_extra, filter_extra);
     }
 
-    fn render_impl<F>(
+    fn render_impl<F1, F2>(
         &mut self,
         ui: &mut egui::Ui,
         app: &mut ApplicationContext,
         gantt: Option<&mut GanttChart>,
-        filter_extra: F,
+        toolbar_extra: F1,
+        filter_extra: F2,
     ) where
-        F: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+        F1: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+        F2: FnOnce(&mut egui::Ui, &mut ApplicationContext),
     {
         let mut gantt = gantt;
         let has_gantt = gantt.is_some();
@@ -159,45 +166,7 @@ impl Tools {
                     app.prefs.theme_toggle_requested = true;
                 }
 
-                // Refresh rate + manual refresh — only relevant in live mode.
-                if app.live_data {
-                    ui.menu_button(
-                        "🕓 ".to_string() + &t!("app.menu.refresh_rate.button"),
-                        |ui| {
-                            ui.set_min_width(70.0);
-
-                            let refresh_rates = vec![
-                                (30, t!("app.menu.refresh_rate.refresh_30")),
-                                (60, t!("app.menu.refresh_rate.refresh_60")),
-                                (300, t!("app.menu.refresh_rate.refresh_300")),
-                                (u64::MAX, t!("app.menu.refresh_rate.refresh_never")),
-                            ];
-
-                            for (rate, label) in refresh_rates {
-                                let selected = app.desired_refresh_rate_s == rate;
-                                let display_label = if selected {
-                                    format!("{} ✔", label)
-                                } else {
-                                    label.to_string()
-                                };
-                                if ui.selectable_label(selected, display_label).clicked() {
-                                    app.desired_refresh_rate_s = rate;
-                                    ui.close_menu();
-                                }
-                            }
-                        },
-                    );
-
-                    let refresh_btn = egui::Button::new("⟳");
-                    let refresh_btn_response = if app.is_refreshing {
-                        ui.add_enabled(false, refresh_btn)
-                    } else {
-                        ui.add(refresh_btn)
-                    };
-                    if refresh_btn_response.clicked() {
-                        app.refresh_requested = true;
-                    }
-                }
+                toolbar_extra(ui, app);
             });
 
             });

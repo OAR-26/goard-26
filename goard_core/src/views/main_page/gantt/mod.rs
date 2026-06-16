@@ -708,7 +708,7 @@ impl View for GanttChart {
             };
         }
 
-        if app.live_data {
+        if app.show_all_resources_row {
             app.data.all_jobs.retain(|j| j.id != 0);
         }
 
@@ -740,7 +740,7 @@ impl View for GanttChart {
             get_all_resources(&app.get_current_clusters())
         };
 
-        if app.live_data {
+        if app.show_all_resources_row {
             app.data.all_jobs.push(Job {
                 id: 0,
                 owner: "all_resources".to_string(),

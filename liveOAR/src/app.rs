@@ -27,7 +27,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         let mut application_context = ApplicationContext::default();
-        application_context.live_data = true;
+        application_context.show_all_resources_row = true;
         let mut live_engine = LiveEngine::new(chrono::Local::now());
         live_engine.update_periodically(&mut application_context);
         App {
@@ -103,10 +103,43 @@ impl eframe::App for App {
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {
             match self.application_context.view_type {
                 goard_core::views::view::ViewType::Gantt => {
-                    self.tools.render_with_gantt_and_filter_extra(
+                    self.tools.render_with_gantt_and_extras(
                         ui,
                         &mut self.application_context,
                         &mut self.gantt_view,
+                        |ui, app| {
+                            ui.menu_button("🕓 Refresh rate", |ui| {
+                                ui.set_min_width(70.0);
+                                let refresh_rates = [
+                                    (30, "30s"),
+                                    (60, "1min"),
+                                    (300, "5min"),
+                                    (u64::MAX, "Never"),
+                                ];
+                                for (rate, label) in refresh_rates {
+                                    let selected = app.desired_refresh_rate_s == rate;
+                                    let display_label = if selected {
+                                        format!("{} ✔", label)
+                                    } else {
+                                        label.to_string()
+                                    };
+                                    if ui.selectable_label(selected, display_label).clicked() {
+                                        app.desired_refresh_rate_s = rate;
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+
+                            let refresh_btn = egui::Button::new("⟳");
+                            let refresh_btn_response = if app.is_refreshing {
+                                ui.add_enabled(false, refresh_btn)
+                            } else {
+                                ui.add(refresh_btn)
+                            };
+                            if refresh_btn_response.clicked() {
+                                app.refresh_requested = true;
+                            }
+                        },
                         |ui, app| {
                             ui.separator();
                             ui.label("Cluster preset:");

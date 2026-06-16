@@ -15,10 +15,6 @@ pub struct ApplicationContext {
     pub view_type: ViewType,
     pub is_loading: bool,
     pub filters: JobFilters,
-    /// Whether the current view represents a live snapshot (vs. imported/static
-    /// data). Core uses this only to decide rendering choices (e.g. synthesizing
-    /// the "all resources" virtual job); it has no idea how live data is fetched.
-    pub live_data: bool,
 
     pub start_date: DateTime<Local>,
     pub end_date: DateTime<Local>,
@@ -46,6 +42,12 @@ pub struct ApplicationContext {
     pub current_file_hash: Option<String>,
     pub current_file_type_name: String,
     pub current_supports_hierarchy: bool,
+
+    /// Whether to synthesize the "all resources" virtual job row in the Gantt
+    /// each frame. File-imported OAR data already carries this row from the
+    /// parser; a binary with no file backing its data (e.g. a live feed) sets
+    /// this to true so core fabricates the row instead.
+    pub show_all_resources_row: bool,
 }
 
 impl ApplicationContext {
@@ -145,7 +147,6 @@ impl Default for ApplicationContext {
             view_type: ViewType::Gantt,
             is_loading: false,
             filters: JobFilters::default(),
-            live_data: false,
 
             start_date: now,
             end_date: now,
@@ -163,8 +164,9 @@ impl Default for ApplicationContext {
             current_file_hash: None,
             current_file_type_name: String::new(),
             current_supports_hierarchy: true,
+            show_all_resources_row: false,
         };
-        // Center the initial live-data window on now using default_timespan so
+        // Center the initial window on now using default_timespan so
         // the "now" line appears at the center of the Gantt on first load.
         let half = chrono::Duration::seconds(context.prefs.gantt_config.default_timespan_s / 2);
         context.start_date = now - half;
