@@ -467,19 +467,15 @@ impl GanttChart {
         // ◀ buttons: largest step first (reverse order)
         for &step_s in steps.iter().rev() {
             if ui.small_button(format!("◀ {}", fmt_nav(step_s))).clicked() {
-                self.options.sideways_pan_in_points += step_s as f32 * points_per_second;
-                self.options.zoom_to_relative_s_range = None;
-                self.pending_navigation_refresh = true;
+                let (vs, ve) = self.current_visible_window(app, ds_idx);
+                self.set_visible_window(app, ds_idx, vs - step_s, ve - step_s);
             }
         }
 
         // Jump-to button
         if ui.small_button("🕐").on_hover_text("Jump to date/time").clicked() {
-            let usable = self.last_canvas_usable_width_px.max(1.0);
-            let init_s = self.initial_start_s.unwrap_or_else(|| chrono::Utc::now().timestamp());
-            let pan_ratio = self.options.sideways_pan_in_points / usable;
-            let visible_start_s = init_s - (pan_ratio * self.options.canvas_width_s) as i64;
-            let center_s = visible_start_s + (self.options.canvas_width_s / 2.0) as i64;
+            let (vs, ve) = self.current_visible_window(app, ds_idx);
+            let center_s = vs + (ve - vs) / 2;
             let dt = Local.timestamp_opt(center_s, 0).single()
                 .unwrap_or_else(Local::now);
             self.jump_date_str = dt.format("%Y-%m-%d").to_string();
@@ -491,21 +487,28 @@ impl GanttChart {
         // ▶ buttons: smallest step first (forward order)
         for &step_s in steps.iter() {
             if ui.small_button(format!("{} ▶", fmt_nav(step_s))).clicked() {
-                self.options.sideways_pan_in_points -= step_s as f32 * points_per_second;
-                self.options.zoom_to_relative_s_range = None;
-                self.pending_navigation_refresh = true;
+                let (vs, ve) = self.current_visible_window(app, ds_idx);
+                self.set_visible_window(app, ds_idx, vs + step_s, ve + step_s);
             }
         }
 
         if ui.small_button(t!("app.gantt.now")).clicked() {
-            self.options.zoom_to_relative_s_range = Some((
-                ui.ctx().input(|i| i.time),
-                (
-                    0.,
-                    (self.initial_end_s.unwrap() - self.initial_start_s.unwrap()) as f64,
-                ),
-            ));
-            self.pending_navigation_refresh = true;
+            if app.show_gantt() {
+                // Smooth animation — Gantt-canvas-only concept.
+                self.options.zoom_to_relative_s_range = Some((
+                    ui.ctx().input(|i| i.time),
+                    (
+                        0.,
+                        (self.initial_end_s.unwrap() - self.initial_start_s.unwrap()) as f64,
+                    ),
+                ));
+                self.pending_navigation_refresh = true;
+            } else {
+                let (vs, ve) = self.current_visible_window(app, ds_idx);
+                let width = (ve - vs).max(1);
+                let now_s = chrono::Utc::now().timestamp();
+                self.set_visible_window(app, ds_idx, now_s - width / 2, now_s + width / 2);
+            }
         }
     }
 
@@ -516,6 +519,41 @@ impl GanttChart {
     /// it likes; one with no such engine can simply ignore it.
     pub fn take_navigation_refresh_request(&mut self) -> bool {
         std::mem::replace(&mut self.pending_navigation_refresh, false)
+    }
+
+    /// Current visible (start_s, end_s) window, regardless of whether this
+    /// tab is showing the Gantt canvas (pixel-pan based) or an energy-only
+    /// view (tracked directly in seconds) — nav controls shouldn't care which.
+    fn current_visible_window(&self, app: &ApplicationContext, ds_idx: usize) -> (i64, i64) {
+        if app.show_gantt() {
+            let usable = self.last_canvas_usable_width_px.max(1.0);
+            let init_s = self.initial_start_s.unwrap_or_else(|| chrono::Utc::now().timestamp());
+            let pan_ratio = self.options.sideways_pan_in_points / usable;
+            let vs = init_s - (pan_ratio * self.options.canvas_width_s) as i64;
+            let ve = vs + self.options.canvas_width_s as i64;
+            (vs, ve)
+        } else {
+            let default_vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
+            let default_ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
+            self.energy_visible.get(&ds_idx).copied().unwrap_or((default_vs, default_ve))
+        }
+    }
+
+    /// Sets the visible window, writing to whichever representation this
+    /// tab actually reads (Gantt pixel-pan, or the energy-only seconds map),
+    /// and flags that a refresh would be useful for the new window.
+    fn set_visible_window(&mut self, app: &ApplicationContext, ds_idx: usize, new_vs: i64, new_ve: i64) {
+        if app.show_gantt() {
+            let usable = self.last_canvas_usable_width_px.max(1.0);
+            let init_s = self.initial_start_s.unwrap_or(new_vs);
+            let canvas_w = (new_ve - new_vs).max(1) as f32;
+            self.options.canvas_width_s = canvas_w;
+            self.options.sideways_pan_in_points = (init_s as f32 - new_vs as f32) * usable / canvas_w;
+            self.options.zoom_to_relative_s_range = None;
+        } else {
+            self.energy_visible.insert(ds_idx, (new_vs, new_ve));
+        }
+        self.pending_navigation_refresh = true;
     }
 
     /// Notify the chart that the data source at `removed_idx` (1-based) was
@@ -963,14 +1001,10 @@ impl View for GanttChart {
                 })();
                 match parsed {
                     Ok(target_s) => {
-                        let init_s = self.initial_start_s.unwrap_or(target_s);
-                        let usable = self.last_canvas_usable_width_px.max(1.0);
-                        let canvas_w = self.options.canvas_width_s;
-                        self.options.sideways_pan_in_points =
-                            (init_s as f32 - target_s as f32 + canvas_w / 2.0)
-                            * usable / canvas_w;
-                        self.options.zoom_to_relative_s_range = None;
-                        self.pending_navigation_refresh = true;
+                        let (vs, ve) = self.current_visible_window(app, ds_idx);
+                        let width = ve - vs;
+                        let new_vs = target_s - width / 2;
+                        self.set_visible_window(app, ds_idx, new_vs, new_vs + width);
                         self.jump_dialog_open = false;
                         self.jump_error = None;
                     }
