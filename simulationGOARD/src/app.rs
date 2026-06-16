@@ -14,12 +14,16 @@ pub struct App {
     pub tools: Tools,
     pub application_context: ApplicationContext,
     pub sim_state: SimState,
+    energy_colors_draft: Vec<[u8; 3]>,
 }
 
 impl App {
     pub fn new(import_entries: Vec<Vec<String>>) -> Self {
         let mut application_context = ApplicationContext::default();
         let mut sim_state = SimState::default();
+        let mut gantt_view = GanttChart::default();
+        let energy_colors_draft = crate::sim_config::load_energy_series_colors();
+        gantt_view.set_energy_series_colors(energy_colors_draft.clone());
 
         #[cfg(not(target_arch = "wasm32"))]
         for entry in &import_entries {
@@ -46,25 +50,50 @@ impl App {
 
         App {
             dashboard_view: Dashboard::default(),
-            gantt_view: GanttChart::default(),
+            gantt_view,
             menu: Menu::default(),
             tools: Tools::default(),
             application_context,
             sim_state,
+            energy_colors_draft,
         }
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut settings_applied = false;
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            self.menu.render_with_file_items(ui, &mut self.application_context, |ui, _app| {
-                if ui.button("📁 Import File").clicked() {
-                    goard_core::file_import::trigger_file_dialog();
-                    ui.close_menu();
-                }
-            });
+            settings_applied = self.menu.render_with_extras(
+                ui,
+                &mut self.application_context,
+                |ui, _app| {
+                    if ui.button("📁 Import File").clicked() {
+                        goard_core::file_import::trigger_file_dialog();
+                        ui.close_menu();
+                    }
+                },
+                |ui, _app| {
+                    ui.heading("Energy series colors");
+                    let mut remove_idx: Option<usize> = None;
+                    for (i, c) in self.energy_colors_draft.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.color_edit_button_srgb(c);
+                            ui.label(format!("Series {}", i + 1));
+                            if ui.small_button("🗑").clicked() { remove_idx = Some(i); }
+                        });
+                    }
+                    if let Some(i) = remove_idx { self.energy_colors_draft.remove(i); }
+                    if ui.small_button("+ Add color").clicked() {
+                        self.energy_colors_draft.push([100, 100, 200]);
+                    }
+                },
+            );
         });
+        if settings_applied {
+            self.gantt_view.set_energy_series_colors(self.energy_colors_draft.clone());
+            crate::sim_config::save_energy_series_colors(&self.energy_colors_draft);
+        }
 
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {
             match self.application_context.view_type {

@@ -51,7 +51,6 @@ pub struct GanttConfig  {
 
     pub energy_panel_height: f32,
     pub energy_watts_per_resource: f64,
-    pub energy_series_colors: Vec<RgbColor>,
     pub now_line_color: RgbColor,
 
     pub zoom_max_seconds: f32,
@@ -114,16 +113,6 @@ impl Default for GanttConfig {
 
             energy_panel_height: 270.0,
             energy_watts_per_resource: 300.0,
-            energy_series_colors: vec![
-                RgbColor(31,  119, 180),
-                RgbColor(255, 127,  14),
-                RgbColor(44,  160,  44),
-                RgbColor(214,  39,  40),
-                RgbColor(148, 103, 189),
-                RgbColor(140,  86,  75),
-                RgbColor(227, 119, 194),
-                RgbColor(188, 189,  34),
-            ],
             now_line_color: RgbColor(220, 0, 0),
 
             zoom_max_seconds: (2 * 24 * 60 * 60) as f32,
@@ -213,13 +202,6 @@ impl GanttConfig {
 
             energy_panel_height:        f64("energy_panel_height").map(|v| v as f32).unwrap_or(def.energy_panel_height),
             energy_watts_per_resource:  f64("energy_watts_per_resource").unwrap_or(def.energy_watts_per_resource),
-            energy_series_colors: {
-                val.get("energy_series_colors")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|c| c.as_str().and_then(RgbColor::from_hex)).collect::<Vec<_>>())
-                    .filter(|v| !v.is_empty())
-                    .unwrap_or(def.energy_series_colors)
-            },
             now_line_color:             str_("now_line_color").and_then(RgbColor::from_hex).unwrap_or(def.now_line_color),
 
             zoom_max_seconds:           f64("zoom_max_seconds").map(|v| v as f32).unwrap_or(def.zoom_max_seconds),
@@ -258,9 +240,6 @@ impl GanttConfig {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn save(&self) {
         fn hex(c: RgbColor) -> String { format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2) }
-        let series: String = self.energy_series_colors.iter()
-            .map(|&c| format!("    \"{}\",\n", hex(c)))
-            .collect();
         let nav_steps_toml: String = self.nav_steps.iter()
             .map(|(n, u)| format!("\n[[nav_steps]]\nn    = {}\nunit = \"{}\"\n", n, u))
             .collect();
@@ -314,10 +293,6 @@ energy_panel_height = {energy_panel_height}
 
 # Estimated watts per assigned resource when no measured energy file is loaded
 energy_watts_per_resource = {energy_watts}
-
-# Color palette (hex) for multi-series energy lines. Cycles if more series than entries.
-energy_series_colors = [
-{series_colors}]
 
 # Color of the vertical 'now' marker line on the energy and Gantt plots
 now_line_color = \"{now_line_color}\"
@@ -403,7 +378,6 @@ Standby   = \"{standby_light}\"
             gantt_row_height_max = self.gantt_row_height_max,
             energy_panel_height  = self.energy_panel_height,
             energy_watts         = self.energy_watts_per_resource,
-            series_colors        = series,
             now_line_color       = hex(self.now_line_color),
             zoom_max             = self.zoom_max_seconds,
             zoom_min             = self.zoom_min_seconds,

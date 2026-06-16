@@ -147,20 +147,6 @@ impl SettingsPanel {
                         ui.add(egui::DragValue::new(&mut cfg.energy_watts_per_resource).range(0.0..=10000.0));
                     });
                     color_row(ui, "Now-line color", &mut cfg.now_line_color);
-                    ui.label("Series colors:");
-                    let mut remove_idx: Option<usize> = None;
-                    for (i, c) in cfg.energy_series_colors.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            let mut arr = rgb_arr(*c);
-                            if ui.color_edit_button_rgb(&mut arr).changed() { *c = arr_rgb(arr); }
-                            ui.label(format!("Series {}", i + 1));
-                            if ui.small_button("🗑").clicked() { remove_idx = Some(i); }
-                        });
-                    }
-                    if let Some(i) = remove_idx { cfg.energy_series_colors.remove(i); }
-                    if ui.small_button("+ Add color").clicked() {
-                        cfg.energy_series_colors.push(RgbColor(100, 100, 200));
-                    }
                     ui.add_space(6.0);
 
                     // ── Zoom ─────────────────────────────────────────────────

@@ -1,0 +1,14 @@
+# simulationGOARD-only settings. goard_core's config.toml has no notion of
+# this — it falls back to a deterministic per-index color when none is set.
+
+# Color palette (hex) for multi-series energy lines. Cycles if more series than entries.
+energy_series_colors = [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#bcbd22",
+]

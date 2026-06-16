@@ -243,9 +243,6 @@ impl Default for GanttChart {
         options.nav_steps = gantt_cfg.nav_steps_s();
         let mut energy_panel = EnergyPanelState::default();
         energy_panel.panel_height = gantt_cfg.energy_panel_height;
-        energy_panel.series_colors = gantt_cfg.energy_series_colors.iter()
-            .map(|c| [c.0, c.1, c.2])
-            .collect();
         let now_color = egui::Color32::from_rgb(
             gantt_cfg.now_line_color.0, gantt_cfg.now_line_color.1, gantt_cfg.now_line_color.2);
         energy_panel.now_line_color = now_color;
@@ -521,6 +518,14 @@ impl GanttChart {
         std::mem::replace(&mut self.pending_navigation_refresh, false)
     }
 
+    /// Sets the color palette used to cycle through multi-series energy
+    /// lines. Core has no opinion on this — it falls back to a deterministic
+    /// per-index color when empty (the default). A binary can call this to
+    /// apply its own palette.
+    pub fn set_energy_series_colors(&mut self, colors: Vec<[u8; 3]>) {
+        self.energy.series_colors = colors;
+    }
+
     /// Current visible (start_s, end_s) window, regardless of whether this
     /// tab is showing the Gantt canvas (pixel-pan based) or an energy-only
     /// view (tracked directly in seconds) — nav controls shouldn't care which.
@@ -664,8 +669,6 @@ impl View for GanttChart {
                 .clamp(cfg.gantt_row_height_min, cfg.gantt_row_height_max);
             self.options.now_line_color = egui::Color32::from_rgb(
                 cfg.now_line_color.0, cfg.now_line_color.1, cfg.now_line_color.2);
-            self.energy.series_colors = cfg.energy_series_colors.iter()
-                .map(|c| [c.0, c.1, c.2]).collect();
             self.energy.now_line_color = self.options.now_line_color;
             self.options.nav_steps = cfg.nav_steps_s();
         }

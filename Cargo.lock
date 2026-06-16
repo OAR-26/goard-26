@@ -3376,6 +3376,7 @@ dependencies = [
  "goard_core",
  "js-sys",
  "log",
+ "toml 0.8.20",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
