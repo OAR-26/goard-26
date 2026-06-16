@@ -37,6 +37,16 @@ impl Filtering {
      * Changes are only applied when the user clicks the Apply button.
      */
     pub fn ui(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        self.ui_with_extra(ui, app, |_ui, _app| {});
+    }
+
+    /// Same as `ui`, but `extra` is rendered between the state selector and the
+    /// Apply/Reset row — use it to inject app-specific filter controls (e.g. a
+    /// cluster-preset quick-select) without core knowing about presets.
+    pub fn ui_with_extra<F>(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext, extra: F)
+    where
+        F: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+    {
         let mut open = self.open;
         // If the window is open, render the filters
         if self.open {
@@ -62,7 +72,10 @@ impl Filtering {
                         .show(ui, |ui| {
                             self.render_states_selector(ui);
                         });
-                    ui.add_space(20.0);
+                    ui.add_space(10.0);
+
+                    extra(ui, app);
+                    ui.add_space(10.0);
 
                     ui.horizontal(|ui| {
                         if ui.button(t!("app.filters.apply")).clicked() {

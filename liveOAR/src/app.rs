@@ -98,11 +98,31 @@ impl eframe::App for App {
             self.auth_active = true;
         }
 
+        let is_admin = self.connected_as.is_some();
+
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {
             match self.application_context.view_type {
                 goard_core::views::view::ViewType::Gantt => {
-                    self.tools
-                        .render_with_gantt(ui, &mut self.application_context, &mut self.gantt_view);
+                    self.tools.render_with_gantt_and_filter_extra(
+                        ui,
+                        &mut self.application_context,
+                        &mut self.gantt_view,
+                        |ui, app| {
+                            ui.separator();
+                            ui.label("Cluster preset:");
+                            self.cluster_presets.show_selector(ui, app);
+                            let manage_btn = egui::Button::new("Manage presets");
+                            let resp = ui.add_enabled(is_admin, manage_btn);
+                            let resp = if !is_admin {
+                                resp.on_hover_text("Admin access required")
+                            } else {
+                                resp
+                            };
+                            if resp.clicked() {
+                                self.cluster_presets.open_admin();
+                            }
+                        },
+                    );
                 }
                 _ => {
                     self.tools.render(ui, &mut self.application_context);
@@ -110,13 +130,7 @@ impl eframe::App for App {
             }
         });
 
-        TopBottomPanel::top("preset_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                self.cluster_presets.show_selector(ui, &mut self.application_context);
-                if ui.button("Manage presets").clicked() {
-                    self.cluster_presets.open_admin();
-                }
-            });
+        TopBottomPanel::top("preset_admin_bar").show(ctx, |ui| {
             let cluster_names: Vec<String> = self.application_context.get_current_clusters()
                 .iter().map(|c| c.name.clone()).collect();
             self.cluster_presets.show_admin(ui, &cluster_names);

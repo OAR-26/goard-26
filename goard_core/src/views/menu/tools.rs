@@ -31,7 +31,7 @@ impl Default for Tools {
  */
 impl View for Tools {
     fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
-        self.render_impl(ui, app, None);
+        self.render_impl(ui, app, None, |_ui, _app| {});
     }
 }
 
@@ -42,15 +42,33 @@ impl Tools {
         app: &mut ApplicationContext,
         gantt: &mut GanttChart,
     ) {
-        self.render_impl(ui, app, Some(gantt));
+        self.render_impl(ui, app, Some(gantt), |_ui, _app| {});
     }
 
-    fn render_impl(
+    /// Same as `render_with_gantt`, but `filter_extra` is rendered inside the
+    /// Filters window — use it to inject app-specific filter controls (e.g. a
+    /// cluster-preset quick-select) without core knowing about presets.
+    pub fn render_with_gantt_and_filter_extra<F>(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &mut ApplicationContext,
+        gantt: &mut GanttChart,
+        filter_extra: F,
+    ) where
+        F: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+    {
+        self.render_impl(ui, app, Some(gantt), filter_extra);
+    }
+
+    fn render_impl<F>(
         &mut self,
         ui: &mut egui::Ui,
         app: &mut ApplicationContext,
         gantt: Option<&mut GanttChart>,
-    ) {
+        filter_extra: F,
+    ) where
+        F: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+    {
         let mut gantt = gantt;
         let has_gantt = gantt.is_some();
 
@@ -237,7 +255,7 @@ impl Tools {
             }
 
             // Show External Window
-            self.filtering_pane.ui(ui, app);
+            self.filtering_pane.ui_with_extra(ui, app, filter_extra);
         });
     }
 }
