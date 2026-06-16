@@ -377,8 +377,16 @@ impl LiveEngine {
         }
         *is_refreshing.lock().unwrap() = true;
 
-        let start = *self.refresh.start_date.lock().unwrap();
-        let end = *self.refresh.end_date.lock().unwrap();
+        // Read straight from `app` rather than the mutex: `poll()` syncs the
+        // mutex from `app.start_date`/`end_date` at the *start* of the frame,
+        // before any navigation (pan/zoom/jump) happens during render. Using
+        // the mutex here would fetch the window the user just navigated away
+        // from. Re-sync the mutex too, so the periodic background thread
+        // also picks up the latest window.
+        let start = app.start_date;
+        let end = app.end_date;
+        *self.refresh.start_date.lock().unwrap() = start;
+        *self.refresh.end_date.lock().unwrap() = end;
 
         let jobs_sender = self.refresh.jobs_sender.clone();
         let resources_sender = self.refresh.resources_sender.clone();
