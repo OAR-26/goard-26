@@ -6,7 +6,7 @@ use goard_core::models::data_structure::cluster::Cluster;
 use goard_core::models::data_structure::job::Job;
 use goard_core::models::data_structure::marker::GanttMarker;
 use goard_core::models::data_structure::strata::Strata;
-use goard_core::models::file_types::{FileTypeRegistry, VisualizationTarget};
+use crate::file_types::{FileTypeRegistry, VisualizationTarget};
 use goard_core::views::main_page::gantt::{GanttChart, GanttViewSnapshot};
 
 use crate::tab_state_cache::{compute_file_hash, TabStateCache, TabViewState};

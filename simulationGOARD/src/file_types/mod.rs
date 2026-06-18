@@ -1,4 +1,4 @@
-use crate::models::data_structure::{cluster::Cluster, job::Job, marker::GanttMarker, strata::Strata};
+use goard_core::models::data_structure::{cluster::Cluster, job::Job, marker::GanttMarker, strata::Strata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -130,7 +130,7 @@ impl eframe::App for App {
 
         // Import type-selection dialog.
         if self.sim_state.pending_import.is_some() {
-            use goard_core::models::file_types::FileTypeRegistry;
+            use crate::file_types::FileTypeRegistry;
 
             let pending = self.sim_state.pending_import.as_ref().unwrap();
             let current_type = pending.selected_type_name.clone();

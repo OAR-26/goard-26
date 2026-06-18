@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 const HASH_BYTES: usize = 8192;
 const MAX_ENTRIES: usize = 200;
-const CACHE_PATH: &str = "./tab_states.json";
+const CACHE_PATH: &str = "simulationGOARD/tab_states.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabViewState {

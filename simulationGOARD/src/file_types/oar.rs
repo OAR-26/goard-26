@@ -1,5 +1,5 @@
 use super::{FileTypeConfig, ParsedFileData, ValidationError, VisualizationTarget};
-use crate::models::data_structure::{
+use goard_core::models::data_structure::{
     cluster::Cluster,
     cpu::Cpu,
     host::Host,
@@ -7,7 +7,7 @@ use crate::models::data_structure::{
     resource::{Resource, ResourceState},
     strata::Strata,
 };
-use crate::models::utils::utils::{
+use goard_core::models::utils::utils::{
     get_all_clusters, get_all_hosts, get_all_resources,
     get_clusters_for_job, get_hosts_for_job,
 };
@@ -59,7 +59,7 @@ struct OarConfig {
 }
 
 // Embedded at compile time — no runtime file path needed.
-const OAR_CONFIG_JSON: &str = include_str!("../../../../file_types/oar.json");
+const OAR_CONFIG_JSON: &str = include_str!("../../file_types/oar.json");
 
 // ── OarFileType ───────────────────────────────────────────────────────────────
 
