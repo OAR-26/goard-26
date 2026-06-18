@@ -1,4 +1,5 @@
 mod app;
+mod file_import;
 mod file_types;
 mod sim_config;
 mod sim_state;

@@ -1,4 +1,4 @@
-# simulationGOARD-only settings. goard_core's config.toml has no notion of
+# evalys-rs-only settings. goard_core's config.toml has no notion of
 # this — it falls back to a deterministic per-index color when none is set.
 
 # Color palette (hex) for multi-series energy lines. Cycles if more series than entries.

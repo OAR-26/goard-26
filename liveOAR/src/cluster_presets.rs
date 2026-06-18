@@ -48,7 +48,7 @@ pub struct ClusterPresetState {
 impl Default for ClusterPresetState {
     fn default() -> Self {
         Self {
-            presets: load_presets_from_file("presets.json"),
+            presets: load_presets_from_file("liveOAR/presets.json"),
             selected_name: None,
             admin_open: false,
             mode: None,
@@ -218,11 +218,11 @@ impl ClusterPresetState {
             } else {
                 self.presets.push(preset);
             }
-            save_presets_to_file(&self.presets, "presets.json");
+            save_presets_to_file(&self.presets, "liveOAR/presets.json");
         }
         if let Some(name) = delete_preset {
             self.presets.retain(|p| p.name != name);
-            save_presets_to_file(&self.presets, "presets.json");
+            save_presets_to_file(&self.presets, "liveOAR/presets.json");
         }
     }
 }

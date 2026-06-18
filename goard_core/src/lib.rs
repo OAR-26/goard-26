@@ -2,7 +2,6 @@
 extern crate rust_i18n;
 i18n!("src/i18n");
 
-pub mod file_import;
 pub mod models;
 pub mod views;
 

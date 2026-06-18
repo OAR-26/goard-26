@@ -69,7 +69,7 @@ impl eframe::App for App {
                 &mut self.application_context,
                 |ui, _app| {
                     if ui.button("📁 Import File").clicked() {
-                        goard_core::file_import::trigger_file_dialog();
+                        crate::file_import::trigger_file_dialog();
                         ui.close_menu();
                     }
                 },
@@ -116,11 +116,11 @@ impl eframe::App for App {
         // "+" group button requested a file dialog.
         if self.sim_state.request_file_import {
             self.sim_state.request_file_import = false;
-            goard_core::file_import::trigger_file_dialog();
+            crate::file_import::trigger_file_dialog();
         }
 
         // File arrived from native picker — park it for type-selection dialog.
-        if let Some((file_content, file_path)) = goard_core::file_import::take_file_content() {
+        if let Some((file_content, file_path)) = crate::file_import::take_file_content() {
             self.sim_state.pending_import = Some(PendingImport {
                 content: file_content,
                 path: file_path,
