@@ -23,13 +23,6 @@ impl Clone for ResourceState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Resource {
-    pub id: u32,
-    pub state: ResourceState,
-    pub thread_count: i32,
-}
-
 impl Display for ResourceState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

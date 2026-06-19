@@ -50,6 +50,9 @@ pub fn ui_energy_global(
     y_bounds: Option<(f64, f64)>,
     series_palette: &[[u8; 3]],
     now_line_color: egui::Color32,
+    scroll_zoom_sensitivity: f32,
+    zoom_max_s: f32,
+    zoom_min_s: f32,
 ) -> (Option<(i64, i64)>, Option<(f64, f64)>) {
     ui.label("Consommation globale");
 
@@ -123,8 +126,9 @@ pub fn ui_energy_global(
 
     let mut hover_label: Option<String> = None;
 
-    // Capture BEFORE .show() — inside closure we may zero these to block egui_plot's X zoom.
+    // Capture BEFORE .show() — inside closure we consume these to block scroll bubbling.
     let alt_held = ui.input(|i| i.modifiers.alt);
+    let ctrl_held = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
     let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
 
     let plot_resp = Plot::new("energy_global_plot")
@@ -135,7 +139,7 @@ pub fn ui_energy_global(
         .show_y(true)
         .show_grid(true)
         .allow_drag(Vec2b::new(true, true))
-        .allow_zoom(Vec2b::new(true, false))
+        .allow_zoom(Vec2b::new(false, false)) // X zoom handled manually below
         .label_formatter(|_, _| String::new())
         .coordinates_formatter(
             Corner::LeftTop,
@@ -146,7 +150,8 @@ pub fn ui_energy_global(
             fmt_hhmm(ts)
         })
         .show(ui, |plot_ui| {
-            if alt_held && plot_ui.pointer_coordinate().is_some() {
+            // Consume scroll when Alt or Ctrl held so it doesn't bubble to the parent.
+            if (alt_held || ctrl_held) && plot_ui.pointer_coordinate().is_some() {
                 plot_ui.ctx().input_mut(|i| {
                     i.raw_scroll_delta = egui::Vec2::ZERO;
                     i.smooth_scroll_delta = egui::Vec2::ZERO;
@@ -203,10 +208,11 @@ pub fn ui_energy_global(
     }
 
     let b = plot_resp.transform.bounds();
-    let new_start = b.min()[0].round() as i64;
-    let new_end = b.max()[0].round() as i64;
+    let drag_start = b.min()[0].round() as i64;
+    let drag_end = b.max()[0].round() as i64;
     let mut new_y = (b.min()[1], b.max()[1]);
 
+    // Y zoom (Alt+Scroll) — unchanged.
     if plot_resp.response.hovered() && alt_held && scroll_delta_y != 0.0 {
         if !fit_to_figure {
             let zoom = (1.0 + scroll_delta_y as f64 * 0.005).clamp(0.1, 10.0);
@@ -214,18 +220,29 @@ pub fn ui_energy_global(
             let half = (new_y.1 - new_y.0) / 2.0 / zoom;
             new_y = (center - half, center + half);
         }
-        ui.input_mut(|i| {
-            i.raw_scroll_delta = egui::Vec2::ZERO;
-            i.smooth_scroll_delta = egui::Vec2::ZERO;
-        });
     }
 
+    // X zoom (Ctrl+Scroll) — manual, same logic as Gantt interaction.rs, respects limits.
+    if plot_resp.response.hovered() && ctrl_held && scroll_delta_y != 0.0 {
+        let current_interval = (visible_end_s - visible_start_s).max(1) as f32;
+        let zoom_factor = (scroll_delta_y * scroll_zoom_sensitivity).exp();
+        let new_interval = current_interval / zoom_factor;
+        if new_interval >= zoom_min_s && new_interval <= zoom_max_s {
+            let center = (visible_start_s + visible_end_s) / 2;
+            let half = (new_interval / 2.0) as i64;
+            return (Some((center - half, center - half + new_interval as i64)), Some(new_y));
+        }
+        // Outside limits — return nothing, visible range stays unchanged.
+        return (None, Some(new_y));
+    }
+
+    // X pan (drag or double-click reset from egui_plot).
     let scrolled = ui.input(|i| i.raw_scroll_delta.y != 0.0);
     if plot_resp.response.dragged()
         || plot_resp.response.double_clicked()
         || (plot_resp.response.hovered() && scrolled)
     {
-        return (Some((new_start, new_end)), Some(new_y));
+        return (Some((drag_start, drag_end)), Some(new_y));
     }
 
     (None, Some(new_y))

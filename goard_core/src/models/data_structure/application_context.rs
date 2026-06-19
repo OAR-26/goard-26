@@ -112,15 +112,6 @@ impl ApplicationContext {
         self.show_gantt_panel
     }
 
-    pub fn get_current_energy_series(&self) -> Option<&[(i64, f64)]> {
-        self.data.energy_series.first().map(|(_, s)| s.as_slice())
-    }
-
-    pub fn get_current_energy_series_multi(&self) -> Vec<(&str, &[(i64, f64)])> {
-        self.data.energy_series.iter()
-            .map(|(name, s)| (name.as_str(), s.as_slice()))
-            .collect()
-    }
 }
 
 impl Default for ApplicationContext {

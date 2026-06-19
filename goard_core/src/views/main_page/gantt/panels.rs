@@ -143,6 +143,9 @@ impl EnergyPanelState {
         show_gantt: bool,
         cluster_names: &[String],
         owner_names: &[String],
+        zoom_max_s: f32,
+        zoom_min_s: f32,
+        scroll_zoom_sensitivity: f32,
     ) -> Option<(i64, i64)> {
         ui.horizontal_wrapped(|ui| {
             if show_gantt {
@@ -218,6 +221,9 @@ impl EnergyPanelState {
             self.y_bounds,
             &self.series_colors,
             self.now_line_color,
+            scroll_zoom_sensitivity,
+            zoom_max_s,
+            zoom_min_s,
         );
         if let Some(yb) = new_y {
             self.y_bounds = Some(yb);

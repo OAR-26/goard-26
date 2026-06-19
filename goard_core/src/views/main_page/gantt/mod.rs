@@ -968,7 +968,7 @@ impl View for GanttChart {
                             .cloned()
                             .collect();
 
-                        let raw_multi = app.get_current_energy_series_multi();
+                        let raw_multi = &app.data.energy_series;
                         let combine_with_estimate = app.show_estimated_with_energy;
                         energy_series = if raw_multi.is_empty() {
                             // No raw energy files — estimate from Gantt jobs.
@@ -981,7 +981,7 @@ impl View for GanttChart {
                                 "Estimated".to_string(),
                                 energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource),
                             )];
-                            for (name, s) in &raw_multi {
+                            for (name, s) in raw_multi {
                                 all.push((name.to_string(),
                                     energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource)));
                             }
@@ -1006,7 +1006,7 @@ impl View for GanttChart {
             let default_ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
             let (vs, ve) = self.current_energy_visible.unwrap_or((default_vs, default_ve));
             visible_range = Some((vs, ve));
-            let raw_multi = app.get_current_energy_series_multi();
+            let raw_multi = &app.data.energy_series;
             energy_series = if raw_multi.is_empty() {
                 vec![("Estimated".to_string(),
                     energy_estimate::compute_energy_points(None, &[], vs, ve, app.prefs.gantt_config.energy_watts_per_resource))]
@@ -1057,6 +1057,8 @@ impl View for GanttChart {
                 if let Some((new_vs, new_ve)) = self.energy.show(
                     ui, &energy_series, vs, ve, now_s, y_axis_gutter, show_gantt,
                     &cluster_names_energy, &owners,
+                    self.options.zoom_max_seconds, self.options.zoom_min_seconds,
+                    self.options.scroll_zoom_sensitivity,
                 ) {
                     if show_gantt {
                         // Gantt + energy: sync Gantt canvas to new range.
