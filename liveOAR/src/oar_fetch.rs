@@ -63,7 +63,7 @@ pub fn get_current_jobs_for_period(start_date: DateTime<Local>, end_date: DateTi
             ),
         ])
         .output()
-        .and_then(|output| std::fs::write("./data/data.json", output.stdout));
+        .and_then(|output| std::fs::write("./liveOAR/data/data.json", output.stdout));
 
     if let Err(e) = ssh_status {
         println!("Failed to execute SSH command: {}", e);
