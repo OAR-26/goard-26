@@ -2,7 +2,6 @@ use super::job_table_col_selection::ColumnSelection;
 use super::job_table_sorting::SortKey;
 use crate::models::data_structure::application_context::ApplicationContext;
 use crate::models::utils::date_converter::format_timestamp;
-use crate::models::utils::utils::get_tree_structure_for_job;
 use crate::{models::data_structure::job::Job, views::components::job_details::JobDetailsWindow};
 use eframe::egui;
 use egui::{RichText, Sense, Ui};
@@ -243,7 +242,7 @@ impl JobTable {
                                 }
                                 self.details_window.push(JobDetailsWindow::new(
                                     job.clone(),
-                                    get_tree_structure_for_job(job, &app.data.all_clusters),
+                                    &app.data.strata_by_resource_id,
                                 ));
                             }
                         });

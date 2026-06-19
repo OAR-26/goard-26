@@ -5,7 +5,6 @@ use super::theme::get_theme_colors;
 use super::timeline::{paint_timeline_text_on_top, timeline_header_height};
 use super::types::{gutter_stripes_total_w, Info, Options};
 use crate::models::data_structure::application_context::ApplicationContext;
-use crate::models::data_structure::cluster::Cluster;
 use crate::models::data_structure::job::Job;
 use crate::views::components::job_details::JobDetailsWindow;
 use egui::{pos2, Rect, Stroke};
@@ -17,7 +16,6 @@ pub(super) fn ui_canvas(
     fixed_timeline_y: f32,
     (min_ns, max_ns): (i64, i64),
     details_window: &mut Vec<JobDetailsWindow>,
-    all_cluster: &Vec<Cluster>,
     gutter_width: f32,
 ) -> f32 {
     options.hovered_leaf_label = None;
@@ -70,7 +68,6 @@ pub(super) fn ui_canvas(
             cursor_y,
             details_window,
             app,
-            all_cluster,
             &mut all_painted_rows,
             &[],
         );

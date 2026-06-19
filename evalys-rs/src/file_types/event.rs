@@ -127,7 +127,6 @@ impl FileTypeConfig for EventFileType {
 
         Ok(ParsedFileData {
             resources,
-            clusters: Vec::new(),
             jobs: Vec::new(),
             strata_by_resource_id,
             raw_energy_series: None,

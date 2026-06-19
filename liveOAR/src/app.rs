@@ -184,8 +184,8 @@ impl eframe::App for App {
         });
 
         TopBottomPanel::top("preset_admin_bar").show(ctx, |ui| {
-            let cluster_names: Vec<String> = self.application_context.get_current_clusters()
-                .iter().map(|c| c.name.clone()).collect();
+            let cluster_names: Vec<String> = self.application_context.data.cluster_resource_ids
+                .keys().cloned().collect();
             self.cluster_presets.show_admin(ui, &cluster_names);
         });
 

@@ -10,7 +10,7 @@ mod energy_estimate;
 mod panels;
 
 use crate::models::data_structure::resource::ResourceState;
-use crate::models::utils::utils::{get_all_clusters, get_all_hosts, get_all_resources};
+use crate::models::utils::utils::{cluster_names, host_names, all_resource_ids};
 use crate::views::view::View;
 use crate::{
     models::data_structure::{
@@ -163,7 +163,6 @@ fn compute_gutter_width(
     base_font: &FontId,
     options: &Options,
     app: &ApplicationContext,
-    _all_clusters: &Vec<crate::models::data_structure::cluster::Cluster>,
 ) -> f32 {
     let n_total = options.levels.len();
     let stripes_w = gutter_stripes_total_w(n_total);
@@ -602,30 +601,37 @@ impl View for GanttChart {
 
         let selected_cluster_names: Option<Vec<String>> = app.filters.selected_cluster_names.clone();
 
-        let all_hosts = if let Some(cluster_names) = &selected_cluster_names {
-            app.get_current_clusters()
-                .iter()
-                .filter(|c| cluster_names.contains(&c.name))
-                .flat_map(|c| get_all_hosts(&vec![c.clone()]))
+        let all_hosts = if let Some(filter_clusters) = &selected_cluster_names {
+            host_names(&app.data.strata_by_resource_id)
+                .into_iter()
+                .filter(|h| {
+                    app.data.strata_by_resource_id.values()
+                        .any(|s| s.host.as_deref() == Some(h.as_str())
+                            && s.cluster.as_ref().map(|c| filter_clusters.contains(c)).unwrap_or(false))
+                })
                 .collect()
         } else {
-            get_all_hosts(&app.get_current_clusters())
+            host_names(&app.data.strata_by_resource_id)
         };
 
-        let all_clusters = if let Some(cluster_names) = &selected_cluster_names {
-            cluster_names.clone()
+        let all_clusters = if let Some(filter_clusters) = &selected_cluster_names {
+            filter_clusters.clone()
         } else {
-            get_all_clusters(&app.get_current_clusters())
+            cluster_names(&app.data.strata_by_resource_id)
         };
 
-        let all_resources = if let Some(cluster_names) = &selected_cluster_names {
-            app.get_current_clusters()
-                .iter()
-                .filter(|c| cluster_names.contains(&c.name))
-                .flat_map(|c| get_all_resources(&vec![c.clone()]))
+        let all_resources = if let Some(filter_clusters) = &selected_cluster_names {
+            all_resource_ids(&app.data.strata_by_resource_id)
+                .into_iter()
+                .filter(|rid| {
+                    app.data.strata_by_resource_id.get(rid)
+                        .and_then(|s| s.cluster.as_ref())
+                        .map(|c| filter_clusters.contains(c))
+                        .unwrap_or(false)
+                })
                 .collect()
         } else {
-            get_all_resources(&app.get_current_clusters())
+            all_resource_ids(&app.data.strata_by_resource_id)
         };
 
         if app.show_all_resources_row {
@@ -868,7 +874,6 @@ impl View for GanttChart {
                         &base_font,
                         &self.options,
                         app,
-                        &app.get_current_clusters(),
                     );
 
                     let info = Info {
@@ -898,7 +903,6 @@ impl View for GanttChart {
                         fixed_timeline_y,
                         (min_s, max_s),
                         &mut self.job_details_windows,
-                        &app.data.all_clusters,
                         gutter_width,
                     );
 
@@ -1045,7 +1049,7 @@ impl View for GanttChart {
                 let now_s = Local::now().timestamp();
 
                 let y_axis_gutter = if show_gantt { last_gantt_gutter_width_px } else { 0.0 };
-                let cluster_names_energy = get_all_clusters(&app.get_current_clusters());
+                let cluster_names_energy = cluster_names(&app.data.strata_by_resource_id);
                 let mut owners: Vec<String> = app.data.filtered_jobs.iter()
                     .map(|j| j.owner.clone()).collect();
                 owners.sort();

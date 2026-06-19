@@ -1,15 +1,12 @@
 use super::{FileTypeConfig, ParsedFileData, ValidationError, VisualizationTarget};
 use goard_core::models::data_structure::{
-    cluster::Cluster,
-    cpu::Cpu,
-    host::Host,
     job::{Job, JobState},
-    resource::{Resource, ResourceState},
+    resource::ResourceState,
     strata::Strata,
 };
 use goard_core::models::utils::utils::{
-    get_all_clusters, get_all_hosts, get_all_resources,
-    get_clusters_for_job, get_hosts_for_job,
+    cluster_names, host_names, all_resource_ids,
+    clusters_for_job, hosts_for_job,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -128,61 +125,6 @@ impl OarFileType {
             .collect()
     }
 
-    fn build_clusters(&self, resources: &[Strata]) -> Vec<Cluster> {
-        let mut clusters: Vec<Cluster> = Vec::new();
-
-        for r in resources {
-            let cluster_name = r.cluster.as_deref().unwrap_or("").trim().to_string();
-            if cluster_name.is_empty() {
-                continue;
-            }
-
-            let rid = r.resource_id.unwrap_or(0);
-            let host_name = r.host.as_deref().unwrap_or("").to_string();
-            let net_addr = r.network_address.as_deref().unwrap_or("").to_string();
-            let res_state = self.parse_resource_state(r.state.as_deref().unwrap_or(""));
-            let thread_count = r.thread_count.unwrap_or(0) as i32;
-
-            let new_resource = Resource { id: rid, state: res_state, thread_count };
-            let new_cpu = Cpu {
-                name: r.cputype.as_deref().unwrap_or("").to_string(),
-                resources: vec![new_resource],
-                core_count: r.core_count.unwrap_or(0) as i32,
-                cpufreq: r.cpufreq.as_deref().unwrap_or("0").parse::<f32>().unwrap_or(0.0),
-                chassis: r.chassis.as_deref().unwrap_or("").to_string(),
-                resource_ids: vec![rid],
-            };
-            let new_host = Host {
-                name: host_name.clone(),
-                cpus: vec![new_cpu],
-                network_address: net_addr,
-                resource_ids: vec![rid],
-                state: ResourceState::Unknown,
-            };
-
-            if let Some(cluster) = clusters.iter_mut().find(|c| c.name == cluster_name) {
-                cluster.resource_ids.push(rid);
-                if let Some(host) = cluster.hosts.iter_mut().find(|h| h.name == host_name) {
-                    host.resource_ids.push(rid);
-                    if let Some(cpu) = host.cpus.first_mut() {
-                        cpu.resource_ids.push(rid);
-                        cpu.resources.push(Resource { id: rid, state: res_state, thread_count });
-                    }
-                } else {
-                    cluster.hosts.push(new_host);
-                }
-            } else {
-                clusters.push(Cluster {
-                    name: cluster_name,
-                    hosts: vec![new_host],
-                    resource_ids: vec![rid],
-                    state: ResourceState::Unknown,
-                });
-            }
-        }
-
-        clusters
-    }
 
     fn parse_single_job(&self, data: &Value) -> Result<Job, String> {
         macro_rules! field {
@@ -281,7 +223,7 @@ impl OarFileType {
         })
     }
 
-    fn parse_jobs(&self, json: &Value, clusters: &Vec<Cluster>) -> Result<Vec<Job>, String> {
+    fn parse_jobs(&self, json: &Value, strata_by_resource_id: &HashMap<u32, Strata>) -> Result<Vec<Job>, String> {
         let key = &self.config.schema.jobs_key;
         let Some(val) = json.get(key) else { return Ok(Vec::new()) };
         let Some(map) = val.as_object() else {
@@ -307,9 +249,9 @@ impl OarFileType {
         }
 
         for job in jobs.iter_mut() {
-            job.clusters = get_clusters_for_job(job, clusters);
-            job.hosts = get_hosts_for_job(job, clusters);
-            job.update_majority_resource_state(clusters);
+            job.clusters = clusters_for_job(job, strata_by_resource_id);
+            job.hosts = hosts_for_job(job, strata_by_resource_id);
+            job.update_majority_resource_state(strata_by_resource_id);
         }
 
         // Pseudo-job representing all resources (mirrors live data behavior).
@@ -319,12 +261,12 @@ impl OarFileType {
             state: JobState::Unknown,
             scheduled_start: 0,
             walltime: 0,
-            hosts: get_all_hosts(clusters),
-            clusters: get_all_clusters(clusters),
+            hosts: host_names(strata_by_resource_id),
+            clusters: cluster_names(strata_by_resource_id),
             command: String::new(),
             message: None,
             queue: String::new(),
-            assigned_resources: get_all_resources(clusters),
+            assigned_resources: all_resource_ids(strata_by_resource_id),
             submission_time: 0,
             start_time: 0,
             stop_time: 0,
@@ -415,9 +357,8 @@ impl FileTypeConfig for OarFileType {
             .filter_map(|r| r.resource_id.map(|id| (id, r.clone())))
             .collect();
 
-        let clusters = self.build_clusters(&resources);
-        let jobs = self.parse_jobs(&json, &clusters)?;
+        let jobs = self.parse_jobs(&json, &strata_by_resource_id)?;
 
-        Ok(ParsedFileData { resources, clusters, jobs, strata_by_resource_id, raw_energy_series: None, markers: Vec::new() })
+        Ok(ParsedFileData { resources, jobs, strata_by_resource_id, raw_energy_series: None, markers: Vec::new() })
     }
 }

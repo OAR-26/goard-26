@@ -7,12 +7,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use goard_core::models::data_structure::application_context::ApplicationContext;
-use goard_core::models::data_structure::cluster::Cluster;
-use goard_core::models::data_structure::cpu::Cpu;
-use goard_core::models::data_structure::host::Host;
 use goard_core::models::data_structure::job::Job;
-use goard_core::models::data_structure::resource::{Resource, ResourceState};
-use goard_core::models::utils::utils::{get_clusters_for_job, get_hosts_for_job};
+use goard_core::models::utils::utils::{clusters_for_job, hosts_for_job};
 
 use crate::refresh_coordinator::RefreshCoordinator;
 
@@ -50,7 +46,6 @@ pub struct LiveEngine {
     /// Swap buffer — background thread writes here; promoted to app.data.all_jobs
     /// once the matching resource update has rebuilt the cluster hierarchy.
     swap_all_jobs: Vec<Job>,
-    swap_all_clusters: Vec<Cluster>,
 }
 
 impl LiveEngine {
@@ -59,7 +54,6 @@ impl LiveEngine {
             refresh: RefreshCoordinator::new(now),
             ssh_host: load_ssh_host(),
             swap_all_jobs: Vec::new(),
-            swap_all_clusters: Vec::new(),
         }
     }
 
@@ -236,136 +230,13 @@ impl LiveEngine {
             }
         }
 
-        // Build cluster hierarchy in O(n) using index maps for find-or-create.
-        // Background thread sends a complete resource snapshot each cycle, so we
-        // clear and rebuild from scratch to avoid stale/duplicate entries.
-        self.swap_all_clusters.clear();
-        let mut cluster_idx: HashMap<String, usize> = HashMap::new();
-        let mut host_idx: HashMap<(usize, String), usize> = HashMap::new();
-        let mut cpu_idx: HashMap<(usize, usize, String), usize> = HashMap::new();
-
-        let parse_state = |s: Option<&str>| match s.unwrap_or("") {
-            "Dead" => ResourceState::Dead,
-            "Alive" => ResourceState::Alive,
-            "Absent" => ResourceState::Absent,
-            _ => ResourceState::Unknown,
-        };
-
-        for resource in new_resources.iter() {
-            let cluster_name = resource.cluster.as_deref().unwrap_or("").trim().to_string();
-            if cluster_name.is_empty() { continue; }
-            let host_name = resource.host.as_deref().unwrap_or("").trim().to_string();
-            let cpu_name = resource.cputype.as_deref().unwrap_or("").trim().to_string();
-            let rid = resource.resource_id.unwrap_or(0);
-            let state = parse_state(resource.state.as_deref());
-
-            let ci = if let Some(&i) = cluster_idx.get(&cluster_name) {
-                i
-            } else {
-                let i = self.swap_all_clusters.len();
-                self.swap_all_clusters.push(Cluster {
-                    name: cluster_name.clone(),
-                    hosts: Vec::new(),
-                    resource_ids: Vec::new(),
-                    state: ResourceState::Unknown,
-                });
-                cluster_idx.insert(cluster_name.clone(), i);
-                i
-            };
-
-            let hi = if let Some(&i) = host_idx.get(&(ci, host_name.clone())) {
-                i
-            } else {
-                let i = self.swap_all_clusters[ci].hosts.len();
-                self.swap_all_clusters[ci].hosts.push(Host {
-                    name: host_name.clone(),
-                    cpus: Vec::new(),
-                    network_address: resource.network_address.as_deref().unwrap_or("").to_string(),
-                    resource_ids: Vec::new(),
-                    state: ResourceState::Unknown,
-                });
-                host_idx.insert((ci, host_name.clone()), i);
-                i
-            };
-
-            let ki = if let Some(&i) = cpu_idx.get(&(ci, hi, cpu_name.clone())) {
-                i
-            } else {
-                let i = self.swap_all_clusters[ci].hosts[hi].cpus.len();
-                self.swap_all_clusters[ci].hosts[hi].cpus.push(Cpu {
-                    name: cpu_name.clone(),
-                    resources: Vec::new(),
-                    core_count: resource.core_count.unwrap_or(0) as i32,
-                    cpufreq: resource.cpufreq.as_deref().unwrap_or("").parse::<f32>().unwrap_or(0.0),
-                    chassis: resource.chassis.as_deref().unwrap_or("").to_string(),
-                    resource_ids: Vec::new(),
-                });
-                cpu_idx.insert((ci, hi, cpu_name), i);
-                i
-            };
-
-            self.swap_all_clusters[ci].hosts[hi].cpus[ki].resources.push(Resource {
-                id: rid, state, thread_count: resource.thread_count.unwrap_or(0) as i32,
-            });
-            self.swap_all_clusters[ci].hosts[hi].cpus[ki].resource_ids.push(rid);
-            self.swap_all_clusters[ci].hosts[hi].resource_ids.push(rid);
-            self.swap_all_clusters[ci].resource_ids.push(rid);
-        }
+        // Rebuild cluster index maps from the freshly-populated strata.
+        app.data.rebuild_cluster_index();
 
         for job in self.swap_all_jobs.iter_mut() {
-            job.clusters = get_clusters_for_job(job, &self.swap_all_clusters);
-            job.hosts = get_hosts_for_job(job, &self.swap_all_clusters);
-            job.update_majority_resource_state(&self.swap_all_clusters);
-        }
-
-        for cluster in self.swap_all_clusters.iter_mut() {
-            for host in cluster.hosts.iter_mut() {
-                let mut dead_count = 0;
-                let mut alive_count = 0;
-                let mut absent_count = 0;
-                for cpu in host.cpus.iter() {
-                    for resource in cpu.resources.iter() {
-                        match resource.state {
-                            ResourceState::Dead => dead_count += 1,
-                            ResourceState::Alive => alive_count += 1,
-                            ResourceState::Absent => absent_count += 1,
-                            _ => (),
-                        }
-                    }
-                }
-                host.state = if dead_count >= alive_count && dead_count >= absent_count {
-                    ResourceState::Dead
-                } else if absent_count >= dead_count && absent_count >= alive_count {
-                    ResourceState::Absent
-                } else if alive_count > dead_count && alive_count > absent_count {
-                    ResourceState::Alive
-                } else {
-                    ResourceState::Unknown
-                };
-            }
-        }
-
-        for cluster in self.swap_all_clusters.iter_mut() {
-            let mut dead_count = 0;
-            let mut alive_count = 0;
-            let mut absent_count = 0;
-            for host in cluster.hosts.iter() {
-                match host.state {
-                    ResourceState::Dead => dead_count += 1,
-                    ResourceState::Alive => alive_count += 1,
-                    ResourceState::Absent => absent_count += 1,
-                    _ => (),
-                }
-            }
-            cluster.state = if dead_count >= alive_count && dead_count >= absent_count {
-                ResourceState::Dead
-            } else if absent_count >= dead_count && absent_count >= alive_count {
-                ResourceState::Absent
-            } else if alive_count > dead_count && alive_count > absent_count {
-                ResourceState::Alive
-            } else {
-                ResourceState::Unknown
-            };
+            job.clusters = clusters_for_job(job, &app.data.strata_by_resource_id);
+            job.hosts = hosts_for_job(job, &app.data.strata_by_resource_id);
+            job.update_majority_resource_state(&app.data.strata_by_resource_id);
         }
 
         let has_job_0 = app.data.all_jobs.iter().any(|job| job.id == 0);
@@ -375,7 +246,6 @@ impl LiveEngine {
         }
 
         app.data.all_jobs = self.swap_all_jobs.clone();
-        app.data.all_clusters = self.swap_all_clusters.clone();
     }
 
     pub fn check_dead_intervals_update(&mut self, app: &mut ApplicationContext) {

@@ -1,9 +1,7 @@
 use crate::models::data_structure::job::Job;
 use crate::models::data_structure::job::JobState;
 use crate::models::data_structure::resource::ResourceState;
-use crate::models::utils::utils::get_all_clusters;
-use crate::models::utils::utils::get_all_hosts;
-use crate::models::utils::utils::get_all_resources;
+use crate::models::utils::utils::{cluster_names, host_names, all_resource_ids};
 use crate::{
     models::data_structure::application_context::ApplicationContext,
     views::view::{View, ViewType},
@@ -113,12 +111,12 @@ impl Tools {
                         state: JobState::Unknown,
                         scheduled_start: 0,
                         walltime: 0,
-                        hosts: get_all_hosts(&app.data.all_clusters),
-                        clusters: get_all_clusters(&app.data.all_clusters),
+                        hosts: host_names(&app.data.strata_by_resource_id),
+                        clusters: cluster_names(&app.data.strata_by_resource_id),
                         command: String::new(),
                         message: None,
                         queue: String::new(),
-                        assigned_resources: get_all_resources(&app.data.all_clusters),
+                        assigned_resources: all_resource_ids(&app.data.strata_by_resource_id),
                         submission_time: 0,
                         start_time: 0,
                         stop_time: 0,

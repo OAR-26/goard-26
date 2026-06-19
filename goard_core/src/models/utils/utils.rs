@@ -1,8 +1,7 @@
-use crate::models::data_structure::cluster::Cluster;
-use crate::models::data_structure::cpu::Cpu;
-use crate::models::data_structure::host::Host;
 use crate::models::data_structure::job::Job;
 use crate::models::data_structure::resource::ResourceState;
+use crate::models::data_structure::strata::Strata;
+use std::collections::HashMap;
 use std::hash::DefaultHasher;
 use std::hash::Hash;
 //
@@ -49,97 +48,127 @@ pub fn get_job_gantt_colors(job_id: u32, job_color_min: u8) -> (egui::Color32, e
     (base, d)
 }
 
-/// Extracts all host names from a collection of clusters
-pub fn get_all_hosts(clusters: &Vec<Cluster>) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
-
-    for cluster in clusters {
-        for host in &cluster.hosts {
-            result.push(host.name.clone());
-        }
-    }
-
-    result
+/// All distinct cluster names from strata.
+pub fn cluster_names(strata_by_resource_id: &HashMap<u32, Strata>) -> Vec<String> {
+    let mut names: Vec<String> = strata_by_resource_id
+        .values()
+        .filter_map(|s| s.cluster.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    names.sort();
+    names
 }
 
-pub fn cluster_contain_host(cluster: &Cluster, host_name: &str) -> bool {
-    for host in &cluster.hosts {
-        if host.name == host_name {
-            return true;
-        }
-    }
-    false
+/// All distinct host names from strata.
+pub fn host_names(strata_by_resource_id: &HashMap<u32, Strata>) -> Vec<String> {
+    let mut names: Vec<String> = strata_by_resource_id
+        .values()
+        .filter_map(|s| s.host.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    names.sort();
+    names
 }
 
-pub fn get_cluster_from_name(clusters: &Vec<Cluster>, name: &str) -> Option<Cluster> {
-    for cluster in clusters {
-        if cluster.name == name {
-            return Some(cluster.clone());
-        }
-    }
-    None
+/// All resource IDs.
+pub fn all_resource_ids(strata_by_resource_id: &HashMap<u32, Strata>) -> Vec<u32> {
+    strata_by_resource_id.keys().cloned().collect()
 }
 
-/// Extracts all cluster names from a collection of clusters
-pub fn get_all_clusters(clusters: &Vec<Cluster>) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
-
-    for cluster in clusters {
-        result.push(cluster.name.clone());
-    }
-
-    result
-}
-
-/// Extracts all resource IDs from a collection of clusters
-pub fn get_all_resources(clusters: &Vec<Cluster>) -> Vec<u32> {
-    let mut result: Vec<u32> = Vec::new();
-
-    for cluster in clusters {
-        result.extend(cluster.resource_ids.iter());
-    }
-
-    result
-}
-
-pub fn contains_host(cluster: &Vec<Cluster>, host_name: &str) -> bool {
-    for c in cluster {
-        for host in &c.hosts {
-            if host.name == host_name {
-                return true;
+/// Cluster names the job touches (from its assigned_resources → strata).
+pub fn clusters_for_job(job: &Job, strata_by_resource_id: &HashMap<u32, Strata>) -> Vec<String> {
+    let mut result = Vec::new();
+    for rid in &job.assigned_resources {
+        if let Some(s) = strata_by_resource_id.get(rid) {
+            if let Some(c) = &s.cluster {
+                if !result.contains(c) {
+                    result.push(c.clone());
+                }
             }
         }
     }
-    false
+    result
 }
 
-pub fn get_cluster_state_from_name(cluster: &Vec<Cluster>, cluster_name: &String) -> ResourceState {
-    for c in cluster {
-        if c.name == *cluster_name {
-            return c.state.clone();
-        }
-    }
-    ResourceState::Unknown
-}
-
-pub fn get_host_state_from_name(cluster: &Vec<Cluster>, host_name: &String) -> ResourceState {
-    for c in cluster {
-        for host in &c.hosts {
-            if host.name == *host_name {
-                return host.state.clone();
+/// Host names the job touches.
+pub fn hosts_for_job(job: &Job, strata_by_resource_id: &HashMap<u32, Strata>) -> Vec<String> {
+    let mut result = Vec::new();
+    for rid in &job.assigned_resources {
+        if let Some(s) = strata_by_resource_id.get(rid) {
+            if let Some(h) = &s.host {
+                if !result.contains(h) {
+                    result.push(h.clone());
+                }
             }
         }
     }
-    ResourceState::Unknown
+    result
 }
 
-pub fn contains_cluster(cluster: &Vec<Cluster>, cluster_name: &str) -> bool {
-    for c in cluster {
-        if c.name == cluster_name {
-            return true;
+/// Aggregate ResourceState for a cluster (worst-case of all its resources).
+pub fn cluster_resource_state(
+    cluster_name: &str,
+    cluster_resource_ids: &HashMap<String, Vec<u32>>,
+    strata_by_resource_id: &HashMap<u32, Strata>,
+) -> ResourceState {
+    let Some(rids) = cluster_resource_ids.get(cluster_name) else {
+        return ResourceState::Unknown;
+    };
+    worst_state(
+        rids.iter()
+            .filter_map(|rid| strata_by_resource_id.get(rid))
+            .filter_map(|s| parse_resource_state(s.state.as_deref())),
+    )
+}
+
+/// Aggregate ResourceState for a host.
+pub fn host_resource_state(
+    host_name: &str,
+    host_resource_ids: &HashMap<String, Vec<u32>>,
+    strata_by_resource_id: &HashMap<u32, Strata>,
+) -> ResourceState {
+    let Some(rids) = host_resource_ids.get(host_name) else {
+        return ResourceState::Unknown;
+    };
+    worst_state(
+        rids.iter()
+            .filter_map(|rid| strata_by_resource_id.get(rid))
+            .filter_map(|s| parse_resource_state(s.state.as_deref())),
+    )
+}
+
+fn parse_resource_state(s: Option<&str>) -> Option<ResourceState> {
+    match s? {
+        "Alive" => Some(ResourceState::Alive),
+        "Dead" => Some(ResourceState::Dead),
+        "Absent" => Some(ResourceState::Absent),
+        "Suspected" => Some(ResourceState::Suspected),
+        _ => Some(ResourceState::Unknown),
+    }
+}
+
+fn worst_state(states: impl Iterator<Item = ResourceState>) -> ResourceState {
+    let mut worst = ResourceState::Unknown;
+    for s in states {
+        match s {
+            ResourceState::Dead => return ResourceState::Dead,
+            ResourceState::Suspected if !matches!(worst, ResourceState::Dead) => {
+                worst = ResourceState::Suspected
+            }
+            ResourceState::Absent
+                if matches!(worst, ResourceState::Unknown | ResourceState::Alive) =>
+            {
+                worst = ResourceState::Absent
+            }
+            ResourceState::Alive if matches!(worst, ResourceState::Unknown) => {
+                worst = ResourceState::Alive
+            }
+            _ => {}
         }
     }
-    false
+    worst
 }
 
 // Compare two strings that may contain numbers (natural sort)
@@ -214,208 +243,4 @@ pub fn compare_string_with_number(a: &str, b: &str) -> Ordering {
 
         i += 1;
     }
-}
-
-/* Return the name of all the clusters where the job is running
- * Used for job filtering and display in the UI
- */
-pub fn get_clusters_for_job(job: &Job, clusters: &Vec<Cluster>) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
-
-    for resource in &job.assigned_resources {
-        for cluster in clusters {
-            if !result.contains(&cluster.name) && cluster.resource_ids.contains(&resource) {
-                result.push(cluster.name.clone());
-            }
-        }
-    }
-
-    result
-}
-
-/* Returns the names of all hosts where a job is running
- * Used for job filtering and display in the UI */
-pub fn get_hosts_for_job(job: &Job, clusters: &Vec<Cluster>) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
-
-    for resource in &job.assigned_resources {
-        for cluster in clusters {
-            if cluster.resource_ids.contains(&resource) {
-                for host in &cluster.hosts {
-                    if !result.contains(&host.name) && host.resource_ids.contains(&resource) {
-                        result.push(host.name.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    result
-}
-
-/*
-Creates a subset of the cluster hierarchy that only contains resources used by the job
-
-This is used to create a view of the infrastructure specific to a job, useful for
-job details and resource utilization displays. The returned structure mirrors the
-full cluster hierarchy but includes only the elements relevant to the job.
- */
-pub fn get_tree_structure_for_job(job: &Job, clusters: &Vec<Cluster>) -> Vec<Cluster> {
-    let mut result: Vec<Cluster> = Vec::new();
-
-    for resource in &job.assigned_resources {
-        for cluster in clusters {
-            if cluster.resource_ids.contains(&resource) {
-                // if the cluster already exists in the result, add the resource to the resource_ids
-                if let Some(existing_cluster) = result.iter_mut().find(|c| c.name == cluster.name) {
-                    existing_cluster.resource_ids.push(*resource);
-                    // Then check if in the existing cluster the host already exists
-                    for host in &cluster.hosts {
-                        if host.resource_ids.contains(&resource) {
-                            if let Some(existing_host) = existing_cluster
-                                .hosts
-                                .iter_mut()
-                                .find(|h| h.name == host.name)
-                            {
-                                existing_host.resource_ids.push(*resource);
-                                // Then check if in the existing host the CPU already exists
-                                for cpu in &host.cpus {
-                                    if cpu.resource_ids.contains(&resource) {
-                                        if let Some(existing_cpu) = existing_host
-                                            .cpus
-                                            .iter_mut()
-                                            .find(|c| c.name == cpu.name)
-                                        {
-                                            existing_cpu.resource_ids.push(*resource);
-                                            // Then check if in the existing CPU the resource already exists
-                                            if let Some(existing_res) = existing_cpu
-                                                .resources
-                                                .iter_mut()
-                                                .find(|res| res.id == *resource)
-                                            {
-                                                existing_res.thread_count += 1;
-                                            } else {
-                                                let res = cpu
-                                                    .resources
-                                                    .iter()
-                                                    .find(|res| res.id == *resource);
-
-                                                if let Some(res) = res {
-                                                    existing_cpu.resources.push(res.clone());
-                                                }
-                                            }
-                                        } else {
-                                            let mut new_cpu = Cpu {
-                                                name: cpu.name.clone(),
-                                                resource_ids: vec![*resource],
-                                                chassis: cpu.chassis.clone(),
-                                                core_count: cpu.core_count,
-                                                cpufreq: cpu.cpufreq,
-                                                resources: Vec::new(),
-                                            };
-
-                                            let res = cpu
-                                                .resources
-                                                .iter()
-                                                .find(|res| res.id == *resource);
-
-                                            if let Some(res) = res {
-                                                new_cpu.resources.push(res.clone());
-                                            }
-
-                                            existing_host.cpus.push(new_cpu);
-                                        }
-                                    }
-                                }
-                            } else {
-                                let mut new_host = Host {
-                                    name: host.name.clone(),
-                                    resource_ids: vec![*resource],
-                                    cpus: Vec::new(),
-                                    network_address: host.network_address.clone(),
-                                    state: ResourceState::Unknown,
-                                };
-
-                                for cpu in &host.cpus {
-                                    let mut new_cpu = Cpu {
-                                        name: cpu.name.clone(),
-                                        resource_ids: vec![*resource],
-                                        chassis: cpu.chassis.clone(),
-                                        core_count: cpu.core_count,
-                                        cpufreq: cpu.cpufreq,
-                                        resources: Vec::new(),
-                                    };
-
-                                    let res = cpu.resources.iter().find(|res| res.id == *resource);
-
-                                    if let Some(res) = res {
-                                        new_cpu.resources.push(res.clone());
-                                    }
-
-                                    new_host.cpus.push(new_cpu);
-                                }
-
-                                existing_cluster.hosts.push(new_host);
-                            }
-                        }
-                    }
-                } else {
-                    let new_cluster = Cluster {
-                        name: cluster.name.clone(),
-                        // new resource_ids with only the current resource
-                        resource_ids: vec![*resource],
-
-                        // for the host only keep the hosts that the job is running on
-                        hosts: cluster
-                            .hosts
-                            .iter()
-                            .filter(|host| host.resource_ids.contains(&resource))
-                            .map(|host| {
-                                let mut new_host = Host {
-                                    name: host.name.clone(),
-                                    resource_ids: vec![*resource],
-                                    cpus: Vec::new(),
-                                    network_address: host.network_address.clone(),
-                                    state: ResourceState::Unknown,
-                                };
-
-                                // for the CPU only keep the CPUs that the job is running on
-                                new_host.cpus = host
-                                    .cpus
-                                    .iter()
-                                    .filter(|cpu| cpu.resource_ids.contains(&resource))
-                                    .map(|cpu| {
-                                        let mut new_cpu = Cpu {
-                                            name: cpu.name.clone(),
-                                            resource_ids: vec![*resource],
-                                            chassis: cpu.chassis.clone(),
-                                            core_count: cpu.core_count,
-                                            cpufreq: cpu.cpufreq,
-                                            // get the current resource from the CPU resources and create a new vector with only that resource
-                                            resources: Vec::new(),
-                                        };
-
-                                        let res =
-                                            cpu.resources.iter().find(|res| res.id == *resource);
-
-                                        if let Some(res) = res {
-                                            new_cpu.resources.push(res.clone());
-                                        }
-
-                                        new_cpu
-                                    })
-                                    .collect();
-
-                                new_host
-                            })
-                            .collect(),
-                        state: ResourceState::Unknown,
-                    };
-
-                    result.push(new_cluster);
-                }
-            }
-        }
-    }
-    result
 }

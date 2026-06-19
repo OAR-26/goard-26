@@ -1,4 +1,4 @@
-use goard_core::models::data_structure::{cluster::Cluster, job::Job, marker::GanttMarker, strata::Strata};
+use goard_core::models::data_structure::{job::Job, marker::GanttMarker, strata::Strata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -33,7 +33,6 @@ impl std::fmt::Display for ValidationError {
 
 pub struct ParsedFileData {
     pub resources: Vec<Strata>,
-    pub clusters: Vec<Cluster>,
     pub jobs: Vec<Job>,
     pub strata_by_resource_id: HashMap<u32, Strata>,
     /// Pre-computed energy series (timestamp_s, watts). When set, the energy

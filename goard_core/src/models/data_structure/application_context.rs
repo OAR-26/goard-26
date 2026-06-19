@@ -1,6 +1,5 @@
 use super::filters::JobFilters;
 use super::job::Job;
-use super::cluster::Cluster;
 use super::job_data::JobData;
 use super::ui_preferences::UiPreferences;
 use crate::models::data_structure::job_sorting::JobSortable;
@@ -103,10 +102,6 @@ impl ApplicationContext {
 
     pub fn get_current_jobs(&self) -> &[Job] {
         &self.data.all_jobs
-    }
-
-    pub fn get_current_clusters(&self) -> &Vec<Cluster> {
-        &self.data.all_clusters
     }
 
     pub fn show_energy_diagram(&self) -> bool {

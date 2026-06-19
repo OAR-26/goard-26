@@ -1,8 +1,9 @@
 use crate::models::data_structure::resource::ResourceState;
+use crate::models::data_structure::strata::Strata;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use strum_macros::EnumIter;
-use super::cluster;
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, EnumIter, Debug, Eq, PartialOrd, Ord, Hash)]
 pub enum JobState {
@@ -226,33 +227,27 @@ impl Job {
         println!("Host: {:?}", self.hosts);
     }
 
-    pub fn update_majority_resource_state(&mut self, clusters: &Vec<cluster::Cluster>) {
-        let mut dead_count = 0;
-        let mut alive_count = 0;
-        let mut absent_count = 0;
-
-        for cluster in clusters {
-            for host in &cluster.hosts {
-                for cpu in &host.cpus {
-                    for resource in &cpu.resources {
-                        if self.assigned_resources.contains(&resource.id) {
-                            match resource.state {
-                                ResourceState::Dead => dead_count += 1,
-                                ResourceState::Alive => alive_count += 1,
-                                ResourceState::Absent => absent_count += 1,
-                                _ => (),
-                            }
-                        }
-                    }
-                }
+    pub fn update_majority_resource_state(&mut self, strata_by_resource_id: &HashMap<u32, Strata>) {
+        let mut alive = 0usize;
+        let mut dead = 0usize;
+        let mut absent = 0usize;
+        let mut suspected = 0usize;
+        for rid in &self.assigned_resources {
+            match strata_by_resource_id.get(rid).and_then(|s| s.state.as_deref()) {
+                Some("Alive") => alive += 1,
+                Some("Dead") => dead += 1,
+                Some("Absent") => absent += 1,
+                Some("Suspected") => suspected += 1,
+                _ => {}
             }
         }
-
-        self.main_resource_state = if dead_count >= alive_count && dead_count >= absent_count {
+        self.main_resource_state = if dead > 0 {
             ResourceState::Dead
-        } else if absent_count >= dead_count && absent_count >= alive_count {
+        } else if suspected > 0 {
+            ResourceState::Suspected
+        } else if absent > 0 {
             ResourceState::Absent
-        } else if alive_count > dead_count && alive_count > absent_count {
+        } else if alive > 0 {
             ResourceState::Alive
         } else {
             ResourceState::Unknown

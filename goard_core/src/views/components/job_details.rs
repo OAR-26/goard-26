@@ -1,21 +1,29 @@
-use crate::models::data_structure::cluster::Cluster;
 use crate::models::data_structure::job::Job;
+use crate::models::data_structure::strata::Strata;
 use crate::models::utils::date_converter::format_timestamp;
 use eframe::egui;
+use std::collections::HashMap;
 
 pub struct JobDetailsWindow {
     pub open: bool,
     pub job: Job,
-    pub cluster: Vec<Cluster>,
+    /// strata for this job's assigned resources: (cluster_name, host_name, strata)
+    pub job_strata: Vec<(Option<String>, Option<String>, Strata)>,
 }
 
 impl JobDetailsWindow {
-    pub fn new(job: Job, cluster: Vec<Cluster>) -> Self {
-        Self {
-            open: true,
-            job: job,
-            cluster: cluster,
-        }
+    pub fn new(job: Job, strata_by_resource_id: &HashMap<u32, Strata>) -> Self {
+        let mut job_strata: Vec<(Option<String>, Option<String>, Strata)> = job
+            .assigned_resources
+            .iter()
+            .filter_map(|rid| {
+                strata_by_resource_id
+                    .get(rid)
+                    .map(|s| (s.cluster.clone(), s.host.clone(), s.clone()))
+            })
+            .collect();
+        job_strata.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        Self { open: true, job, job_strata }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -120,80 +128,94 @@ impl JobDetailsWindow {
 
             ui.add_space(8.0);
 
-            if !self.cluster.is_empty() {
-                // Ressources
+            if !self.job_strata.is_empty() {
+                // Resources — grouped by cluster → host
                 ui.group(|ui| {
                     ui.heading(t!("app.details.resources.title"));
                     egui::CollapsingHeader::new(t!("app.details.resources.cluster"))
                         .default_open(false)
                         .show(ui, |ui| {
-                            for cluster in &self.cluster {
-                                egui::CollapsingHeader::new(format!("{}", cluster.name))
+                            // Group by cluster
+                            let mut by_cluster: std::collections::BTreeMap<
+                                String,
+                                std::collections::BTreeMap<String, Vec<&Strata>>,
+                            > = std::collections::BTreeMap::new();
+                            for (cluster_opt, host_opt, strata) in &self.job_strata {
+                                let cluster =
+                                    cluster_opt.clone().unwrap_or_else(|| "(no cluster)".to_string());
+                                let host =
+                                    host_opt.clone().unwrap_or_else(|| "(no host)".to_string());
+                                by_cluster
+                                    .entry(cluster)
+                                    .or_default()
+                                    .entry(host)
+                                    .or_default()
+                                    .push(strata);
+                            }
+
+                            for (cluster_name, hosts) in &by_cluster {
+                                egui::CollapsingHeader::new(cluster_name)
                                     .default_open(false)
                                     .show(ui, |ui| {
-                                        for host in &cluster.hosts {
-                                            egui::CollapsingHeader::new(format!("{}", host.name))
+                                        for (host_name, strata_list) in hosts {
+                                            egui::CollapsingHeader::new(host_name)
                                                 .default_open(false)
                                                 .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.label("Network Address: ");
-                                                        ui.strong(format!(
-                                                            "{}",
-                                                            host.network_address
-                                                        ));
-                                                    });
-
-                                                    for cpu in &host.cpus {
-                                                        egui::CollapsingHeader::new(format!(
-                                                            "{}",
-                                                            cpu.name
-                                                        ))
-                                                        .default_open(false)
-                                                        .show(ui, |ui| {
+                                                    // Show host-level fields from the first strata entry
+                                                    if let Some(s) = strata_list.first() {
+                                                        if let Some(addr) = &s.network_address {
+                                                            ui.horizontal(|ui| {
+                                                                ui.label("Network Address: ");
+                                                                ui.strong(addr);
+                                                            });
+                                                        }
+                                                        if let Some(chassis) = &s.chassis {
                                                             ui.horizontal(|ui| {
                                                                 ui.label("Chassis: ");
-                                                                ui.strong(format!(
-                                                                    "{}",
-                                                                    cpu.chassis
-                                                                ));
+                                                                ui.strong(chassis);
                                                             });
-
-                                                            ui.horizontal(|ui| {
-                                                                ui.label("Core Count: ");
-                                                                ui.strong(format!(
-                                                                    "{}",
-                                                                    cpu.core_count
-                                                                ));
-                                                            });
-
+                                                        }
+                                                        if let Some(cpufreq) = &s.cpufreq {
                                                             ui.horizontal(|ui| {
                                                                 ui.label("CPU Frequency: ");
-                                                                ui.strong(format!(
-                                                                    "{}",
-                                                                    cpu.cpufreq
-                                                                ));
+                                                                ui.strong(cpufreq);
                                                             });
+                                                        }
+                                                        if let Some(cputype) = &s.cputype {
+                                                            ui.horizontal(|ui| {
+                                                                ui.label("CPU Type: ");
+                                                                ui.strong(cputype);
+                                                            });
+                                                        }
+                                                        if let Some(core_count) = s.core_count {
+                                                            ui.horizontal(|ui| {
+                                                                ui.label("Core Count: ");
+                                                                ui.strong(core_count.to_string());
+                                                            });
+                                                        }
+                                                    }
 
-                                                            for resource in &cpu.resources {
-                                                                egui::CollapsingHeader::new(
-                                                                    format!("{}", resource.id),
-                                                                )
-                                                                .default_open(false)
-                                                                .show(ui, |ui| {
-                                                                    ui.horizontal(|ui| {
-                                                                        ui.label("State: ");
-                                                                        ui.strong(format!(
-                                                                            "{}",
-                                                                            resource.state
-                                                                        ));
-                                                                    });
-                                                                    ui.horizontal(|ui| {
-                                                                        ui.label("Thread Count: ");
-                                                                        ui.strong(format!(
-                                                                            "{}",
-                                                                            resource.thread_count
-                                                                        ));
-                                                                    });
+                                                    // Show each resource (strata entry)
+                                                    for strata in strata_list {
+                                                        let rid_str = strata
+                                                            .resource_id
+                                                            .map(|id| id.to_string())
+                                                            .unwrap_or_else(|| "?".to_string());
+                                                        egui::CollapsingHeader::new(
+                                                            format!("Resource {}", rid_str),
+                                                        )
+                                                        .default_open(false)
+                                                        .show(ui, |ui| {
+                                                            if let Some(state) = &strata.state {
+                                                                ui.horizontal(|ui| {
+                                                                    ui.label("State: ");
+                                                                    ui.strong(state);
+                                                                });
+                                                            }
+                                                            if let Some(tc) = strata.thread_count {
+                                                                ui.horizontal(|ui| {
+                                                                    ui.label("Thread Count: ");
+                                                                    ui.strong(tc.to_string());
                                                                 });
                                                             }
                                                         });

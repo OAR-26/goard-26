@@ -2,7 +2,6 @@ use chrono::{Local, TimeZone};
 use eframe::egui;
 use goard_core::models::data_structure::job_sorting::JobSortable;
 use goard_core::models::data_structure::application_context::ApplicationContext;
-use goard_core::models::data_structure::cluster::Cluster;
 use goard_core::models::data_structure::job::Job;
 use goard_core::models::data_structure::marker::GanttMarker;
 use goard_core::models::data_structure::strata::Strata;
@@ -29,7 +28,6 @@ pub struct ImportedDataSource {
     pub file_type_name: String,
     pub visualization_targets: Vec<VisualizationTarget>,
     pub jobs: Vec<Job>,
-    pub clusters: Vec<Cluster>,
     pub strata: Vec<Strata>,
     pub raw_energy_series: Option<Vec<(i64, f64)>>,
     pub markers: Vec<GanttMarker>,
@@ -202,7 +200,9 @@ impl SimState {
         if index == 0 {
             self.current_data_source_index = 0;
             app.data.all_jobs.clear();
-            app.data.all_clusters.clear();
+            app.data.cluster_resource_ids.clear();
+            app.data.host_resource_ids.clear();
+            app.data.cluster_hosts.clear();
             app.data.strata_by_resource_id.clear();
             app.data.strata_by_host.clear();
             app.data.markers.clear();
@@ -238,7 +238,7 @@ impl SimState {
                 }
             }
             app.data.all_jobs = self.imported_data_sources[index - 1].jobs.clone();
-            app.data.all_clusters = self.imported_data_sources[index - 1].clusters.clone();
+            app.data.rebuild_cluster_index();
 
             // Auto-fit time range to data span.
             let jobs = &self.imported_data_sources[index - 1].jobs;
@@ -435,7 +435,9 @@ impl SimState {
                 if target == 0 {
                     self.current_data_source_index = 0;
                     app.data.all_jobs.clear();
-                    app.data.all_clusters.clear();
+                    app.data.cluster_resource_ids.clear();
+                    app.data.host_resource_ids.clear();
+                    app.data.cluster_hosts.clear();
                     app.data.strata_by_resource_id.clear();
                     app.data.strata_by_host.clear();
                     app.data.markers.clear();
@@ -499,7 +501,6 @@ impl SimState {
             raw_energy_series: parsed.raw_energy_series,
             markers: parsed.markers,
             jobs: parsed.jobs,
-            clusters: parsed.clusters,
             strata: parsed.resources,
         });
         let new_index = self.imported_data_sources.len();

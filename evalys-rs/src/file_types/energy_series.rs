@@ -124,7 +124,6 @@ impl FileTypeConfig for EnergySeriesFileType {
 
         Ok(ParsedFileData {
             resources: Vec::new(),
-            clusters: Vec::new(),
             jobs: Vec::new(),
             strata_by_resource_id: HashMap::new(),
             raw_energy_series: Some(series),

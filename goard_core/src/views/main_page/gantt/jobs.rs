@@ -1,13 +1,13 @@
 use super::theme::get_theme_colors;
 use super::types::{gutter_stripes_total_w, Info, Options, STRIPE_W};
 use crate::models::data_structure::application_context::ApplicationContext;
-use crate::models::data_structure::cluster::Cluster;
+
 use crate::models::data_structure::job::Job;
 use crate::models::data_structure::marker::MarkerShape;
 use crate::models::data_structure::resource::{DeadInterval, ResourceState};
 use crate::models::data_structure::strata::Strata;
 use crate::models::utils::date_converter::format_timestamp;
-use crate::models::utils::utils::{compare_string_with_number, get_job_gantt_colors, get_job_gantt_colors_for_str, get_tree_structure_for_job};
+use crate::models::utils::utils::{compare_string_with_number, get_job_gantt_colors, get_job_gantt_colors_for_str};
 use crate::views::components::job_details::JobDetailsWindow;
 use egui::{
     pos2, Align2, Color32, CursorIcon, FontId, Id, LayerId, Order, Rect, Shape, Stroke,
@@ -1194,7 +1194,7 @@ pub(super) fn draw_level_n<'a>(
     mut cursor_y: f32,
     details_window: &mut Vec<JobDetailsWindow>,
     app: &ApplicationContext,
-    all_clusters: &Vec<Cluster>,
+
     painted_rows: &mut Vec<PaintedJobRow>,
     // Accumulated (field, value) pairs from ancestor levels, used for stripe tooltip.
     path_context: &[(String, String)],
@@ -1314,7 +1314,7 @@ pub(super) fn draw_level_n<'a>(
                         job,
                         job_row_y,
                         details_window,
-                        all_clusters,
+                        app,
                         Some(key.as_str()),
                         app.prefs.gantt_config.besteffort_truncate_to_now,
                         app.prefs.gantt_config.job_color_min,
@@ -1393,7 +1393,6 @@ pub(super) fn draw_level_n<'a>(
                     cursor_y,
                     details_window,
                     app,
-                    all_clusters,
                     painted_rows,
                     &child_context,
                 );
@@ -1508,7 +1507,7 @@ fn paint_job(
     job: &Job,
     top_y: f32,
     details_window: &mut Vec<JobDetailsWindow>,
-    all_cluster: &Vec<Cluster>,
+    app: &ApplicationContext,
     resource_label_for_state_tooltip: Option<&str>,
     besteffort_truncate_to_now: bool,
     job_color_min: u8,
@@ -1564,7 +1563,7 @@ fn paint_job(
     }
 
     if is_job_trully_hovered && info.response.secondary_clicked() {
-        let window = JobDetailsWindow::new(job.clone(), get_tree_structure_for_job(job, all_cluster));
+        let window = JobDetailsWindow::new(job.clone(), &app.data.strata_by_resource_id);
         if !details_window.iter().any(|w| w.job.id == job.id) {
             details_window.push(window);
         }
