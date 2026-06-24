@@ -136,11 +136,11 @@ impl SettingsPanel {
                     });
                     ui.add_space(6.0);
 
-                    // ── Energy ───────────────────────────────────────────────
-                    ui.heading("Energy");
+                    // ── XY panel ─────────────────────────────────────────────
+                    ui.heading("XY Panel");
                     ui.horizontal(|ui| {
                         ui.label("Panel height (px):");
-                        ui.add(egui::DragValue::new(&mut cfg.energy_panel_height).range(80.0..=700.0));
+                        ui.add(egui::DragValue::new(&mut cfg.xy_panel_height).range(80.0..=700.0));
                     });
                     ui.horizontal(|ui| {
                         ui.label("Watts per resource:");

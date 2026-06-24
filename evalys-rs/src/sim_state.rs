@@ -108,10 +108,10 @@ impl SimState {
             sideways_pan_in_points: 0.0,
             rect_height: app.prefs.gantt_config.gantt_row_height,
             current_view_index: 0,
-            energy_y_bounds: None,
-            energy_fit_to_figure: true,
-            energy_panel_height: app.prefs.gantt_config.energy_panel_height,
-            energy_visible_range: None,
+            xy_y_bounds: None,
+            xy_fit_to_figure: true,
+            xy_panel_height: app.prefs.gantt_config.xy_panel_height,
+            xy_visible_range: None,
             hierarchy_override,
         }
     }
@@ -134,10 +134,10 @@ impl SimState {
                             sideways_pan_in_points: saved.sideways_pan,
                             rect_height: saved.row_height,
                             current_view_index: saved.view_index,
-                            energy_y_bounds: saved.energy_y_min.zip(saved.energy_y_max),
-                            energy_fit_to_figure: saved.energy_fit,
-                            energy_panel_height: saved.energy_panel_height,
-                            energy_visible_range: None,
+                            xy_y_bounds: saved.energy_y_min.zip(saved.energy_y_max),
+                            xy_fit_to_figure: saved.energy_fit,
+                            xy_panel_height: saved.energy_panel_height,
+                            xy_visible_range: None,
                             hierarchy_override,
                         };
                     }
@@ -153,10 +153,10 @@ impl SimState {
             sideways_pan: snap.sideways_pan_in_points,
             row_height: snap.rect_height,
             view_index: snap.current_view_index,
-            energy_y_min: snap.energy_y_bounds.map(|b| b.0),
-            energy_y_max: snap.energy_y_bounds.map(|b| b.1),
-            energy_fit: snap.energy_fit_to_figure,
-            energy_panel_height: snap.energy_panel_height,
+            energy_y_min: snap.xy_y_bounds.map(|b| b.0),
+            energy_y_max: snap.xy_y_bounds.map(|b| b.1),
+            energy_fit: snap.xy_fit_to_figure,
+            energy_panel_height: snap.xy_panel_height,
         };
         self.tab_state_cache.store(file_path, file_hash, state);
         self.tab_state_cache.save_to_disk();
@@ -559,30 +559,58 @@ impl SimState {
                         .unwrap_or(false)
                 });
                 app.show_gantt_panel = has_gantt;
-                app.show_energy = has_energy;
-                app.show_estimated_with_energy = has_gantt && has_energy;
+                app.show_xy_panel = has_energy;
                 app.show_hierarchy_controls = true;
-                app.data.energy_series = g.member_indices.iter().filter_map(|&i| {
-                    let ds = self.imported_data_sources.get(i - 1)?;
-                    if !ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram) { return None; }
-                    Some((ds.name.clone(), ds.raw_energy_series.clone().unwrap_or_default()))
-                }).collect();
+
+                // Gantt + energy files: estimated series from jobs first, then raw series.
+                let mut series: Vec<(String, Vec<(i64, f64)>)> = Vec::new();
+                if has_gantt && has_energy {
+                    let (min_t, max_t) = job_time_range(&app.data.all_jobs);
+                    if min_t < max_t {
+                        let estimated = crate::energy_estimate::estimate_from_jobs(
+                            &app.data.all_jobs, min_t, max_t, 10,
+                            app.prefs.gantt_config.energy_watts_per_resource,
+                        );
+                        series.push(("Estimated".to_string(), estimated));
+                    }
+                }
+                for &i in &g.member_indices {
+                    let Some(ds) = self.imported_data_sources.get(i - 1) else { continue };
+                    if !ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram) { continue; }
+                    if let Some(raw) = &ds.raw_energy_series {
+                        series.push((ds.name.clone(), crate::energy_estimate::series_from_raw(raw)));
+                    }
+                }
+                app.data.plot_series = series;
             }
         } else if self.current_data_source_index == 0 {
-            app.show_energy = true;
+            app.show_xy_panel = true;
             app.show_gantt_panel = true;
-            app.show_estimated_with_energy = false;
             app.show_hierarchy_controls = true;
-            app.data.energy_series = Vec::new();
+            app.data.plot_series = Vec::new();
         } else {
             let idx = self.current_data_source_index;
             if let Some(ds) = self.imported_data_sources.get(idx - 1) {
-                app.show_energy = ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram);
-                app.show_gantt_panel = ds.visualization_targets.contains(&VisualizationTarget::Gantt);
-                app.show_estimated_with_energy = false;
-                app.data.energy_series = ds.raw_energy_series.as_ref()
-                    .map(|s| vec![(ds.name.clone(), s.clone())])
-                    .unwrap_or_default();
+                let has_energy = ds.visualization_targets.contains(&VisualizationTarget::EnergyDiagram);
+                let has_gantt = ds.visualization_targets.contains(&VisualizationTarget::Gantt);
+                app.show_xy_panel = has_energy;
+                app.show_gantt_panel = has_gantt;
+                app.data.plot_series = if let Some(raw) = &ds.raw_energy_series {
+                    vec![(ds.name.clone(), crate::energy_estimate::series_from_raw(raw))]
+                } else if has_gantt {
+                    // Gantt-only file: estimate from jobs for the full data range.
+                    let (min_t, max_t) = job_time_range(&app.data.all_jobs);
+                    if min_t < max_t {
+                        vec![("Estimated".to_string(), crate::energy_estimate::estimate_from_jobs(
+                            &app.data.all_jobs, min_t, max_t, 10,
+                            app.prefs.gantt_config.energy_watts_per_resource,
+                        ))]
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
                 let registry = FileTypeRegistry::default();
                 app.show_hierarchy_controls = registry.find_by_name(&ds.file_type_name)
                     .map(|t| t.supports_hierarchy_controls())
@@ -759,5 +787,68 @@ impl SimState {
                 self.persist_snapshot_to_disk(path.as_deref(), &hash, &snap);
             }
         }
+    }
+}
+
+fn job_time_range(jobs: &[goard_core::models::data_structure::job::Job]) -> (i64, i64) {
+    jobs.iter().filter(|j| j.id != 0).fold((i64::MAX, i64::MIN), |(mn, mx), j| {
+        (mn.min(j.start_time).min(j.get_end_date()),
+         mx.max(j.start_time).max(j.get_end_date()))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use goard_core::models::data_structure::job::{Job, JobState};
+    use goard_core::models::data_structure::resource::ResourceState;
+
+    fn make_job(id: u32, start: i64, walltime: i64) -> Job {
+        Job {
+            id,
+            owner: String::new(),
+            state: JobState::Running,
+            command: String::new(),
+            walltime,
+            message: None,
+            queue: String::new(),
+            assigned_resources: Vec::new(),
+            scheduled_start: start,
+            submission_time: 0,
+            start_time: start,
+            stop_time: start + walltime,
+            exit_code: None,
+            clusters: Vec::new(),
+            hosts: Vec::new(),
+            main_resource_state: ResourceState::Alive,
+            job_type: String::new(),
+            job_types: Vec::new(),
+            name: None,
+            project: String::new(),
+        }
+    }
+
+    #[test]
+    fn time_range_empty_jobs() {
+        let (mn, mx) = job_time_range(&[]);
+        assert_eq!(mn, i64::MAX);
+        assert_eq!(mx, i64::MIN);
+    }
+
+    #[test]
+    fn time_range_skips_job_0() {
+        // job id=0 is the "all_resources" virtual row — must be ignored
+        let jobs = vec![make_job(0, 0, 10000), make_job(1, 100, 50)];
+        let (mn, mx) = job_time_range(&jobs);
+        assert_eq!(mn, 100);
+        assert_eq!(mx, 150);
+    }
+
+    #[test]
+    fn time_range_multiple_jobs() {
+        let jobs = vec![make_job(1, 100, 50), make_job(2, 200, 300), make_job(3, 50, 10)];
+        let (mn, mx) = job_time_range(&jobs);
+        assert_eq!(mn, 50);
+        assert_eq!(mx, 500); // job 2 ends at 200+300
     }
 }

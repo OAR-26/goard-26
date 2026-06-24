@@ -5,8 +5,7 @@ mod labels;
 mod theme;
 mod timeline;
 mod types;
-mod energy_plot;
-mod energy_estimate;
+mod xy_plot;
 mod panels;
 
 use crate::models::data_structure::resource::ResourceState;
@@ -25,7 +24,7 @@ use egui::{Color32, FontId, Frame, RichText, ScrollArea, Sense, Shape, TextStyle
 
 use panels::{
     CreatePresetPanel, CreateViewPanel, EditPresetPanel,
-    EditViewPanel, EnergyPanelState, PresetPanelAction, ViewFormAction,
+    EditViewPanel, XyPanelState, PresetPanelAction, ViewFormAction,
 };
 
 // ---------------------------------------------------------------------------
@@ -186,10 +185,10 @@ pub struct GanttChart {
     /// mandatory layout) — when set, takes precedence over the View dropdown.
     /// Core has no idea why; it just renders these levels instead.
     hierarchy_override: Option<Vec<String>>,
-    /// Visible (start_s, end_s) for energy-only sources (no Gantt canvas to
+    /// Visible (start_s, end_s) for XY-only sources (no Gantt canvas to
     /// derive it from pixel-pan). Set directly by nav controls / drag; a
     /// binary that wants to persist/restore this across switches owns that.
-    current_energy_visible: Option<(i64, i64)>,
+    current_xy_visible: Option<(i64, i64)>,
 
     gantt_views: Vec<GanttView>,
     current_view_index: usize,
@@ -200,7 +199,7 @@ pub struct GanttChart {
     delete_view_confirm: Option<usize>,
     delete_preset_confirm: Option<String>,
 
-    energy: EnergyPanelState,
+    xy_panel: XyPanelState,
     create_view: CreateViewPanel,
     create_preset: CreatePresetPanel,
     edit_view: EditViewPanel,
@@ -234,11 +233,11 @@ impl Default for GanttChart {
         options.job_color_field         = gantt_cfg.job_color_field.clone();
         options.field_colors         = cfg_field_colors(&gantt_cfg.field_colors);
         options.nav_steps = gantt_cfg.nav_steps_s();
-        let mut energy_panel = EnergyPanelState::default();
-        energy_panel.panel_height = gantt_cfg.energy_panel_height;
+        let mut xy_panel = XyPanelState::default();
+        xy_panel.panel_height = gantt_cfg.xy_panel_height;
         let now_color = egui::Color32::from_rgb(
             gantt_cfg.now_line_color.0, gantt_cfg.now_line_color.1, gantt_cfg.now_line_color.2);
-        energy_panel.now_line_color = now_color;
+        xy_panel.now_line_color = now_color;
         options.now_line_color = now_color;
         if let Some(first) = config.views.first() {
             options.levels = first.levels.clone();
@@ -255,7 +254,7 @@ impl Default for GanttChart {
             initial_start_s: None,
             initial_end_s: None,
             hierarchy_override: None,
-            current_energy_visible: None,
+            current_xy_visible: None,
             last_canvas_usable_width_px: 1.0,
             pending_navigation_refresh: false,
             delete_view_confirm: None,
@@ -263,7 +262,7 @@ impl Default for GanttChart {
             gantt_views: config.views,
             current_view_index: 0,
             leaf_info_presets: config.leaf_info_presets,
-            energy: energy_panel,
+            xy_panel,
             create_view: CreateViewPanel::default(),
             create_preset: CreatePresetPanel::default(),
             edit_view: EditViewPanel::default(),
@@ -420,12 +419,10 @@ impl GanttChart {
         std::mem::replace(&mut self.pending_navigation_refresh, false)
     }
 
-    /// Sets the color palette used to cycle through multi-series energy
-    /// lines. Core has no opinion on this — it falls back to a deterministic
-    /// per-index color when empty (the default). A binary can call this to
-    /// apply its own palette.
-    pub fn set_energy_series_colors(&mut self, colors: Vec<[u8; 3]>) {
-        self.energy.series_colors = colors;
+    /// Sets the color palette used to cycle through multi-series XY plot lines.
+    /// Core falls back to a deterministic per-index color when empty (default).
+    pub fn set_xy_series_colors(&mut self, colors: Vec<[u8; 3]>) {
+        self.xy_panel.series_colors = colors;
     }
 
     /// Current visible (start_s, end_s) window, regardless of whether this
@@ -442,7 +439,7 @@ impl GanttChart {
         } else {
             let default_vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
             let default_ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
-            self.current_energy_visible.unwrap_or((default_vs, default_ve))
+            self.current_xy_visible.unwrap_or((default_vs, default_ve))
         }
     }
 
@@ -458,7 +455,7 @@ impl GanttChart {
             self.options.sideways_pan_in_points = (init_s as f32 - new_vs as f32) * usable / canvas_w;
             self.options.zoom_to_relative_s_range = None;
         } else {
-            self.current_energy_visible = Some((new_vs, new_ve));
+            self.current_xy_visible = Some((new_vs, new_ve));
         }
         self.pending_navigation_refresh = true;
     }
@@ -483,10 +480,10 @@ impl GanttChart {
             sideways_pan_in_points: self.options.sideways_pan_in_points,
             rect_height: self.options.rect_height,
             current_view_index: self.current_view_index,
-            energy_y_bounds: self.energy.y_bounds,
-            energy_fit_to_figure: self.energy.fit_to_figure,
-            energy_panel_height: self.energy.panel_height,
-            energy_visible_range: self.current_energy_visible,
+            xy_y_bounds: self.xy_panel.y_bounds,
+            xy_fit_to_figure: self.xy_panel.fit_to_figure,
+            xy_panel_height: self.xy_panel.panel_height,
+            xy_visible_range: self.current_xy_visible,
             hierarchy_override: self.hierarchy_override.clone(),
         }
     }
@@ -500,10 +497,10 @@ impl GanttChart {
         self.options.rect_height = snap.rect_height;
         self.options.zoom_to_relative_s_range = None;
         self.current_view_index = snap.current_view_index.min(self.gantt_views.len().saturating_sub(1));
-        self.energy.y_bounds = snap.energy_y_bounds;
-        self.energy.fit_to_figure = snap.energy_fit_to_figure;
-        self.energy.panel_height = snap.energy_panel_height;
-        self.current_energy_visible = snap.energy_visible_range;
+        self.xy_panel.y_bounds = snap.xy_y_bounds;
+        self.xy_panel.fit_to_figure = snap.xy_fit_to_figure;
+        self.xy_panel.panel_height = snap.xy_panel_height;
+        self.current_xy_visible = snap.xy_visible_range;
         self.hierarchy_override = snap.hierarchy_override.clone();
     }
 }
@@ -517,10 +514,10 @@ pub struct GanttViewSnapshot {
     pub sideways_pan_in_points: f32,
     pub rect_height: f32,
     pub current_view_index: usize,
-    pub energy_y_bounds: Option<(f64, f64)>,
-    pub energy_fit_to_figure: bool,
-    pub energy_panel_height: f32,
-    pub energy_visible_range: Option<(i64, i64)>,
+    pub xy_y_bounds: Option<(f64, f64)>,
+    pub xy_fit_to_figure: bool,
+    pub xy_panel_height: f32,
+    pub xy_visible_range: Option<(i64, i64)>,
     pub hierarchy_override: Option<Vec<String>>,
 }
 
@@ -548,7 +545,7 @@ impl View for GanttChart {
                 .clamp(cfg.gantt_row_height_min, cfg.gantt_row_height_max);
             self.options.now_line_color = egui::Color32::from_rgb(
                 cfg.now_line_color.0, cfg.now_line_color.1, cfg.now_line_color.2);
-            self.energy.now_line_color = self.options.now_line_color;
+            self.xy_panel.now_line_color = self.options.now_line_color;
             self.options.nav_steps = cfg.nav_steps_s();
         }
         self.options.job_color.color  = app.prefs.job_color.color.clone();
@@ -837,17 +834,17 @@ impl View for GanttChart {
 
         let mut visible_range: Option<(i64, i64)> = None;
         // Each entry: (label, computed points). Multiple entries when a group has >1 energy file.
-        let mut energy_series: Vec<(String, Vec<(i64, f64)>)> = Vec::new();
+        let mut plot_series: Vec<(String, Vec<(i64, f64)>)> = Vec::new();
         let mut last_gantt_usable_width_px: f32 = 1.0;
         let mut last_gantt_gutter_width_px: f32 = GUTTER_WIDTH;
 
-        let show_energy = app.show_energy_diagram();
+        let show_xy = app.show_xy_panel();
         let show_gantt = app.show_gantt();
         let sep_h = 8.0; // draggable handle height
 
         if show_gantt {
-        let gantt_h = if show_energy {
-            (ui.available_height() - self.energy.panel_height - sep_h).max(100.0)
+        let gantt_h = if show_xy {
+            (ui.available_height() - self.xy_panel.panel_height - sep_h).max(100.0)
         } else {
             ui.available_height().max(100.0)
         };
@@ -936,62 +933,8 @@ impl View for GanttChart {
                     let visible_end_s = visible_start_s + self.options.canvas_width_s as i64;
                     visible_range = Some((visible_start_s, visible_end_s));
 
-                    if show_energy {
-                        let energy_jobs: Vec<Job> = app
-                            .data.filtered_jobs
-                            .iter()
-                            .filter(|job| {
-                                let cluster_ok = match &self.energy.filter_cluster {
-                                    Some(cluster) => job.clusters.iter().any(|c| c == cluster),
-                                    None => true,
-                                };
-                                let owner_ok = match &self.energy.filter_owner {
-                                    Some(owner) => &job.owner == owner,
-                                    None => true,
-                                };
-                                let leaf_field = self.options.levels.last().map(|s| s.as_str()).unwrap_or("");
-                                let view_ok = job.assigned_resources.iter().any(|&rid| {
-                                    let Some(s) = app.data.strata_by_resource_id.get(&rid) else { return false; };
-                                    let leaf_val = jobs::resolve_field(s, leaf_field, &app.data.strata_by_host);
-                                    if leaf_val.starts_with("(no ") { return false; }
-                                    match &self.options.resource_filter {
-                                        None => true,
-                                        Some(f) => {
-                                            let actual = jobs::strata_field_value(s, &f.field).unwrap_or_default();
-                                            let matches = actual.trim() == f.value.trim();
-                                            f.exclude != matches
-                                        }
-                                    }
-                                });
-                                cluster_ok && owner_ok && view_ok
-                            })
-                            .cloned()
-                            .collect();
-
-                        let raw_multi = &app.data.energy_series;
-                        let combine_with_estimate = app.show_estimated_with_energy;
-                        energy_series = if raw_multi.is_empty() {
-                            // No raw energy files — estimate from Gantt jobs.
-                            vec![("Estimated".to_string(),
-                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource))]
-                        } else if combine_with_estimate {
-                            // Gantt source combined with separate energy-file sources:
-                            // estimated series first, then each raw one.
-                            let mut all = vec![(
-                                "Estimated".to_string(),
-                                energy_estimate::compute_energy_points(None, &energy_jobs, visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource),
-                            )];
-                            for (name, s) in raw_multi {
-                                all.push((name.to_string(),
-                                    energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource)));
-                            }
-                            all
-                        } else {
-                            raw_multi.iter().map(|(name, s)| {
-                                (name.to_string(),
-                                 energy_estimate::compute_energy_points(Some(s), &[], visible_start_s, visible_end_s, app.prefs.gantt_config.energy_watts_per_resource))
-                            }).collect()
-                        };
+                    if show_xy {
+                        plot_series = app.data.plot_series.clone();
                     }
 
                     let start = Local.timestamp_opt(visible_start_s, 0).unwrap();
@@ -1000,25 +943,16 @@ impl View for GanttChart {
                 });
             });
         });
-        } else if show_energy {
-            // Energy-only source: use saved visible range if available, else full data bounds.
+        } else if show_xy {
+            // XY-only source: use saved visible range if available, else full data bounds.
             let default_vs = self.initial_start_s.unwrap_or_else(|| app.get_start_date().timestamp());
             let default_ve = self.initial_end_s.unwrap_or_else(|| app.get_end_date().timestamp());
-            let (vs, ve) = self.current_energy_visible.unwrap_or((default_vs, default_ve));
+            let (vs, ve) = self.current_xy_visible.unwrap_or((default_vs, default_ve));
             visible_range = Some((vs, ve));
-            let raw_multi = &app.data.energy_series;
-            energy_series = if raw_multi.is_empty() {
-                vec![("Estimated".to_string(),
-                    energy_estimate::compute_energy_points(None, &[], vs, ve, app.prefs.gantt_config.energy_watts_per_resource))]
-            } else {
-                raw_multi.iter().map(|(name, s)| {
-                    (name.to_string(),
-                     energy_estimate::compute_energy_points(Some(s), &[], vs, ve, app.prefs.gantt_config.energy_watts_per_resource))
-                }).collect()
-            };
+            plot_series = app.data.plot_series.clone();
         }
 
-        if show_energy {
+        if show_xy {
             if show_gantt {
                 // Draggable resize handle between Gantt and energy diagram.
                 let (handle_rect, handle_resp) = ui.allocate_exact_size(
@@ -1029,8 +963,8 @@ impl View for GanttChart {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
                 }
                 if handle_resp.dragged() {
-                    // Drag up (negative delta) → energy gets taller; drag down → shorter.
-                    self.energy.panel_height = (self.energy.panel_height - handle_resp.drag_delta().y)
+                    // Drag up (negative delta) → XY panel gets taller; drag down → shorter.
+                    self.xy_panel.panel_height = (self.xy_panel.panel_height - handle_resp.drag_delta().y)
                         .clamp(80.0, 700.0);
                 }
                 let stroke_color = if handle_resp.hovered() || handle_resp.dragged() {
@@ -1049,14 +983,14 @@ impl View for GanttChart {
                 let now_s = Local::now().timestamp();
 
                 let y_axis_gutter = if show_gantt { last_gantt_gutter_width_px } else { 0.0 };
-                let cluster_names_energy = cluster_names(&app.data.strata_by_resource_id);
+                let cluster_names_list = cluster_names(&app.data.strata_by_resource_id);
                 let mut owners: Vec<String> = app.data.filtered_jobs.iter()
                     .map(|j| j.owner.clone()).collect();
                 owners.sort();
                 owners.dedup();
-                if let Some((new_vs, new_ve)) = self.energy.show(
-                    ui, &energy_series, vs, ve, now_s, y_axis_gutter, show_gantt,
-                    &cluster_names_energy, &owners,
+                if let Some((new_vs, new_ve)) = self.xy_panel.show(
+                    ui, &plot_series, vs, ve, now_s, y_axis_gutter, show_gantt,
+                    &cluster_names_list, &owners,
                     self.options.zoom_max_seconds, self.options.zoom_min_seconds,
                     self.options.scroll_zoom_sensitivity,
                 ) {
@@ -1071,8 +1005,8 @@ impl View for GanttChart {
                         self.options.sideways_pan_in_points = pan_px;
                         self.pending_navigation_refresh = true;
                     } else {
-                        // Energy-only: persist visible range directly.
-                        self.current_energy_visible = Some((new_vs, new_ve));
+                        // XY-only: persist visible range directly.
+                        self.current_xy_visible = Some((new_vs, new_ve));
                     }
                 }
             }

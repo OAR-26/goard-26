@@ -37,18 +37,6 @@ energy_panel_height = 270
 # Estimated watts per assigned resource when no measured energy file is loaded
 energy_watts_per_resource = 300
 
-# Color palette (hex) for multi-series energy lines. Cycles if more series than entries.
-energy_series_colors = [
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
-    "#bcbd22",
-]
-
 # Color of the vertical 'now' marker line on the energy and Gantt plots
 now_line_color = "#dc0000"
 
@@ -95,7 +83,7 @@ hatch_spacing = 10
 job_block_border = true
 
 # Thickness in pixels of the always-on job block border
-job_block_border_width = 1
+job_block_border_width = 0.5
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 # Each [[nav_steps]] entry adds one ◀/▶ button pair.

@@ -1,182 +1,233 @@
-# Manuel développeur - Goard
+# Developer Manual - Goard
 
 ---
 
-## 1) Stack technique
+## 1) Tech Stack
 
-| Composant | Bibliothèque / Version |
-|-----------|----------------------|
+| Component | Library / Version |
+|-----------|------------------|
 | UI framework | [egui](https://github.com/emilk/egui) 0.30 + eframe 0.30 |
-| Graphes | egui_plot 0.30 |
-| Sérialisation | serde 1.0 + serde_json 1.0 |
+| Plots | egui_plot 0.30 |
+| Serialization | serde 1.0 + serde_json 1.0 |
 | Dates | chrono 0.4 (+ chrono-tz) |
 | i18n | rust-i18n 3 |
-| WASM | wasm-bindgen, web-sys, js-sys |
-| Cibles | native (Linux/macOS/Windows) + `wasm32-unknown-unknown` |
+| Targets | native (Linux/macOS/Windows) |
 
 ---
 
-## 2) Structure du projet
+## 2) Project Structure
+
+Cargo workspace with three crates:
 
 ```
-src/
-├── main.rs              — point d'entrée, bootstrap native + WASM
-├── app.rs               — boucle principale egui (App::update)
-├── file_import.rs       — boîte de dialogue fichier (native: rfd, WASM: <input>)
-│
-├── models/
-│   ├── data_structure/
-│   │   ├── application_context.rs  — état central (voir §3)
-│   │   ├── refresh_coordinator.rs  — channels MPSC + mutex partagés
-│   │   ├── import_state.rs         — onglets importés + groupes
-│   │   ├── ui_preferences.rs       — préférences UI + presets clusters
-│   │   ├── live_data_state.rs      — données jobs/clusters/strata en mémoire
-│   │   ├── gantt_config.rs         — config.json (couleurs, timespan)
-│   │   ├── job.rs / cluster.rs / host.rs / cpu.rs / resource.rs / strata.rs
-│   │   ├── filters.rs              — état des filtres jobs
-│   │   └── marker.rs               — annotations ponctuelles sur le Gantt
-│   │
-│   ├── file_types/
-│   │   ├── mod.rs          — trait FileTypeConfig + FileTypeRegistry
-│   │   ├── oar.rs          — type OAR Simulation
-│   │   ├── energy_series.rs — type Energy Series
-│   │   └── event.rs        — type Event
-│   │
-│   └── utils/
-│       ├── updater.rs      — update_periodically / instant_update
-│       ├── parser.rs       — lecture data.json (jobs, resources, dead intervals)
-│       ├── mocker.rs       — données factices pour WASM (pas de SSH)
-│       ├── date_converter.rs
-│       └── utils.rs        — helpers clusters/hosts/resources
-│
-├── views/
-│   ├── menu/
-│   │   ├── menu.rs         — barre de menu (Fichier, Options, ?)
-│   │   ├── tools.rs        — barre d'outils + ligne de synthèse Gantt
-│   │   ├── filtering.rs    — panneau Filtres
-│   │   └── options.rs      — panneau Options (langue, police, thème)
-│   │
-│   └── main_page/
-│       ├── dashboard.rs    — vue Dashboard
-│       ├── gantt/
-│       │   ├── mod.rs      — GanttChart : onglets, panels, rendu principal
-│       │   ├── canvas.rs   — dessin des lignes de ressources + jobs
-│       │   ├── interaction.rs — gestion zoom/pan souris/clavier
-│       │   ├── timeline.rs — axe temporel + ligne "maintenant"
-│       │   ├── labels.rs   — étiquettes gutter
-│       │   ├── jobs.rs     — résolution champs strata, tri ressources
-│       │   ├── panels.rs   — panneaux Admin, Create/Edit view, Create/Edit preset, Energy
-│       │   ├── energy_plot.rs — dessin du graphe énergie (egui_plot)
-│       │   ├── energy_estimate.rs — estimation puissance depuis jobs
-│       │   ├── theme.rs    — couleurs selon thème clair/sombre
-│       │   └── types.rs    — Options, Info, ResourceFilter, LeafInfoPreset
-│       └── anthentification.rs — formulaire login
-│
-file_types/          — configs JSON des types de fichiers (embarquées à la compilation)
-├── oar.json
-├── energy_series.json
-└── event.json
+Cargo.toml                  — workspace root
+├── goard_core/             — rendering library (lib crate)
+├── evalys-rs/              — static file viewer (binary crate)
+└── liveOAR/                — live OAR cluster viewer (binary crate)
+```
 
-config.json          — config Gantt (couleurs état, timespan)
-views.json           — vues Gantt sauvegardées + leaf info presets
-presets.json         — presets de clusters
-options.json         — préférences utilisateur (police, langue)
+### `goard_core/` — shared rendering library
+
+Pure rendering and data model. No knowledge of where data comes from (no SSH, no file parsing, no energy estimation). Both binaries depend on it.
+
+```
+goard_core/
+├── config.toml             — Gantt config (colors, timespan)
+├── views.json              — saved Gantt views + leaf info presets
+└── src/
+    ├── lib.rs
+    ├── models/
+    │   ├── data_structure/
+    │   │   ├── application_context.rs  — central app state (see §3)
+    │   │   ├── job_data.rs             — jobs, clusters, strata, plot_series
+    │   │   ├── gantt_config.rs         — config.toml (colors, timespan, panel heights)
+    │   │   ├── application_options.rs  — UI state (zoom, pan, row height)
+    │   │   ├── ui_preferences.rs       — font, theme, language
+    │   │   ├── filters.rs              — active job filters
+    │   │   ├── view_type.rs            — Gantt / Dashboard enum
+    │   │   ├── job.rs / resource.rs / strata.rs / marker.rs / job_sorting.rs
+    │   │   └── mod.rs
+    │   └── utils/
+    │       ├── date_converter.rs
+    │       ├── utils.rs                — cluster/host/resource helpers
+    │       ├── secret.rs
+    │       └── mod.rs
+    └── views/
+        ├── view.rs                     — top-level render dispatch
+        ├── menu/
+        │   ├── menu.rs                 — menu bar (File, Options, ?)
+        │   ├── tools.rs                — toolbar + Gantt summary row
+        │   ├── filtering.rs            — Filters panel
+        │   ├── options.rs              — Options panel (language, font, theme)
+        │   ├── settings_panel.rs       — Gantt config settings panel
+        │   ├── field_colors_editor.rs
+        │   └── mod.rs
+        ├── main_page/
+        │   ├── dashboard.rs            — Dashboard view
+        │   ├── gantt/
+        │   │   ├── mod.rs              — GanttChart: tabs, panels, main render
+        │   │   ├── canvas.rs           — resource row + job drawing
+        │   │   ├── interaction.rs      — zoom/pan (mouse + keyboard)
+        │   │   ├── timeline.rs         — time axis + "now" line
+        │   │   ├── labels.rs           — gutter labels
+        │   │   ├── jobs.rs             — strata field resolution, resource sorting
+        │   │   ├── panels.rs           — Admin, Create/Edit view, XyPanelState
+        │   │   ├── xy_plot.rs          — generic XY plot (egui_plot)
+        │   │   ├── theme.rs            — colors by light/dark theme
+        │   │   └── types.rs            — Options, Info, ResourceFilter, LeafInfoPreset
+        │   └── mod.rs
+        └── components/
+            ├── gantt_job_color.rs
+            ├── job_details.rs
+            ├── dashboard_components/
+            │   ├── job_table.rs / job_table_col_selection.rs / job_table_sorting.rs
+            │   ├── metric_box.rs / metric_chart.rs / metric_grid.rs
+            │   └── mod.rs
+            └── mod.rs
+```
+
+### `evalys-rs/` — static file viewer
+
+Imports OAR simulation files and/or energy series files. Handles file detection, parsing, tab state cache, and energy estimation from jobs or raw series.
+
+```
+evalys-rs/
+├── sim_config.toml         — SSH + display config
+├── file_types/             — JSON schemas for supported file types (embedded at compile time)
+│   ├── oar.json
+│   ├── energy_series.json
+│   └── event.json
+├── examples/               — sample input files for testing
+└── src/
+    ├── main.rs             — entry point
+    ├── app.rs              — eframe App impl (UI loop)
+    ├── sim_state.rs        — app state: imported tabs, active data, sync to ApplicationContext
+    ├── sim_config.rs       — load/save sim_config.toml
+    ├── file_import.rs      — file open dialog + import pipeline
+    ├── tab_state_cache.rs  — per-tab preference cache (tab_states.json)
+    ├── energy_estimate.rs  — estimate_from_jobs + series_from_raw (zero-padding)
+    └── file_types/
+        ├── mod.rs          — FileTypeConfig trait + FileTypeRegistry
+        ├── oar.rs          — OAR simulation format
+        ├── energy_series.rs — energy series format
+        └── event.rs        — event format
+```
+
+### `liveOAR/` — live OAR cluster viewer
+
+Polls a live OAR cluster over SSH. No file import. Manages connection auth, polling, cluster presets, and energy estimation from live jobs.
+
+```
+liveOAR/
+├── live_config.toml        — SSH host + credentials config
+├── presets.json            — cluster filter presets
+├── data/data.json          — last fetched job data (written by background thread)
+└── src/
+    ├── main.rs             — entry point
+    ├── app.rs              — eframe App impl (UI loop)
+    ├── live_engine.rs      — background thread: poll → promote jobs to ApplicationContext
+    ├── oar_fetch.rs        — SSH fetch + JSON parsing
+    ├── refresh_coordinator.rs — MPSC channels + shared mutexes
+    ├── auth_view.rs        — login form UI
+    ├── cluster_presets.rs  — cluster preset CRUD + selector widget
+    ├── energy_estimate.rs  — estimate_from_jobs (same logic as evalys-rs)
+    └── mocker.rs           — fake data for testing without SSH
 ```
 
 ---
 
-## 3) Architecture de l'état (`ApplicationContext`)
+## 3) State Architecture (`ApplicationContext`)
 
-`ApplicationContext` est le conteneur central. Il est découpé en quatre sous-structs :
+`ApplicationContext` is the central container owned by the binary and passed into `goard_core` views. Split into sub-structs:
 
-| Champ | Type | Contenu |
+| Field | Type | Content |
 |-------|------|---------|
-| `data` | `LiveDataState` | jobs, clusters, strata (actifs + en attente swap) |
-| `refresh` | `RefreshCoordinator` | channels MPSC, mutex dates/rate/flag |
-| `import` | `ImportState` | sources importées, onglet actif, groupes |
-| `prefs` | `UiPreferences` | police, thème, presets clusters, état vue Gantt |
+| `data` | `JobData` | jobs, clusters, strata, markers, `plot_series` |
+| `prefs` | `UiPreferences` | font, theme, language, Gantt view state |
+| `filters` | `Filters` | active job filter state |
+| `options` | `ApplicationOptions` | zoom, pan, row height |
 
-L'état de session (`view_type`, `user_connected`, `filters`, `live_data`) reste à plat sur `ApplicationContext` car il est utilisé partout.
+Session flags (`view_type`, `user_connected`, `show_xy_panel`, `show_gantt_panel`) sit flat on `ApplicationContext` — used everywhere.
 
-### Swap pattern (live data)
+### `plot_series`
 
-Le thread background écrit dans `swap_all_jobs` / `swap_all_clusters`. Le thread UI les copie dans `all_jobs` / `all_clusters` uniquement quand `check_data_update()` consomme le channel. Cela évite une lecture partielle d'un snapshot en cours d'écriture.
+`JobData.plot_series: Vec<(String, Vec<(i64, f64)>)>` is the generic XY data fed to the XY panel. `goard_core` renders whatever is in it. The binary owns the content:
+
+| Binary | What it puts in `plot_series` |
+|--------|-------------------------------|
+| evalys-rs | Estimated series (from jobs) and/or raw measured series, depending on what files are loaded |
+| liveOAR | Estimated series computed from `all_jobs` over the full job time range |
+
+### Swap pattern (liveOAR)
+
+Background thread writes into `swap_all_jobs`. UI thread copies to `all_jobs` only when `check_job_update()` drains the channel. Prevents partial reads of an in-progress snapshot.
 
 ---
 
-## 4) Mode live data
+## 4) Live Data Mode (liveOAR)
 
-Activé par le flag `--live` au lancement, ou via **Fichier → 📡 Live Data** depuis l'interface.
-
-### Flux
+### Flow
 
 ```
-App::new(live=true)
-  └── ApplicationContext::update_periodically()
+App::new()
+  └── LiveEngine::spawn()
         └── thread::spawn ──► loop:
-              1. Attendre refresh_rate secondes
-              2. get_current_jobs_for_period(start, end)   ← SSH + parsing
-              3. get_jobs_from_json("./data/data.json")
+              1. Wait refresh_rate seconds
+              2. SSH fetch → parse jobs + resources
+              3. Write data/data.json (optional local cache)
               4. jobs_sender.send(jobs)
-              5. resources_sender.send(resources)
-              6. dead_intervals_sender.send(intervals)
 
-App::update() chaque frame :
-  └── check_data_update()
-        ├── jobs_receiver.try_recv()       → swap_all_jobs
-        ├── resources_receiver.try_recv()  → rebuild clusters + strata
-        └── dead_intervals_receiver.try_recv()
+App::update() each frame:
+  └── live_engine.check_job_update()
+        ├── jobs_receiver.try_recv()  → swap_all_jobs → promote to app.data
+        └── rebuild clusters + strata + estimate plot_series
 ```
 
-### Mutex partagés (`RefreshCoordinator`)
+### Shared state (`RefreshCoordinator`)
 
-| Mutex | Rôle |
+| Mutex | Role |
 |-------|------|
-| `refresh_rate: Arc<Mutex<u64>>` | secondes entre rafraîchissements (u64::MAX = jamais) |
-| `is_refreshing: Arc<Mutex<bool>>` | verrou anti-doublons |
-| `start_date / end_date` | fenêtre temporelle visible (mise à jour quand l'utilisateur pan le Gantt) |
-
-### WASM
-
-Sans accès SSH, `update_periodically()` et `instant_update()` utilisent `mocker.rs` qui génère des données factices. Pas de thread background en WASM (utiliser `wasm_bindgen_futures::spawn_local` si besoin à l'avenir).
+| `refresh_rate: Arc<Mutex<u64>>` | seconds between polls (u64::MAX = never) |
+| `is_refreshing: Arc<Mutex<bool>>` | dedup lock |
+| `start_date / end_date` | visible time window (updated when user pans the Gantt) |
 
 ---
 
-## 5) Système de types de fichiers
+## 5) File Type System (evalys-rs)
 
-### Trait `FileTypeConfig` (`src/models/file_types/mod.rs`)
+### `FileTypeConfig` trait (`evalys-rs/src/file_types/mod.rs`)
 
 ```rust
 pub trait FileTypeConfig: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn visualization_targets(&self) -> &[VisualizationTarget];
-    fn detect(&self, content: &str) -> f32;      // confiance 0.0–1.0
+    fn detect(&self, content: &str) -> f32;      // confidence 0.0–1.0
     fn validate(&self, content: &str) -> Vec<ValidationError>;
     fn parse(&self, content: &str) -> Result<ParsedFileData, String>;
 
-    // Optionnel — surcharger si nécessaire :
+    // Optional — override if needed:
     fn supports_hierarchy_controls(&self) -> bool { true }
     fn hierarchy_levels(&self) -> Option<Vec<String>> { None }
 }
 ```
 
-`ParsedFileData` contient : `resources`, `clusters`, `jobs`, `strata_by_resource_id`, `raw_energy_series`, `markers`.
+`ParsedFileData` contains: `resources`, `clusters`, `jobs`, `strata_by_resource_id`, `raw_energy_series`, `markers`.
 
 ### `FileTypeRegistry`
 
-L'ordre d'enregistrement définit la priorité en cas d'égalité de score `detect`. Actuellement :
+Registration order sets priority on `detect` score tie. Currently:
 
 ```rust
-// src/models/file_types/mod.rs — impl Default for FileTypeRegistry
+// evalys-rs/src/file_types/mod.rs — impl Default for FileTypeRegistry
 registry.register(Box::new(oar::OarFileType::new()));
 registry.register(Box::new(energy_series::EnergySeriesFileType::new()));
 registry.register(Box::new(event::EventFileType::new()));
 ```
 
-### Ajouter un nouveau type de fichier
+### Adding a new file type
 
-**Étape 1 — Créer `src/models/file_types/mytype.rs`**
+**Step 1 — Create `evalys-rs/src/file_types/mytype.rs`**
 
 ```rust
 use super::{FileTypeConfig, ParsedFileData, ValidationError, VisualizationTarget};
@@ -190,32 +241,23 @@ impl MyFileType {
 impl FileTypeConfig for MyFileType {
     fn name(&self) -> &str { "My Type" }
 
-    fn description(&self) -> &str { "Description affichée dans la boîte de dialogue import" }
+    fn description(&self) -> &str { "Shown in the import dialog" }
 
     fn visualization_targets(&self) -> &[VisualizationTarget] {
-        // Choisir parmi : Gantt, EnergyDiagram (ou les deux)
         &[VisualizationTarget::Gantt]
     }
 
     fn detect(&self, content: &str) -> f32 {
-        // Retourner une valeur > 0.5 si ce fichier correspond au format.
-        // Plus le score est élevé, plus ce type est prioritaire en auto-détection.
+        // Return > 0.5 if file matches this format. Higher = higher priority.
         let Ok(val) = serde_json::from_str::<serde_json::Value>(content) else { return 0.0 };
         if val.get("my_required_field").is_some() { 0.9 } else { 0.0 }
     }
 
     fn validate(&self, content: &str) -> Vec<ValidationError> {
-        // Retourner une liste vide si le contenu est valide.
         Vec::new()
     }
 
     fn parse(&self, content: &str) -> Result<ParsedFileData, String> {
-        // Parser le JSON et remplir ParsedFileData.
-        // - jobs       : Vec<Job>       pour Gantt
-        // - resources  : Vec<Strata>    pour les lignes du Gantt
-        // - clusters   : Vec<Cluster>   optionnel
-        // - raw_energy_series : Option<Vec<(i64, f64)>>  pour graphe énergie
-        // - markers    : Vec<GanttMarker> pour cercles/annotations
         Ok(ParsedFileData {
             resources: Vec::new(),
             clusters: Vec::new(),
@@ -225,40 +267,30 @@ impl FileTypeConfig for MyFileType {
             markers: Vec::new(),
         })
     }
-
-    // Optionnel : si le type impose sa propre hiérarchie (pas celle des vues OAR)
-    fn supports_hierarchy_controls(&self) -> bool { false }
-    fn hierarchy_levels(&self) -> Option<Vec<String>> {
-        Some(vec!["my_level".to_string()])
-    }
 }
 ```
 
-**Étape 2 — Déclarer le module**
-
-Dans `src/models/file_types/mod.rs` :
+**Step 2 — Declare the module** in `evalys-rs/src/file_types/mod.rs`:
 
 ```rust
 pub mod mytype;
 ```
 
-**Étape 3 — Enregistrer dans la registry**
-
-Dans `impl Default for FileTypeRegistry` (même fichier) :
+**Step 3 — Register** in `impl Default for FileTypeRegistry` (same file):
 
 ```rust
 registry.register(Box::new(mytype::MyFileType::new()));
 ```
 
-L'ordre = priorité en cas d'égalité de score `detect`. Placer les types les plus spécifiques en premier.
+More specific types first.
 
 ---
 
-## 6) Vues Gantt — édition directe de `views.json`
+## 6) Gantt Views — editing `views.json`
 
-Le fichier `views.json` est chargé au démarrage et réécrit à chaque modification via l'interface Admin. Il peut aussi être édité manuellement à froid.
+`views.json` is loaded at startup and rewritten on every Admin UI change. Can also be edited manually while the app is closed.
 
-### Format complet
+### Full format
 
 ```json
 {
@@ -287,19 +319,19 @@ Le fichier `views.json` est chargé au démarrage et réécrit à chaque modific
 }
 ```
 
-### Champs d'une vue
+### View fields
 
-| Champ | Type | Obligatoire | Description |
-|-------|------|-------------|-------------|
-| `name` | string | oui | Nom affiché dans le menu View |
-| `levels` | string[] | oui | Niveaux hiérarchiques, du plus général au plus fin |
-| `leaf_label_template` | string \| null | non | Template d'étiquette. Variables : `{field}` ou `{field\|short}` (coupe avant le premier `.`) |
-| `sort_by_label` | bool | non (défaut: false) | Trier les groupes par étiquette calculée au lieu de la clé brute |
-| `summary_fields` | string[] | non | Champs affichés dans la barre de synthèse. Si vide : dernier niveau |
-| `leaf_infos` | string \| null | non | `id` d'un preset `leaf_info_presets` |
-| `filter` | object \| null | non | Filtre sur un champ de ressource (voir ci-dessous) |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Label shown in the View menu |
+| `levels` | string[] | yes | Hierarchy levels, coarsest to finest |
+| `leaf_label_template` | string \| null | no | Label template. Variables: `{field}` or `{field\|short}` (truncates before first `.`) |
+| `sort_by_label` | bool | no (default: false) | Sort groups by computed label instead of raw key |
+| `summary_fields` | string[] | no | Fields shown in the summary row. Empty = last level |
+| `leaf_infos` | string \| null | no | `id` of a `leaf_info_presets` entry |
+| `filter` | object \| null | no | Filter on a strata field (see below) |
 
-### Champs du filtre
+### Filter fields
 
 ```json
 {
@@ -309,154 +341,147 @@ Le fichier `views.json` est chargé au démarrage et réécrit à chaque modific
 }
 ```
 
-- `exclude: false` → liste blanche (garder seulement `field == value`)
-- `exclude: true` → liste noire (exclure quand `field == value`)
+- `exclude: false` → allowlist (keep only `field == value`)
+- `exclude: true` → denylist (exclude when `field == value`)
 
-### Champs d'un leaf_info_preset
+### leaf_info_preset fields
 
-| Champ | Description |
+| Field | Description |
 |-------|-------------|
-| `id` | Identifiant unique, référencé par `leaf_infos` dans les vues |
-| `name` | Label affiché en tête du tooltip |
-| `fields` | Liste des champs strata à afficher dans le tooltip |
+| `id` | Unique identifier, referenced by `leaf_infos` in views |
+| `name` | Label shown at the top of the tooltip |
+| `fields` | Strata fields to display in the tooltip |
 
-### Niveaux disponibles (champs strata)
-
-Les valeurs utilisables dans `levels`, `summary_fields`, et `fields` sont les champs de la struct `Strata`. Les plus courants :
+### Available levels (strata fields)
 
 `site`, `cluster`, `host`, `type`, `vlan`, `disk`, `disk_id`, `nodeset`, `subnet_address`, `subnet_prefix`, `slash_16` … `slash_22`, `network_address`, `ip`, `comment`, `nodemodel`, `cputype`, `cpufreq`, `core_count`, `thread_count`, `memnode`, `gpu_model`, `chassis`, `resource_id`, `production`, `state`, `besteffort`, `deploy`, `drain`
 
-Le champ `site` est dérivé automatiquement depuis le FQDN du host (première partie avant le premier composant court).
+`site` is derived automatically from the host FQDN (first component before the first short segment).
 
 ---
 
-## 7) Fichiers de configuration
+## 7) Configuration Files
 
-### `config.json`
+### `goard_core/config.toml`
 
-Chargé par `GanttConfig::load()` au démarrage. Embarqué dans le binaire WASM à la compilation.
+Loaded by `GanttConfig::load()` at startup.
 
-```json
-{
-  "standby_truncate_state_to_now": true,
-  "besteffort_truncate_job_to_now": true,
-  "min_state_duration": 2,
-  "default_timespan": 21600,
-  "state_colors": {
-    "Absent": "#1e64dc",
-    "Suspected": "#dc1e1e",
-    "Dead": "#787878",
-    "Standby": "#88ffff"
-  },
-  "state_colors_light": {
-    "Absent": "#1040a0",
-    "Suspected": "#a01010",
-    "Dead": "#404040",
-    "Standby": "#008888"
-  }
-}
+```toml
+[gantt]
+standby_truncate_state_to_now = true
+besteffort_truncate_job_to_now = true
+min_state_duration = 2
+default_timespan = 21600
+xy_panel_height = 270.0
+
+[colors]
+# dark theme
+Absent = "#1e64dc"
+Suspected = "#dc1e1e"
+Dead = "#787878"
+Standby = "#88ffff"
+
+[colors_light]
+# light theme
+Absent = "#1040a0"
+Suspected = "#a01010"
+Dead = "#404040"
+Standby = "#008888"
 ```
 
-| Clé | Effet |
-|-----|-------|
-| `standby_truncate_state_to_now` | Tronque les intervalles Absent en cours au moment présent quand Standby s'applique |
-| `besteffort_truncate_job_to_now` | Cache la portion future des jobs besteffort |
-| `min_state_duration` | Durée minimale (secondes) pour afficher un intervalle d'état |
-| `default_timespan` | Largeur initiale du Gantt en secondes (21600 = 6h) |
-| `job_color_min` | Composante RGB minimale pour les couleurs de jobs aléatoires (0–255). 0 = spectre complet, 255 = blanc. Défaut 140 : couleurs claires, labels noirs lisibles. |
-| `state_colors` | Couleurs hatch mode sombre |
-| `state_colors_light` | Couleurs hatch mode clair |
+| Key | Effect |
+|-----|--------|
+| `standby_truncate_state_to_now` | Truncates in-progress Absent intervals to now when Standby applies |
+| `besteffort_truncate_job_to_now` | Hides the future portion of besteffort jobs |
+| `min_state_duration` | Minimum duration (seconds) to render a state interval |
+| `default_timespan` | Initial Gantt width in seconds (21600 = 6h) |
+| `xy_panel_height` | Initial height of the XY panel in pixels |
+| `job_color_min` | Minimum RGB component for random job colors (0–255). Default 140: light colors, readable black labels. |
 
-### `views.json`
+### `goard_core/views.json`
 
-Vues Gantt + leaf info presets. Écrit par l'interface Admin, éditable manuellement (voir §6).
+Gantt views + leaf info presets. Written by the Admin UI, editable manually (see §6).
 
-### `presets.json`
+### `liveOAR/presets.json`
 
-Presets de clusters. Format :
+Cluster filter presets. Format:
 
 ```json
 [
-  { "name": "Mon preset", "clusters": ["cluster-a", "cluster-b"] }
+  { "name": "My preset", "clusters": ["cluster-a", "cluster-b"] }
 ]
 ```
 
-### `options.json`
+### `evalys-rs/sim_config.toml` / `liveOAR/live_config.toml`
 
-Préférences utilisateur. Écrit par le panneau Options.
-
-```json
-{ "font_size": 16, "language": "fr" }
-```
+SSH connection config and display preferences. Written by the Settings panel.
 
 ---
 
-## 8) Authentification
+## 8) Authentication
 
-L'authentification est une **preuve de concept** : identifiants codés en dur (`admin` / `admin`) dans `src/views/main_page/anthentification.rs`.
+Auth is a **proof of concept**: hardcoded credentials (`admin` / `admin`) in `goard_core/src/models/utils/secret.rs`.
 
-Le flag `is_admin()` sur `ApplicationContext` vérifie `user_connected == Some("admin")`.
+`is_admin()` on `ApplicationContext` checks `user_connected == Some("admin")`.
 
-Les fonctions protégées sont : création/édition/suppression de vues Gantt, création/édition/suppression de presets de clusters.
+Protected operations: create/edit/delete Gantt views, create/edit/delete cluster presets.
 
-**Ne pas déployer en production sans remplacer ce mécanisme.**
+**Do not deploy to production without replacing this mechanism.**
 
 ---
 
-## 9) Cache de préférences par onglet (`tab_states.json`)
+## 9) Per-tab Preference Cache (evalys-rs)
 
-### Principe
+### Principle
 
-Chaque fichier importé dispose d'un identifiant stable composé de deux clés :
+Each imported file has a stable identity from two keys:
 
-| Clé | Calcul | Rôle |
-|-----|--------|------|
-| **Chemin absolu** | canonicalisé à l'import (`std::fs::canonicalize`) | Lookup rapide O(1) |
-| **Hash FNV-1a 64 bits** | premiers 8 Ko du contenu + longueur totale | Fallback si fichier déplacé/renommé |
+| Key | How computed | Role |
+|-----|--------------|------|
+| **Absolute path** | canonicalized at import (`std::fs::canonicalize`) | O(1) lookup |
+| **FNV-1a 64-bit hash** | first 8 KB of content + total length | Fallback if file moved/renamed |
 
-À l'ouverture d'un onglet, le cache est interrogé d'abord par chemin, puis par hash. Si une correspondance est trouvée, les préférences sont restaurées immédiatement.
+On tab open, cache is checked by path first, then hash. Match found → preferences restored immediately.
 
-### Données persistées par onglet
+### Persisted fields per tab
 
-| Champ | Description |
+| Field | Description |
 |-------|-------------|
-| `canvas_width_s` | Largeur visible du Gantt en secondes (niveau de zoom) |
-| `sideways_pan` | Décalage horizontal en points |
-| `row_height` | Hauteur des lignes de ressources |
-| `view_index` | Index de la vue d'agrégation active |
-| `energy_y_min/max` | Bornes Y du graphe énergie |
-| `energy_fit` | Case « Ajuster à la figure » |
-| `energy_panel_height` | Hauteur du panneau énergie |
+| `canvas_width_s` | Visible Gantt width in seconds (zoom level) |
+| `sideways_pan` | Horizontal offset in points |
+| `row_height` | Resource row height |
+| `view_index` | Active aggregation view index |
+| `energy_y_min/max` | Y bounds of the XY panel |
+| `energy_fit` | "Fit to figure" checkbox |
+| `energy_panel_height` | XY panel height |
 
-### Déclencheurs de sauvegarde
+### Save triggers
 
-| Événement | Code |
-|-----------|------|
-| Changement d'onglet | Blocs save dans `render_compact_toolbar` et `render` |
-| Fermeture d'un onglet | `close_ds` handler dans `render_data_source_tabs` (via `persist_tab_state`) |
-| Quitter l'application | `eframe::App::on_exit` → `flush_all_tab_states` |
+| Event | Code |
+|-------|------|
+| Tab switch | save blocks in `render_compact_toolbar` and `render` |
+| Tab close | `close_ds` handler in `render_data_source_tabs` (via `persist_tab_state`) |
+| App exit | `eframe::App::on_exit` → `flush_all_tab_states` |
 
-> **Règle importante :** pour l'onglet actuellement actif, `persist_tab_state` lit directement `self.options.*` et `self.energy.*` (état courant) et non le `tab_view_state` HashMap (snapshot potentiellement périmé). Pour les onglets en arrière-plan, il lit le HashMap mis à jour lors du dernier départ.
+> **Important:** for the currently active tab, `persist_tab_state` reads directly from `self.options.*` and `self.xy_panel.*` (live state), not the `tab_view_state` HashMap (stale snapshot). Background tabs read the HashMap updated on last departure.
 
-### Fichiers et structs concernés
+### Relevant files
 
-| Fichier | Rôle |
-|---------|------|
-| `src/models/data_structure/tab_state_cache.rs` | `TabStateCache` (load/save/lookup/store) + `compute_file_hash()` |
-| `src/models/data_structure/import_state.rs` | `ImportedDataSource.file_hash: Option<String>` |
-| `src/models/data_structure/application_context.rs` | Calcul du hash + canonicalisation du chemin à l'import |
-| `src/views/main_page/gantt/mod.rs` | `GanttChart::persist_tab_state`, `flush_all_tab_states`, `restore_from_cache` |
-| `src/app.rs` | `on_exit` → `flush_all_tab_states` |
+| File | Role |
+|------|------|
+| `evalys-rs/src/tab_state_cache.rs` | `TabStateCache` (load/save/lookup/store) + `compute_file_hash()` |
+| `evalys-rs/src/sim_state.rs` | `ImportedDataSource.file_hash: Option<String>` |
+| `goard_core/src/views/main_page/gantt/mod.rs` | `persist_tab_state`, `flush_all_tab_states`, `restore_from_cache` |
 
-### Fichier de cache
+### Cache file
 
-`tab_states.json` est écrit dans le répertoire de travail courant (là où le binaire est lancé). Il est **gitignore** : ne jamais le committer avec des chemins machine-spécifiques.
+`evalys-rs/tab_states.json` — written in the evalys-rs working directory. Gitignored: never commit machine-specific paths.
 
-Format d'une entrée :
+Entry format:
 
 ```json
 {
-  "path": "/chemin/absolu/vers/fichier.json",
+  "path": "/absolute/path/to/file.json",
   "hash": "494729c9f071c0bc",
   "state": {
     "canvas_width_s": 86400.0,
@@ -471,24 +496,113 @@ Format d'une entrée :
 }
 ```
 
-Maximum 200 entrées (FIFO). La clé de déduplication est le hash (pas le chemin) : si un fichier est déplacé, le chemin stocké est mis à jour automatiquement à la prochaine ouverture.
+Max 200 entries (FIFO). Dedup key is the hash (not path): if a file is moved, the stored path updates automatically on next open.
 
 ---
 
-## 10) Diagramme énergie
+## 10) XY Panel
 
-### Sources de données
+The XY panel is a generic secondary plot below the Gantt. `goard_core` renders whatever series are in `app.data.plot_series` — it has no concept of "energy" or "estimation."
 
-| Situation | Série affichée |
-|-----------|---------------|
-| Aucun fichier Energy Series | Estimation depuis les jobs (wattage TDP approximatif par CPU) |
-| Fichier Energy Series seul | Courbe mesurée brute |
-| Groupe OAR + Energy Series | Courbe estimée (OAR) + courbe mesurée (Energy Series) superposées |
+### Data sources by binary
 
-La logique d'estimation est dans `src/views/main_page/gantt/energy_estimate.rs`.
+**evalys-rs:**
 
-### Synchronisation Gantt ↔ énergie
+| Situation | Series in `plot_series` |
+|-----------|------------------------|
+| OAR file only | Estimated series from jobs (full job time range) |
+| Energy series file only | Raw measured series (zero-padded at edges) |
+| OAR + Energy Series group | Both: estimated + measured |
 
-Quand l'utilisateur glisse dans le graphe énergie, `EnergyPanelState::show()` retourne un `Option<(i64, i64)>` (nouvelle plage visible). `GanttChart::render()` applique ce range en mettant à jour `options.canvas_width_s` et `options.sideways_pan_in_points`.
+**liveOAR:**
 
-Le séparateur entre les deux zones est glissable verticalement ; `EnergyPanelState.panel_height` est mis à jour par le delta de drag.
+Always one series: estimated power from live jobs, computed over the full job time range on every job update.
+
+### Estimation logic
+
+Both binaries have `energy_estimate.rs` with `estimate_from_jobs(jobs, start_s, end_s, step_s, watts_per_resource)`. `watts_per_resource` comes from `gantt_config.energy_watts_per_resource`.
+
+evalys-rs also has `series_from_raw(raw)` which adds two zero-padding points at each end so panning outside the data range shows zero instead of a gap.
+
+### Gantt ↔ XY sync
+
+When the user pans inside the XY plot, `XyPanelState::show()` returns an `Option<(i64, i64)>` (new visible range). `GanttChart::render()` applies it by updating `options.canvas_width_s` and `options.sideways_pan_in_points`.
+
+The separator between the two areas is vertically draggable; `XyPanelState.panel_height` is updated by the drag delta.
+
+---
+
+## 11) Tests
+
+Tests use Rust's built-in test system. Run all tests:
+
+```bash
+cargo test
+```
+
+### Where tests live
+
+Unit tests are in the same file as the code they test, inside a `#[cfg(test)]` block. This block is excluded from release builds (no binary impact). Private functions are accessible directly.
+
+Integration tests (if added) go in a `tests/` directory at the crate root.
+
+### Existing tests
+
+#### `goard_core`
+
+**`src/models/data_structure/job_data.rs`** — 5 tests
+
+| Test | What it checks |
+|------|----------------|
+| `rebuild_populates_cluster_resource_ids` | 2 resources in same cluster → both IDs present |
+| `rebuild_populates_host_resource_ids` | 2 resources on same host → both under same host key |
+| `rebuild_cluster_hosts_no_duplicates` | 2 resources on same host → host listed only once |
+| `rebuild_multiple_clusters` | Resources from different clusters don't mix |
+| `rebuild_clears_previous_state` | Two calls with different strata → old data cleared |
+
+---
+
+#### `evalys-rs`
+
+**`src/energy_estimate.rs`** — 7 tests
+
+| Test | What it checks |
+|------|----------------|
+| `estimate_no_jobs_gives_zeros` | No jobs → all points at 0 W |
+| `estimate_single_job_correct_watts` | 2 resources × 300 W = 600 W at each sample |
+| `estimate_job_outside_window_ignored` | Job outside time window → zero contribution |
+| `estimate_partial_overlap` | Job starting mid-window: 0 W before, correct value after |
+| `estimate_returns_empty_for_invalid_range` | `end < start` or `step = 0` → empty vec |
+| `series_from_raw_empty` | Empty input → empty output |
+| `series_from_raw_pads_zeros` | Raw series gets 2 zero points before and 2 after; data unchanged |
+
+**`src/sim_state.rs`** — 3 tests
+
+| Test | What it checks |
+|------|----------------|
+| `time_range_empty_jobs` | No jobs → sentinel values `(MAX, MIN)` |
+| `time_range_skips_job_0` | Virtual "all_resources" row (id=0) excluded from range |
+| `time_range_multiple_jobs` | Global min/max correct across multiple jobs |
+
+---
+
+#### `liveOAR`
+
+**`src/energy_estimate.rs`** — 5 tests (same logic as evalys-rs, no `series_from_raw`)
+
+| Test | What it checks |
+|------|----------------|
+| `estimate_no_jobs_gives_zeros` | No jobs → all points at 0 W |
+| `estimate_single_job_correct_watts` | 2 resources × 300 W = 600 W at each sample |
+| `estimate_job_outside_window_ignored` | Job outside time window → zero contribution |
+| `estimate_partial_overlap` | Job starting mid-window: 0 W before, correct value after |
+| `estimate_returns_empty_for_invalid_range` | `end < start` or `step = 0` → empty vec |
+
+**`src/cluster_presets.rs`** — 4 tests
+
+| Test | What it checks |
+|------|----------------|
+| `cluster_preset_serde_roundtrip` | JSON serialize/deserialize of a preset list |
+| `cluster_preset_empty_clusters_allowed` | Preset with no clusters is valid and survives JSON |
+| `load_presets_from_nonexistent_file_returns_empty` | Missing file → empty list, no panic |
+| `save_and_load_roundtrip` | Write then read back from disk → identical data |

@@ -25,10 +25,10 @@ pub struct JobData {
     /// Active markers from the current data source.
     pub markers: Vec<GanttMarker>,
 
-    /// Raw energy series for the current data source: (series name, points).
-    /// Empty when there's no measured energy data — the Gantt falls back to
-    /// estimating from job allocations.
-    pub energy_series: Vec<(String, Vec<(i64, f64)>)>,
+    /// XY series for the secondary plot panel: (series name, points).
+    /// Empty when no external data is loaded — the Gantt may fall back to
+    /// a computed estimate from job allocations.
+    pub plot_series: Vec<(String, Vec<(i64, f64)>)>,
 }
 
 impl Default for JobData {
@@ -44,7 +44,7 @@ impl Default for JobData {
             dead_intervals: HashMap::new(),
             standby_upto: HashMap::new(),
             markers: Vec::new(),
-            energy_series: Vec::new(),
+            plot_series: Vec::new(),
         }
     }
 }
@@ -70,5 +70,77 @@ impl JobData {
                 self.host_resource_ids.entry(host.clone()).or_default().push(*rid);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::data_structure::strata::Strata;
+
+    fn strata(resource_id: u32, cluster: &str, host: &str) -> (u32, Strata) {
+        (resource_id, Strata {
+            resource_id: Some(resource_id),
+            cluster: Some(cluster.to_string()),
+            host: Some(host.to_string()),
+            ..Strata::default()
+        })
+    }
+
+    #[test]
+    fn rebuild_populates_cluster_resource_ids() {
+        let mut d = JobData::default();
+        d.strata_by_resource_id.extend([strata(1, "cluster-a", "host1"), strata(2, "cluster-a", "host2")]);
+        d.rebuild_cluster_index();
+        let mut ids = d.cluster_resource_ids["cluster-a"].clone();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn rebuild_populates_host_resource_ids() {
+        let mut d = JobData::default();
+        d.strata_by_resource_id.extend([strata(1, "c", "host1"), strata(2, "c", "host1"), strata(3, "c", "host2")]);
+        d.rebuild_cluster_index();
+        let mut h1 = d.host_resource_ids["host1"].clone();
+        h1.sort();
+        assert_eq!(h1, vec![1, 2]);
+        assert_eq!(d.host_resource_ids["host2"], vec![3]);
+    }
+
+    #[test]
+    fn rebuild_cluster_hosts_no_duplicates() {
+        let mut d = JobData::default();
+        // two resources on same host in same cluster
+        d.strata_by_resource_id.extend([strata(1, "c", "host1"), strata(2, "c", "host1")]);
+        d.rebuild_cluster_index();
+        assert_eq!(d.cluster_hosts["c"], vec!["host1"]);
+    }
+
+    #[test]
+    fn rebuild_multiple_clusters() {
+        let mut d = JobData::default();
+        d.strata_by_resource_id.extend([
+            strata(1, "cluster-a", "ha1"),
+            strata(2, "cluster-b", "hb1"),
+        ]);
+        d.rebuild_cluster_index();
+        assert!(d.cluster_resource_ids.contains_key("cluster-a"));
+        assert!(d.cluster_resource_ids.contains_key("cluster-b"));
+        assert!(!d.cluster_resource_ids["cluster-a"].contains(&2));
+    }
+
+    #[test]
+    fn rebuild_clears_previous_state() {
+        let mut d = JobData::default();
+        d.strata_by_resource_id.extend([strata(1, "old-cluster", "h1")]);
+        d.rebuild_cluster_index();
+        assert!(d.cluster_resource_ids.contains_key("old-cluster"));
+
+        d.strata_by_resource_id.clear();
+        d.strata_by_resource_id.extend([strata(2, "new-cluster", "h2")]);
+        d.rebuild_cluster_index();
+        assert!(!d.cluster_resource_ids.contains_key("old-cluster"));
+        assert!(d.cluster_resource_ids.contains_key("new-cluster"));
     }
 }

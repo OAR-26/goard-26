@@ -20,7 +20,7 @@ pub struct ApplicationContext {
 
     // Flat display state — set by the binary. Core has no knowledge of tabs,
     // groups, files, or how sources are managed; it just renders these.
-    pub show_energy: bool,
+    pub show_xy_panel: bool,
     pub show_gantt_panel: bool,
 
     /// One-shot signal: the binary just swapped the active data source.
@@ -32,10 +32,6 @@ pub struct ApplicationContext {
     /// should be shown/interactive for the current source.
     pub show_hierarchy_controls: bool,
 
-    /// Whether to additionally show a job-based energy estimate alongside
-    /// the raw energy series for the current source (e.g. a Gantt source
-    /// combined with separate energy-file sources sharing one view).
-    pub show_estimated_with_energy: bool,
 
     /// Whether to synthesize the "all resources" virtual job row in the Gantt
     /// each frame. File-imported OAR data already carries this row from the
@@ -104,8 +100,8 @@ impl ApplicationContext {
         &self.data.all_jobs
     }
 
-    pub fn show_energy_diagram(&self) -> bool {
-        self.show_energy
+    pub fn show_xy_panel(&self) -> bool {
+        self.show_xy_panel
     }
 
     pub fn show_gantt(&self) -> bool {
@@ -127,11 +123,10 @@ impl Default for ApplicationContext {
 
             start_date: now,
             end_date: now,
-            show_energy: true,
+            show_xy_panel: true,
             show_gantt_panel: true,
             source_changed: false,
             show_hierarchy_controls: true,
-            show_estimated_with_energy: false,
             show_all_resources_row: false,
         };
         // Center the initial window on now using default_timespan so

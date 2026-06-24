@@ -1,330 +1,344 @@
-# Manuel utilisateur - Goard
+# User Manual - Goard
 
-Ce manuel décrit l'utilisation de l'application **Goard** et l'ensemble des fonctionnalités visibles dans l'interface.
+Goard is a Gantt-based job scheduler visualizer. It ships as two separate binaries for different use cases:
 
----
+| Binary | Use case |
+|--------|----------|
+| **evalys-rs** | Import and visualize static OAR simulation files |
+| **liveOAR** | Connect to a live OAR cluster and visualize jobs in real time |
 
-## 1) Démarrage
-
-Au lancement, l'application s'ouvre directement sur la vue **Gantt**.
-
-L'authentification n'est **pas requise** pour consulter les données. Elle est uniquement nécessaire pour les fonctions d'administration :
-- Créer / modifier / supprimer des vues Gantt
-- Créer / modifier / supprimer des presets de clusters
-
-### Identifiants administrateur
-- **Utilisateur** : `admin`
-- **Mot de passe** : `admin`
-
-> Note : l'authentification actuelle est une preuve de concept (identifiants codés en dur).
+Both share the same Gantt and Dashboard views. Sections marked **(evalys-rs only)** or **(liveOAR only)** apply to one binary only.
 
 ---
 
-## 2) Barre de menu (haut)
+## 1) Startup
 
-### Fichier
-- **📁 Import File** : ouvre une boîte de dialogue pour importer un fichier JSON (voir section 10)
-- **📡 Live Data** : active le mode données en temps réel (désactivé si déjà actif)
-- **Se connecter** (si non connecté) / **Se déconnecter** (si connecté)
-- Affichage de l'utilisateur connecté
-- **Quitter** : ferme l'application
+Both apps open directly on the **Gantt** view.
+
+Authentication is **not required** to view data. Only admin operations need it:
+- Create / edit / delete Gantt views
+- Create / edit / delete cluster presets (liveOAR)
+
+### Admin credentials
+- **User:** `admin`
+- **Password:** `admin`
+
+> Note: current authentication is a proof of concept (hardcoded credentials).
+
+---
+
+## 2) Menu Bar (top)
+
+### File
+- **Log in** (if not connected) / **Log out** (if connected)
+- Connected user displayed
+- **Quit** — closes the application
+
+**evalys-rs only:**
+- **📁 Import File** — opens a file dialog to import a JSON file (see §10)
+
+**liveOAR only:**
+- **📡 Live Data** — toggles live polling mode (grayed out if already active)
 
 ### Options
-Ouvre la fenêtre d'options pour :
-- **Langue** : English / Français
-- **Taille de police** : de 10 à 30
-- **Enregistrer** : sauvegarde dans `options.json`
+Opens the options window:
+- **Language:** English / Français
+- **Font size:** 10 to 30
+- **Save** — writes to `options.json`
 
-### Aide contextuelle (`?`)
-Affiche une aide différente selon la vue active (Dashboard ou Gantt).
-
----
-
-## 3) Barre d'outils (sous le menu)
-
-Fonctionnalités globales :
-- **Mode** : bouton `📊 Dashboard` / `📅 Gantt`
-- **Filtres** : bouton `🔎 Filtres`
-- **Thème clair/sombre** : bouton `☀` / `🌙`
-
-Contrôles disponibles **uniquement en mode Live Data** :
-- **Rafraîchissement automatique** : choix `30 s`, `1 min`, `5 min`, `Never`
-- **Rafraîchissement immédiat** : bouton `⟳` (désactivé pendant un rafraîchissement en cours)
-
-Comportement :
-- Un indicateur en bas (`Refreshing data...`) + spinner apparaît pendant l'actualisation
+### Help (`?`)
+Shows context-sensitive help depending on the active view (Dashboard or Gantt).
 
 ---
 
-## 4) Filtres des jobs
+## 3) Toolbar (below the menu)
 
-La fenêtre **Filtres** permet de filtrer l'affichage par :
-- **Propriétaire (Owner)**
-- **État du job (State)**
-- **Preset de clusters** (None ou preset nommé)
+Global controls:
+- **Mode:** `📊 Dashboard` / `📅 Gantt` toggle
+- **Filters:** `🔎 Filters` button
+- **Light/dark theme:** `☀` / `🌙`
 
-Boutons :
-- **Appliquer** : applique les filtres et met à jour l'affichage
-- **Réinitialiser** : remet les filtres par défaut
-
-Les filtres impactent :
-- le Dashboard (métriques + tableau)
-- le Gantt
-- le calcul énergétique (dans la vue Gantt)
+**liveOAR only:**
+- **Auto-refresh interval:** `30 s`, `1 min`, `5 min`, `Never`
+- **Instant refresh:** `⟳` button (disabled while a refresh is in progress)
+- A `Refreshing data...` indicator + spinner appears at the bottom during refresh
 
 ---
 
-## 5) Vue Gantt
+## 4) Job Filters
 
-La vue Gantt affiche les jobs et ressources sur une timeline interactive.
+The **Filters** window lets you filter displayed jobs by:
+- **Owner**
+- **Job state**
+- **Cluster preset** — None or a named preset
 
-### Onglets de sources de données
+Buttons:
+- **Apply** — applies filters and updates the display
+- **Reset** — clears all filters back to defaults
 
-En haut du Gantt, une rangée d'onglets permet de naviguer entre les sources :
-
-- **Live Data** : données temps réel (visible uniquement si le mode live est actif)
-  - `×` à droite : désactive le mode live et vide les données en mémoire
-- **Fichiers importés** : un onglet par fichier chargé
-  - `+` : groupe ce fichier avec un autre (voir section 12)
-  - `×` : ferme et supprime la source
-
-### Interactions principales
-- **Glisser (clic gauche)** : déplacement horizontal
-- **Zoom horizontal** : `Ctrl/Cmd + molette` ou glisser vertical clic droit
-- **Zoom vertical** : `Alt/Option + molette`
-- **Double clic gauche** : réinitialiser la vue
-- **Clic gauche sur un job** : zoom sur le job
-- **Clic droit sur un job** : ouvrir les détails
-
-### Contrôles Gantt (barre outils)
-- **View** : sélecteur de vue d'agrégation (voir section 7)
-- `🔧 Settings`
-  - Couleur des jobs (aléatoire / par état)
-- **Admin** : accès au panneau d'administration (grisé si non authentifié)
-- **Nav** : `◀ 1w`, `◀ 1d`, `1d ▶`, `1w ▶`
-- `⌚ Center on now`
-
-### Ligne de synthèse (en mode Gantt)
-Affiche :
-- Nom de la vue active
-- Nombre de jobs filtrés
-- Champs de résumé configurés (ex. clusters affichés / total, hosts affichés / total)
-- État des données (`refreshing`, `loading`, `ready`)
-
-### Détails job
-Les fenêtres de détails restent ouvertes individuellement et peuvent être fermées séparément.
+Filters affect:
+- Dashboard (metrics + table)
+- Gantt
+- XY panel data
 
 ---
 
-## 6) Énergie (vue Gantt)
+## 5) Gantt View
 
-Sous le Gantt, un graphe **Consommation globale** est affiché.
+The Gantt shows jobs and resources on an interactive timeline.
 
-Deux modes d'affichage :
-- **Estimée** : calculée à partir des données de jobs (aucun fichier énergie chargé)
-- **Mesurée** : issue d'un fichier `Energy Series` importé
+### Data source tabs
 
-En mode **groupe** (fichier OAR + fichier Energy Series combinés), les deux courbes sont superposées.
+A row of tabs at the top of the Gantt lets you switch between data sources:
 
-Fonctions disponibles :
-- Filtre énergie par **Cluster**
-- Filtre énergie par **Owner**
-- **Reset** des filtres énergie
-- **Ajuster à la figure** (checkbox) : recale automatiquement l'axe Y
-- Survol du graphe : heure + puissance (W)
-- Zoom/déplacement sur le graphe : recale la fenêtre temporelle du Gantt
+**evalys-rs:**
+- One tab per imported file or group
+- `+` on a tab — group this file with another (see §11)
+- `×` on a tab — close and remove this source
 
-Le **séparateur** entre le Gantt et le graphe énergie est **glissable verticalement** pour redimensionner les deux zones.
+**liveOAR:**
+- Single **Live Data** tab (always present when connected)
+- `×` — stops live mode and clears data from memory
 
----
+### Main interactions
 
-## 7) Vues d'agrégation du Gantt
+| Input | Action |
+|-------|--------|
+| Left-click drag | Horizontal pan |
+| `Ctrl/Cmd + scroll` | Horizontal zoom |
+| Right-click drag (vertical) | Horizontal zoom |
+| `Alt/Option + scroll` | Vertical zoom |
+| Left double-click | Reset view |
+| Left-click on a job | Zoom to job |
+| Right-click on a job | Open job details |
 
-### 7.1) Utilisation des vues
+### Gantt toolbar controls
+- **View** — aggregation view selector (see §6)
+- **🔧 Settings** — job color mode (random / by state)
+- **Admin** — administration panel (grayed out if not authenticated)
+- **Nav** — `◀ 1w`, `◀ 1d`, `1d ▶`, `1w ▶`
+- **⌚ Center on now**
 
-Le menu déroulant **View** (dans la barre d'outils du Gantt) permet de choisir la hiérarchie d'affichage des ressources.
+### Summary row
+Shows: active view name, filtered job count, configured summary fields (e.g. clusters shown / total, hosts shown / total), data state (`refreshing`, `loading`, `ready`).
 
-Chaque vue définit :
-- **Les niveaux hiérarchiques** : les ressources sont regroupées de gauche à droite (ex. site → cluster → hôte)
-- **L'étiquette de chaque ligne** : dérivée d'un modèle configurable (ex. `{host|short}`)
-- **Un filtre optionnel** : restreint les ressources affichées (ex. uniquement `production = YES`)
-
-Exemples de vues prédéfinies :
-- `Nodes` — vue standard des nœuds de calcul (site → cluster → host)
-- `vlans` — vue des ressources réseau (site → type → vlan)
-
-Les bandes colorées à gauche de la timeline représentent les niveaux hiérarchiques : une bande par niveau, du plus externe (gauche) au plus interne (droite). Survoler une bande affiche un tooltip récapitulatif du chemin (site, cluster, etc.).
-
----
-
-### 7.2) Gestion des vues (Admin)
-
-L'authentification **Admin** donne accès aux fonctionnalités de gestion des vues.
-
-#### Créer une vue
-
-Depuis le menu **View**, cliquer sur **+ Create view**.
-
-Champs à remplir :
-- **Name** : nom affiché dans le menu View
-- **Leaf info preset** : jeu de champs affiché dans le tooltip au survol d'une ligne
-- **Hierarchy levels** : niveaux de regroupement, du plus général au plus fin. Cliquer sur les champs disponibles pour les ajouter, utiliser ◀ / ▶ pour réordonner, 🗑 pour supprimer.
-- **Leaf label template** : modèle d'étiquette pour les lignes feuilles. Exemples : `{host|short}`, `{type}/{vlan}`. Le modificateur `|short` tronque à la première partie avant le `.`.
-- **Status bar fields** : champs affichés dans la barre de synthèse (vide = dernier niveau utilisé).
-- **Sort by label** : trier les groupes par étiquette calculée (utile quand les clés sont des IDs opaques).
-- **Resource filter** : filtre optionnel sur un champ de ressource. Choisir le champ, la valeur, et si la règle est une liste blanche (garder) ou liste noire (exclure).
-
-Cliquer **Save view** pour enregistrer. La vue est immédiatement disponible dans le menu.
-
-#### Modifier une vue
-
-Dans le menu **View**, survoler une vue existante → cliquer ✏ à droite de son nom.
-
-Le panneau **Edit view** s'ouvre avec les mêmes champs que la création. Modifier les champs souhaités puis cliquer **Apply**.
-
-#### Supprimer une vue
-
-Dans le menu **View**, survoler une vue → cliquer 🗑. Une fenêtre de confirmation s'affiche. Cliquer **Delete** pour confirmer.
-
-> Note : la suppression est immédiate et irréversible. La configuration est sauvegardée dans `views.json`.
+### Job details
+Detail windows stay open individually and can be closed separately.
 
 ---
 
-### 7.3) Presets d'informations (Leaf info presets)
+## 6) Aggregation Views
 
-Un **leaf info preset** définit les champs affichés dans le tooltip au survol d'une ligne de ressource (hôte, VLAN, disque, etc.).
+### Using views
 
-#### Créer un preset
+The **View** dropdown in the Gantt toolbar selects the resource hierarchy.
 
-Dans le panneau **Create view** ou **Edit view**, cliquer **+** à côté du sélecteur de preset.
+Each view defines:
+- **Hierarchy levels** — resources grouped left to right (e.g. site → cluster → host)
+- **Leaf label** — derived from a configurable template (e.g. `{host|short}`)
+- **Optional filter** — restricts resources shown (e.g. only `production = YES`)
 
-Remplir :
-- **Preset name** : nom du preset
-- **Fields** : cocher les champs à afficher (ex. `cluster`, `network_address`, `cputype`, `cpuset`, `memnode`…)
-
-Un champ de recherche permet de filtrer la liste des champs disponibles.
-
-Cliquer **Save preset**.
-
-#### Modifier un preset
-
-Dans le sélecteur de preset d'une vue, ouvrir la liste déroulante et cliquer ✏ sur le preset à modifier. Changer le nom et/ou les champs, puis **Apply**.
-
-#### Supprimer un preset
-
-Dans la liste déroulante des presets, cliquer 🗑 → confirmer dans la fenêtre de confirmation.
-
-> Attention : supprimer un preset retire son affichage des tooltips pour toutes les vues qui l'utilisaient.
+Colored bands to the left of the timeline represent hierarchy levels, outermost on the left. Hovering a band shows a summary tooltip of the path (site, cluster, etc.).
 
 ---
 
-## 8) Presets de clusters (Admin)
+### Managing views (Admin)
 
-Le bouton **Admin** est cliquable uniquement pour l'utilisateur `admin` et gris pour les autres.
+**Admin** authentication is required.
 
-Depuis le panneau **Admin configuration** :
-- **New Preset** : créer un preset
-- **Modify Preset** : modifier un preset existant
-- Choix des clusters inclus (checkbox)
-- **Save** : enregistre/écrase le preset
-- **Delete** : supprime un preset
+#### Create a view
 
-Les presets deviennent ensuite sélectionnables dans la fenêtre **Filtres**.
+From the **View** menu → click **+ Create view**.
+
+Fields:
+- **Name** — label shown in the View menu
+- **Leaf info preset** — fields shown in the hover tooltip on a resource row
+- **Hierarchy levels** — grouping levels, coarsest to finest. Click available fields to add, use ◀ / ▶ to reorder, 🗑 to remove.
+- **Leaf label template** — template for leaf row labels. Examples: `{host|short}`, `{type}/{vlan}`. The `|short` modifier truncates before the first `.`.
+- **Status bar fields** — fields shown in the summary row. Empty = last level.
+- **Sort by label** — sort groups by computed label (useful when keys are opaque IDs).
+- **Resource filter** — optional filter on a strata field. Choose field, value, and whether the rule is an allowlist (keep) or denylist (exclude).
+
+Click **Save view**. View is immediately available in the menu.
+
+#### Edit a view
+
+In the **View** menu, hover over an existing view → click ✏ to the right of its name.
+
+The **Edit view** panel opens with the same fields. Modify as needed then click **Apply**.
+
+#### Delete a view
+
+In the **View** menu, hover over a view → click 🗑. A confirmation window appears. Click **Delete** to confirm.
+
+> Deletion is immediate and irreversible. Saved to `views.json`.
 
 ---
 
-## 9) Dashboard
+### Leaf info presets
 
-La vue **Dashboard** affiche :
-- Un titre avec le nombre total de jobs filtrés
-- Des **métriques** (boîtes colorées) : total jobs, jobs par état, plage de temps
-- Ou un **graphique** par état de job (bouton bascule `Show charts` / `Show metrics`)
-- Un **tableau de jobs** avec tri par colonne, pagination, et sélection des colonnes affichées
+A **leaf info preset** defines which fields appear in the tooltip when hovering a resource row.
 
-Cliquer sur une ligne du tableau ouvre la fenêtre de détails du job.
+#### Create a preset
+
+In **Create view** or **Edit view**, click **+** next to the preset selector.
+
+Fill in:
+- **Preset name**
+- **Fields** — check the fields to display (e.g. `cluster`, `network_address`, `cputype`, `memnode`)
+
+A search field filters the available fields list. Click **Save preset**.
+
+#### Edit a preset
+
+In the preset dropdown of any view, click ✏ on the preset to modify. Change name and/or fields, then **Apply**.
+
+#### Delete a preset
+
+In the preset dropdown, click 🗑 → confirm in the dialog.
+
+> Deleting a preset removes tooltip fields for all views that used it.
 
 ---
 
-## 10) Import de fichiers
+## 7) XY Panel (Energy)
 
-Via **Fichier → 📁 Import File**, une boîte de dialogue s'ouvre pour choisir un fichier JSON.
+Below the Gantt, a secondary plot shows power consumption over time.
 
-Après sélection, une fenêtre **Import File** apparaît :
-- **Auto Detect** : détection automatique du type
-- Ou sélection manuelle parmi les types disponibles
+**evalys-rs** — series shown depends on what files are loaded:
 
-Types de fichiers supportés :
-| Type | Contenu | Visualisation |
+| Situation | Series displayed |
+|-----------|-----------------|
+| OAR file only | Estimated consumption from job allocations |
+| Energy Series file only | Raw measured power curve |
+| OAR + Energy Series group | Both curves overlaid |
+
+**liveOAR** — always shows estimated consumption from live jobs.
+
+### Controls
+- **Cluster filter** — filter the series by cluster
+- **Owner filter** — filter the series by job owner
+- **Reset** — clear filters
+- **Fit to figure** (checkbox) — auto-scale Y axis
+- Hovering the plot shows timestamp + value
+- Panning / zooming the plot syncs the Gantt's visible time window
+
+The **divider** between the Gantt and the XY panel is vertically draggable to resize both areas.
+
+---
+
+## 8) Dashboard
+
+The **Dashboard** view shows:
+- Total filtered job count
+- **Metrics** (colored boxes): total jobs, jobs by state, time range
+- Or a **chart by job state** (toggle `Show charts` / `Show metrics`)
+- **Job table** with column sort, pagination, and column visibility selection
+
+Clicking a table row opens the job detail window.
+
+---
+
+## 9) Cluster Presets (liveOAR only)
+
+The **Admin** button is only clickable for the `admin` user.
+
+From the **Admin configuration** panel:
+- **New Preset** — create a preset
+- **Modify Preset** — edit an existing preset
+- Checkbox list of clusters to include
+- **Save** — saves / overwrites the preset
+- **Delete** — removes the preset
+
+Saved presets appear in the **Filters** window under **Cluster preset**.
+
+---
+
+## 10) File Import (evalys-rs only)
+
+Via **File → 📁 Import File**, a dialog opens to select a JSON file.
+
+After selection, an **Import File** window appears:
+- **Auto Detect** — automatic format detection
+- Or manual selection from the available types
+
+### Supported file types
+
+| Type | Content | Visualization |
 |------|---------|---------------|
-| **OAR Simulation** | Jobs + ressources (format Grid5000/OAR) | Gantt + énergie estimée |
-| **Energy Series** | Série temporelle de puissance mesurée | Graphe énergie |
-| **Event** | Événements ponctuels sur des ressources nommées | Gantt (cercles) |
+| **OAR Simulation** | Jobs + resources (Grid5000/OAR format) | Gantt + estimated energy |
+| **Energy Series** | Timestamped power measurements | XY panel (measured curve) |
+| **Event** | Point events on named resources | Gantt (circles) |
 
-Cliquer **Import ▶** pour charger. Un onglet apparaît en haut du Gantt.
-
----
-
-## 11) Préférences par fichier (sauvegarde automatique)
-
-L'application mémorise automatiquement les préférences Gantt **par fichier importé** :
-
-| Préférence | Ce qui est sauvegardé |
-|------------|-----------------------|
-| Zoom | Largeur visible de la timeline |
-| Position | Décalage horizontal (pan) |
-| Hauteur des lignes | Taille verticale des lignes de ressources |
-| Vue active | Indice de la vue d'agrégation sélectionnée |
-| Panneau énergie | Bornes Y, option « Ajuster à la figure », hauteur du panneau |
-
-### Quand les préférences sont-elles sauvegardées ?
-
-- **Changement d'onglet** : en quittant un onglet vers un autre
-- **Fermeture d'un onglet** (`×`)
-- **Quitter l'application** (via Fichier → Quitter ou le bouton de fermeture de la fenêtre)
-
-> **Note :** fermer la fenêtre via le gestionnaire de fenêtres (croix OS) déclenche aussi la sauvegarde. En revanche, forcer la fin du processus (`kill`, coupure de courant) ne garantit pas la sauvegarde du dernier état.
-
-### Identification du fichier
-
-Les préférences sont associées au fichier par son **chemin absolu** ET par une **empreinte du contenu** (hash des premiers 8 Ko). Cela signifie que :
-- Renommer ou déplacer un fichier → les préférences sont quand même retrouvées (via le hash)
-- Modifier le contenu du fichier → le chemin seul suffit à retrouver l'ancienne session
-
-### Fichier de stockage
-
-Les préférences sont stockées dans `tab_states.json` dans le répertoire de travail. Ce fichier est local à votre machine et n'est pas partagé.
+Click **Import ▶** to load. A tab appears at the top of the Gantt.
 
 ---
 
-## 12) Groupement de fichiers
+## 11) File Grouping (evalys-rs only)
 
-Il est possible de **combiner** un fichier OAR et un fichier Energy Series pour superposer la courbe mesurée sur l'estimation.
+You can **combine** an OAR file and an Energy Series file to overlay the measured curve on the estimate.
 
-Pour grouper deux fichiers :
-1. Importer le premier fichier (ex. OAR)
-2. Sur son onglet, cliquer **`+`**
-3. Choisir le second fichier (ex. Energy Series)
-4. Les deux fichiers forment un **groupe** (onglet `groupN`)
+Steps:
+1. Import the first file (e.g. OAR)
+2. On its tab, click **`+`**
+3. Select the second file (e.g. Energy Series)
+4. Both files form a **group** (tab labeled `groupN`)
 
-Depuis l'onglet du groupe :
-- `v` : affiche la liste des membres du groupe
-- `+` : ajouter un fichier au groupe
-- 🗑 sur un membre : supprimer ce fichier du groupe
-- 🗑 sur le groupe : supprimer le groupe et tous ses fichiers
+From the group tab:
+- `v` — list group members
+- `+` — add a file to the group
+- 🗑 on a member — remove that file from the group
+- 🗑 on the group — delete the group and all its files
 
 ---
 
-## 13) Résumé des fonctionnalités
+## 12) Per-file Preferences (evalys-rs only)
 
-- Authentification administrateur (gestion des vues et presets)
-- Dashboard (métriques + graphique + tableau tri/pagination/colonnes)
-- Gantt interactif (navigation, zoom, détails job)
-- Vues d'agrégation configurables (hiérarchies, filtres, templates d'étiquettes)
-- Presets d'informations pour les tooltips de ressources
-- Filtres multi-critères + presets de clusters
-- Import de fichiers JSON (OAR, Energy Series, Event)
-- Groupement de sources (OAR + énergie superposés)
-- Estimation et mesure énergétique synchronisées avec la timeline
-- Thème clair/sombre, langue, taille de police
-- Rafraîchissement auto et manuel (mode live uniquement)
-- Préférences Gantt sauvegardées par fichier (zoom, pan, vue, énergie) — restaurées automatiquement à la réouverture
+evalys-rs automatically remembers Gantt preferences **per imported file**:
+
+| Preference | What is saved |
+|------------|--------------|
+| Zoom | Visible timeline width |
+| Position | Horizontal offset (pan) |
+| Row height | Vertical height of resource rows |
+| Active view | Selected aggregation view index |
+| XY panel | Y bounds, "Fit to figure" state, panel height |
+
+### When preferences are saved
+
+- **Tab switch** — when leaving a tab for another
+- **Tab close** (`×`)
+- **App exit** (File → Quit or window close button)
+
+> Forcing the process to quit (`kill`, power loss) does not guarantee the last state is saved.
+
+### File identity
+
+Preferences are linked to a file by its **absolute path** AND a **content fingerprint** (hash of the first 8 KB). This means:
+- Renaming or moving the file → preferences are still found (via hash)
+- Modifying file content → the path alone is enough to find the previous session
+
+Stored in `evalys-rs/tab_states.json`. Local to your machine, not shared.
+
+---
+
+## 13) Feature Summary
+
+### Common (both binaries)
+- Gantt with interactive zoom, pan, job detail windows
+- Dashboard (metrics + chart + sortable/paginated/column-selectable table)
+- Aggregation views (configurable hierarchies, filters, label templates)
+- Leaf info presets for resource tooltips
+- Multi-criteria job filters
+- XY / energy panel synchronized with the Gantt timeline
+- Light/dark theme, language, font size
+
+### evalys-rs
+- JSON file import (OAR, Energy Series, Event)
+- File grouping (OAR + energy overlaid)
+- Per-file Gantt preferences (auto-saved and restored)
+
+### liveOAR
+- Live OAR cluster polling over SSH
+- Auto-refresh with configurable interval
+- Cluster filter presets (Admin)

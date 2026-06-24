@@ -1,4 +1,5 @@
 mod app;
+mod energy_estimate;
 mod file_import;
 mod file_types;
 mod sim_config;

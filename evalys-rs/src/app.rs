@@ -23,7 +23,7 @@ impl App {
         let mut sim_state = SimState::default();
         let mut gantt_view = GanttChart::default();
         let energy_colors_draft = crate::sim_config::load_energy_series_colors();
-        gantt_view.set_energy_series_colors(energy_colors_draft.clone());
+        gantt_view.set_xy_series_colors(energy_colors_draft.clone());
 
         #[cfg(not(target_arch = "wasm32"))]
         for entry in &import_entries {
@@ -91,7 +91,7 @@ impl eframe::App for App {
             );
         });
         if settings_applied {
-            self.gantt_view.set_energy_series_colors(self.energy_colors_draft.clone());
+            self.gantt_view.set_xy_series_colors(self.energy_colors_draft.clone());
             crate::sim_config::save_energy_series_colors(&self.energy_colors_draft);
         }
 

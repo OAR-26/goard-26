@@ -49,7 +49,7 @@ pub struct GanttConfig  {
     pub gantt_row_height_min: f32,
     pub gantt_row_height_max: f32,
 
-    pub energy_panel_height: f32,
+    pub xy_panel_height: f32,
     pub energy_watts_per_resource: f64,
     pub now_line_color: RgbColor,
 
@@ -111,7 +111,7 @@ impl Default for GanttConfig {
             gantt_row_height_min: 8.0,
             gantt_row_height_max: 80.0,
 
-            energy_panel_height: 270.0,
+            xy_panel_height: 270.0,
             energy_watts_per_resource: 300.0,
             now_line_color: RgbColor(220, 0, 0),
 
@@ -200,7 +200,7 @@ impl GanttConfig {
             gantt_row_height_min:       f64("gantt_row_height_min").map(|v| v as f32).unwrap_or(def.gantt_row_height_min),
             gantt_row_height_max:       f64("gantt_row_height_max").map(|v| v as f32).unwrap_or(def.gantt_row_height_max),
 
-            energy_panel_height:        f64("energy_panel_height").map(|v| v as f32).unwrap_or(def.energy_panel_height),
+            xy_panel_height:            f64("xy_panel_height").map(|v| v as f32).unwrap_or(def.xy_panel_height),
             energy_watts_per_resource:  f64("energy_watts_per_resource").unwrap_or(def.energy_watts_per_resource),
             now_line_color:             str_("now_line_color").and_then(RgbColor::from_hex).unwrap_or(def.now_line_color),
 
@@ -286,10 +286,10 @@ gantt_row_height_min = {gantt_row_height_min}
 # Maximum row height reachable by vertical zoom (Alt+scroll)
 gantt_row_height_max = {gantt_row_height_max}
 
-# ── Energy panel ──────────────────────────────────────────────────────────────
+# ── XY panel ─────────────────────────────────────────────────────────────────
 
-# Default height of the energy diagram panel in pixels
-energy_panel_height = {energy_panel_height}
+# Default height of the XY diagram panel in pixels
+xy_panel_height = {xy_panel_height}
 
 # Estimated watts per assigned resource when no measured energy file is loaded
 energy_watts_per_resource = {energy_watts}
@@ -376,7 +376,7 @@ Standby   = \"{standby_light}\"
             gantt_row_height     = self.gantt_row_height,
             gantt_row_height_min = self.gantt_row_height_min,
             gantt_row_height_max = self.gantt_row_height_max,
-            energy_panel_height  = self.energy_panel_height,
+            xy_panel_height      = self.xy_panel_height,
             energy_watts         = self.energy_watts_per_resource,
             now_line_color       = hex(self.now_line_color),
             zoom_max             = self.zoom_max_seconds,

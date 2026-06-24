@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui::{Color32, ScrollArea};
 
-use super::energy_plot;
+use super::xy_plot;
 use super::types::{self, ResourceFilter};
 use super::GanttView;
 
@@ -100,10 +100,10 @@ pub(super) fn known_fields_sorted() -> Vec<(&'static str, &'static str)> {
 }
 
 // ---------------------------------------------------------------------------
-// Energy panel
+// XY panel
 // ---------------------------------------------------------------------------
 
-pub struct EnergyPanelState {
+pub struct XyPanelState {
     pub filter_cluster: Option<String>,
     pub filter_owner: Option<String>,
     pub fit_to_figure: bool,
@@ -115,7 +115,7 @@ pub struct EnergyPanelState {
     pub now_line_color: egui::Color32,
 }
 
-impl Default for EnergyPanelState {
+impl Default for XyPanelState {
     fn default() -> Self {
         Self {
             filter_cluster: None,
@@ -129,13 +129,13 @@ impl Default for EnergyPanelState {
     }
 }
 
-impl EnergyPanelState {
-    /// Renders filter row + energy plot. Returns the new visible (start, end) range when the
+impl XyPanelState {
+    /// Renders filter row + XY plot. Returns the new visible (start, end) range when the
     /// user drags inside the plot; the caller should pan the Gantt canvas accordingly.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
-        energy_series: &[(String, Vec<(i64, f64)>)],
+        series: &[(String, Vec<(i64, f64)>)],
         vs: i64,
         ve: i64,
         now_s: i64,
@@ -149,16 +149,16 @@ impl EnergyPanelState {
     ) -> Option<(i64, i64)> {
         ui.horizontal_wrapped(|ui| {
             if show_gantt {
-                ui.label("Filtres énergie :");
+                ui.label("Filters:");
 
-                egui::ComboBox::from_id_salt("energy_filter_cluster")
+                egui::ComboBox::from_id_salt("xy_filter_cluster")
                     .selected_text(
                         self.filter_cluster
                             .clone()
-                            .unwrap_or_else(|| "Cluster: Tous".to_string()),
+                            .unwrap_or_else(|| "Cluster: All".to_string()),
                     )
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.filter_cluster, None, "Cluster: Tous");
+                        ui.selectable_value(&mut self.filter_cluster, None, "Cluster: All");
                         for cluster in cluster_names {
                             ui.selectable_value(
                                 &mut self.filter_cluster,
@@ -168,14 +168,14 @@ impl EnergyPanelState {
                         }
                     });
 
-                egui::ComboBox::from_id_salt("energy_filter_owner")
+                egui::ComboBox::from_id_salt("xy_filter_owner")
                     .selected_text(
                         self.filter_owner
                             .clone()
-                            .unwrap_or_else(|| "Owner: Tous".to_string()),
+                            .unwrap_or_else(|| "Owner: All".to_string()),
                     )
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.filter_owner, None, "Owner: Tous");
+                        ui.selectable_value(&mut self.filter_owner, None, "Owner: All");
                         for owner in owner_names {
                             ui.selectable_value(
                                 &mut self.filter_owner,
@@ -194,7 +194,7 @@ impl EnergyPanelState {
             }
 
             let prev_fit = self.fit_to_figure;
-            ui.checkbox(&mut self.fit_to_figure, "Ajuster à la figure");
+            ui.checkbox(&mut self.fit_to_figure, "Fit to figure");
             if self.fit_to_figure && !prev_fit {
                 self.y_bounds = None;
             }
@@ -208,9 +208,9 @@ impl EnergyPanelState {
             (ui.available_height() - 28.0).max(100.0)
         };
 
-        let (maybe_new_range, new_y) = energy_plot::ui_energy_global(
+        let (maybe_new_range, new_y) = xy_plot::ui_xy_global(
             ui,
-            energy_series,
+            series,
             vs,
             ve,
             now_s,

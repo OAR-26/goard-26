@@ -226,3 +226,45 @@ impl ClusterPresetState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cluster_preset_serde_roundtrip() {
+        let original = vec![
+            ClusterPreset { name: "prod".to_string(), clusters: vec!["cluster-a".to_string(), "cluster-b".to_string()] },
+            ClusterPreset { name: "dev".to_string(),  clusters: vec!["cluster-c".to_string()] },
+        ];
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: Vec<ClusterPreset> = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn cluster_preset_empty_clusters_allowed() {
+        let p = ClusterPreset { name: "empty".to_string(), clusters: Vec::new() };
+        let json = serde_json::to_string(&p).unwrap();
+        let decoded: ClusterPreset = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.clusters.len(), 0);
+    }
+
+    #[test]
+    fn load_presets_from_nonexistent_file_returns_empty() {
+        let result = load_presets_from_file("/tmp/does_not_exist_goard_test.json");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        let path = "/tmp/goard_test_presets.json";
+        let presets = vec![
+            ClusterPreset { name: "x".to_string(), clusters: vec!["c1".to_string()] },
+        ];
+        save_presets_to_file(&presets, path);
+        let loaded = load_presets_from_file(path);
+        assert_eq!(presets, loaded);
+        let _ = std::fs::remove_file(path);
+    }
+}

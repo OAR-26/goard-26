@@ -1,6 +1,7 @@
 mod app;
 mod auth_view;
 mod cluster_presets;
+mod energy_estimate;
 mod live_engine;
 #[cfg(target_arch = "wasm32")]
 mod mocker;
