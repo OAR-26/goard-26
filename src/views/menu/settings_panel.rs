@@ -65,14 +65,6 @@ impl SettingsPanel {
                     .max_height(ui.available_height() - 40.0)
                     .show(ui, |ui| {
 
-                    // ── SSH ──────────────────────────────────────────────────
-                    ui.heading("SSH");
-                    ui.horizontal(|ui| {
-                        ui.label("Host:");
-                        ui.text_edit_singleline(&mut cfg.ssh_host);
-                    });
-                    ui.add_space(6.0);
-
                     // ── General ──────────────────────────────────────────────
                     ui.heading("General");
                     ui.checkbox(&mut cfg.standby_truncate_to_now,

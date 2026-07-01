@@ -239,7 +239,11 @@ impl GanttConfig {
             hatch_spacing:              f64("hatch_spacing").map(|v| v as f32).unwrap_or(def.hatch_spacing),
             job_block_border:           bool("job_block_border").unwrap_or(def.job_block_border),
             job_block_border_width:     f64("job_block_border_width").map(|v| v as f32).unwrap_or(def.job_block_border_width),
-            ssh_host:                   str_("ssh_host").map(|s| s.to_string()).unwrap_or(def.ssh_host),
+            // SSH host comes from the GOARD_SSH_HOST env var (live/native only), not config.toml.
+            #[cfg(not(target_arch = "wasm32"))]
+            ssh_host:                   std::env::var("GOARD_SSH_HOST").ok().filter(|s| !s.is_empty()).unwrap_or(def.ssh_host),
+            #[cfg(target_arch = "wasm32")]
+            ssh_host:                   def.ssh_host,
             nav_steps: {
                 val.get("nav_steps")
                     .and_then(|v| v.as_array())
@@ -279,12 +283,7 @@ impl GanttConfig {
             }).collect()
         };
         let content = format!(
-"# ── SSH (live data only) ──────────────────────────────────────────────────────
-
-# SSH host used to fetch live OAR data (oarstat command is run on this host)
-ssh_host = \"{ssh_host}\"
-
-# ── General behaviour ─────────────────────────────────────────────────────────
+"# ── General behaviour ─────────────────────────────────────────────────────────
 
 # Truncate open-ended Absent intervals to 'now' when a Standby period applies
 standby_truncate_state_to_now = {standby}
@@ -401,7 +400,6 @@ Standby   = \"{standby_light}\"
 # Add [field_colors.<fieldname>] sections to map field values to colors.
 # Values not listed fall back to hash-based random color.
 {field_colors_toml}",
-            ssh_host             = self.ssh_host,
             standby              = self.standby_truncate_to_now,
             besteffort           = self.besteffort_truncate_to_now,
             min_state            = self.min_state_duration_s,
