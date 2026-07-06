@@ -1,17 +1,32 @@
 # Goard
 
-Goard (pronounced "guard") is a desktop/web dashboard for monitoring HPC cluster jobs, built with Rust + egui/eframe. It supports real-time job tracking via SSH and offline analysis through JSON file imports.
+Goard (pronounced "guard") is a desktop/web dashboard for monitoring HPC cluster jobs, built with Rust + egui/eframe.
+
+It ships as two separate binaries:
+
+| Binary | Purpose |
+|--------|---------|
+| **evalys-rs** | Import and visualize static OAR/energy JSON files |
+| **liveOAR** | Connect to a live OAR cluster and monitor jobs in real time over SSH |
+
+Both share the same Gantt chart, Dashboard, and XY/energy panel from the `goard_core` library.
 
 ## Key Features
 
-- Real-time job monitoring (optional, enabled via `--live` flag)
-- File import for offline/historical analysis (OAR, Energy Series, Event formats)
-- File grouping: overlay energy measurements on Gantt job data
-- Interactive dashboard view (metrics + job table)
 - Interactive Gantt chart with configurable hierarchy views
-- Energy consumption diagram (estimated or measured)
+- Interactive Dashboard (metrics + sortable job table)
+- XY/energy panel (estimated from jobs or measured from imported series)
 - Multi-criteria job filtering + cluster presets
 - Light/dark theme, i18n (EN/FR), adjustable font size
+
+**evalys-rs only:**
+- File import (OAR Simulation, Energy Series, Event formats)
+- File grouping: overlay energy measurements on Gantt job data
+- Per-file preference restore (zoom, pan, view, panel state)
+
+**liveOAR only:**
+- Real-time job monitoring via SSH
+- Auto-refresh with configurable interval
 - WASM build with PWA/offline support
 
 ## Documentation
@@ -24,47 +39,36 @@ Goard (pronounced "guard") is a desktop/web dashboard for monitoring HPC cluster
 ### Prerequisites
 
 - Rust and Cargo
-- Git
-- SSH access to an HPC cluster *(only required for `--live` mode)*
+- SSH access to an HPC cluster *(liveOAR only)*
 
-### Quick Start
-
-#### Native
+### Running evalys-rs (file viewer)
 
 ```bash
 rustup update
+
+# Open the UI with no files pre-loaded
+cargo run -p evalys-rs --release
+
+# Pre-load one or more files on launch
+cargo run -p evalys-rs --release -- examples/oar.json
+cargo run -p evalys-rs --release -- examples/oar.json examples/energy.json   # separate tabs
+
+# Pre-load a group (files joined by + become one overlaid tab)
+cargo run -p evalys-rs --release -- examples/oar.json+examples/energy.json
+
+# Mix standalone files and groups
+cargo run -p evalys-rs --release -- examples/oar1.json examples/oar2.json+examples/energy2.json
 ```
 
-**Import-only mode** (default — no live data, import files manually via UI):
-```bash
-cargo run --release
-```
+### Running liveOAR (live cluster viewer)
 
-**Pre-load one or more files on launch:**
-```bash
-cargo run --release -- examples/oar.json
-cargo run --release -- examples/oar.json examples/energy.json   # separate tabs
-```
+Configure your SSH host in `liveOAR/live_config.toml`, then:
 
-**Pre-load a group** (files joined by `+` become one overlaid tab):
 ```bash
-cargo run --release -- examples/oar.json+examples/energy.json
-```
-
-**Mix standalone files and groups:**
-```bash
-cargo run --release -- examples/oar1.json examples/oar2.json+examples/energy2.json
-```
-
-**Live data mode** (connects to HPC cluster for real-time monitoring):
-```bash
-cargo run --release -- --live
-cargo run --release -- --live examples/oar.json+examples/energy.json
+cargo run -p liveOAR --release
 ```
 
 #### Web (WASM)
-
-Web builds target `liveOAR` only (`simulationGOARD` has no wasm entry point yet).
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -72,6 +76,7 @@ cargo install --locked trunk
 cd liveOAR
 trunk serve
 ```
+
 Access at `http://127.0.0.1:8080/index.html#dev`
 
 > Append `#dev` to skip PWA caching during development.
@@ -83,9 +88,7 @@ cd liveOAR
 trunk build --release
 ```
 
-Deploy the generated `dist/` directory to any static hosting platform.
-
-> The app supports offline functionality through service worker caching.
+Deploy the generated `liveOAR/dist/` directory to any static hosting platform.
 
 ## Contributing
 
