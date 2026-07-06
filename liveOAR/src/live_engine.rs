@@ -247,13 +247,15 @@ impl LiveEngine {
 
         app.data.all_jobs = self.swap_all_jobs.clone();
 
-        let (min_t, max_t) = app.data.all_jobs.iter().filter(|j| j.id != 0).fold(
-            (i64::MAX, i64::MIN),
-            |(mn, mx), j| {
-                let end = j.start_time + j.walltime;
-                (mn.min(j.start_time), mx.max(end))
-            },
-        );
+        let (min_t, max_t) = app.data.all_jobs.iter()
+            .filter(|j| j.id != 0 && j.start_time > 0)
+            .fold(
+                (i64::MAX, i64::MIN),
+                |(mn, mx), j| {
+                    let end = j.start_time + j.walltime;
+                    (mn.min(j.start_time), mx.max(end))
+                },
+            );
         if min_t < max_t {
             let watts = app.prefs.gantt_config.energy_watts_per_resource;
             let estimated = crate::energy_estimate::estimate_from_jobs(

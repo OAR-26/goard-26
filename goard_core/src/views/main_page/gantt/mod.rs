@@ -937,9 +937,12 @@ impl View for GanttChart {
                         plot_series = app.data.plot_series.clone();
                     }
 
-                    let start = Local.timestamp_opt(visible_start_s, 0).unwrap();
-                    let end = Local.timestamp_opt(visible_end_s, 0).unwrap();
-                    app.set_localdate(start, end);
+                    if let (Some(start), Some(end)) = (
+                        Local.timestamp_opt(visible_start_s, 0).earliest(),
+                        Local.timestamp_opt(visible_end_s, 0).earliest(),
+                    ) {
+                        app.set_localdate(start, end);
+                    }
                 });
             });
         });
