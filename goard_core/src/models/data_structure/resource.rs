@@ -1,0 +1,44 @@
+use std::fmt::Display;
+
+#[derive(Debug, PartialEq, Eq, Hash, Copy)]
+pub enum ResourceState {
+    Dead,
+    Alive,
+    Absent,
+    Suspected,
+    Standby,
+    Unknown,
+}
+
+impl Clone for ResourceState {
+    fn clone(&self) -> Self {
+        match self {
+            ResourceState::Dead => ResourceState::Dead,
+            ResourceState::Alive => ResourceState::Alive,
+            ResourceState::Absent => ResourceState::Absent,
+            ResourceState::Suspected => ResourceState::Suspected,
+            ResourceState::Standby => ResourceState::Standby,
+            ResourceState::Unknown => ResourceState::Unknown,
+        }
+    }
+}
+
+impl Display for ResourceState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResourceState::Dead => write!(f, "Dead"),
+            ResourceState::Alive => write!(f, "Alive"),
+            ResourceState::Absent => write!(f, "Absent"),
+            ResourceState::Suspected => write!(f, "Suspected"),
+            ResourceState::Standby => write!(f, "Standby"),
+            ResourceState::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DeadInterval {
+    pub start_s: i64,
+    pub end_s: i64,
+    pub state: ResourceState,
+}

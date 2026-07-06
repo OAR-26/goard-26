@@ -1,0 +1,5 @@
+# liveOAR-only settings. goard_core's config.toml has no notion of SSH/live
+# connections — this file is read by liveOAR alone.
+
+# SSH host used to fetch live OAR data (oarstat command is run on this host)
+ssh_host = "grenoble.g5k"

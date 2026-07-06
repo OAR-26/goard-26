@@ -3,7 +3,8 @@
 /dist/
 
 # Data files
-/data/
+/liveOAR/data/
+/liveOAR/data/data.json
 /src/data/data.json
 
 # IDE specific files

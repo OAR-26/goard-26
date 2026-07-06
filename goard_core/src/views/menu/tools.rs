@@ -1,0 +1,228 @@
+use crate::models::data_structure::job::Job;
+use crate::models::data_structure::job::JobState;
+use crate::models::data_structure::resource::ResourceState;
+use crate::models::utils::utils::{cluster_names, host_names, all_resource_ids};
+use crate::{
+    models::data_structure::application_context::ApplicationContext,
+    views::view::{View, ViewType},
+};
+use eframe::egui;
+
+use crate::views::main_page::gantt::GanttChart;
+
+use super::filtering::Filtering;
+
+pub struct Tools {
+    filtering_pane: Filtering,
+}
+
+impl Default for Tools {
+    fn default() -> Self {
+        Tools {
+            filtering_pane: Filtering::default(),
+        }
+    }
+}
+
+/*
+ * The Tools struct is a view that contains the common buttons between the Dashboard and Gantt views.
+ */
+impl View for Tools {
+    fn render(&mut self, ui: &mut egui::Ui, app: &mut ApplicationContext) {
+        self.render_impl(ui, app, None, |_ui, _app| {}, |_ui, _app| {});
+    }
+}
+
+impl Tools {
+    pub fn render_with_gantt(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &mut ApplicationContext,
+        gantt: &mut GanttChart,
+    ) {
+        self.render_impl(ui, app, Some(gantt), |_ui, _app| {}, |_ui, _app| {});
+    }
+
+    /// Same as `render_with_gantt`, but with two injection points:
+    /// `toolbar_extra` is rendered in the toolbar's right-side quick-actions
+    /// area (e.g. a refresh-rate control), and `filter_extra` is rendered
+    /// inside the Filters window (e.g. a cluster-preset quick-select). Core
+    /// has no notion of refresh engines or presets — these let a binary add
+    /// its own controls without core knowing what they're for.
+    pub fn render_with_gantt_and_extras<F1, F2>(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &mut ApplicationContext,
+        gantt: &mut GanttChart,
+        toolbar_extra: F1,
+        filter_extra: F2,
+    ) where
+        F1: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+        F2: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+    {
+        self.render_impl(ui, app, Some(gantt), toolbar_extra, filter_extra);
+    }
+
+    fn render_impl<F1, F2>(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &mut ApplicationContext,
+        gantt: Option<&mut GanttChart>,
+        toolbar_extra: F1,
+        filter_extra: F2,
+    ) where
+        F1: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+        F2: FnOnce(&mut egui::Ui, &mut ApplicationContext),
+    {
+        let mut gantt = gantt;
+        let has_gantt = gantt.is_some();
+
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.set_height(25.0);
+
+            ui.label(t!("app.mode"));
+
+            // Dashboard Button
+            let is_dashboard_selected = matches!(app.view_type, ViewType::Dashboard);
+
+            let dashboard_btn = egui::Button::new("📊 Dashboard").frame(is_dashboard_selected);
+            if ui.add(dashboard_btn).clicked() {
+                app.view_type = ViewType::Dashboard;
+                ui.close_menu();
+                if app.data.all_jobs.iter().any(|job| job.id == 0) {
+                    app.prefs.see_all_jobs = true;
+                }
+
+                app.data.all_jobs.retain(|job| job.id != 0);
+            }
+
+            // Gantt Button
+            let gantt_btn = egui::Button::new("📅 Gantt").frame(!is_dashboard_selected);
+            if ui.add(gantt_btn).clicked() {
+                app.view_type = ViewType::Gantt;
+                ui.close_menu();
+
+                if app.prefs.see_all_jobs {
+                    app.prefs.see_all_jobs = false;
+                    app.data.all_jobs.push(Job {
+                        id: 0,
+                        owner: "all_resources".to_string(),
+                        state: JobState::Unknown,
+                        scheduled_start: 0,
+                        walltime: 0,
+                        hosts: host_names(&app.data.strata_by_resource_id),
+                        clusters: cluster_names(&app.data.strata_by_resource_id),
+                        command: String::new(),
+                        message: None,
+                        queue: String::new(),
+                        assigned_resources: all_resource_ids(&app.data.strata_by_resource_id),
+                        submission_time: 0,
+                        start_time: 0,
+                        stop_time: 0,
+                        exit_code: None,
+                        main_resource_state: ResourceState::Unknown,
+                        job_type: String::new(),
+                        job_types: Vec::new(),
+                        name: None,
+                        project: String::new(),
+                    });
+                }
+            }
+
+            // Left side: contextual controls
+            ui.add_space(8.0);
+
+            // Menu Filters
+            let filters_btn =
+                egui::Button::new("🔎 ".to_string() + &t!("app.menu.filters")).frame(true);
+            if ui.add(filters_btn).clicked() {
+                self.filtering_pane.open();
+            }
+
+            
+            // Gantt-specific controls are part of this 2nd line.
+            if let Some(gantt) = gantt.as_deref_mut() {
+                gantt.render_compact_toolbar(ui, app);
+            }
+
+            // Right side: global quick actions
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Theme toggle (one click: light <-> dark)
+                let is_dark = ui.ctx().style().visuals.dark_mode;
+                let theme_label = if is_dark { "☀" } else { "🌙" };
+                let theme_hint = if is_dark {
+                    "Switch to Light"
+                } else {
+                    "Switch to Dark"
+                };
+                if ui
+                    .add(egui::Button::new(theme_label))
+                    .on_hover_text(theme_hint)
+                    .clicked()
+                {
+                    app.prefs.theme_toggle_requested = true;
+                }
+
+                toolbar_extra(ui, app);
+            });
+
+            });
+
+            // Gantt-only: compact data summary line just below the tool bar.
+            if has_gantt {
+                use std::collections::HashSet;
+                use crate::views::main_page::gantt::jobs::strata_field_value;
+
+                let status = if app.is_loading { "loading" } else { "ready" };
+
+                let view_name = app.prefs.current_gantt_view_name.clone();
+                let levels = app.prefs.current_gantt_view_levels.clone();
+                let summary_fields: Vec<String> = if app.prefs.current_gantt_view_summary_fields.is_empty() {
+                    levels.last().cloned().into_iter().collect()
+                } else {
+                    app.prefs.current_gantt_view_summary_fields.clone()
+                };
+
+                let fields_part: String = summary_fields.iter().map(|field| {
+                    let total: HashSet<String> = app.data.strata_by_resource_id.values()
+                        .filter_map(|s| strata_field_value(s, field))
+                        .filter(|v: &String| !v.starts_with("(no "))
+                        .collect();
+                    let displayed: HashSet<String> = app.data.filtered_jobs.iter()
+                        .flat_map(|j| j.assigned_resources.iter())
+                        .filter_map(|rid| app.data.strata_by_resource_id.get(rid))
+                        .filter_map(|s| strata_field_value(s, field))
+                        .filter(|v: &String| !v.starts_with("(no "))
+                        .collect();
+                    format!("{} {}/{}", field, displayed.len(), total.len())
+                }).collect::<Vec<_>>().join(" | ");
+
+                let view_part = if view_name.is_empty() { String::new() } else { format!("[{}] ", view_name) };
+
+                ui.horizontal(|ui| {
+                    ui.with_layout(
+                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                        |ui| {
+                            let label = egui::Label::new(
+                                egui::RichText::new(format!(
+                                    "{}jobs={} | {} | {}",
+                                    view_part,
+                                    app.data.filtered_jobs.len(),
+                                    fields_part,
+                                    status
+                                ))
+                                .text_style(egui::TextStyle::Small),
+                            )
+                            .truncate();
+                            ui.add(label);
+                        },
+                    );
+                });
+            }
+
+            // Show External Window
+            self.filtering_pane.ui_with_extra(ui, app, filter_extra);
+        });
+    }
+}
