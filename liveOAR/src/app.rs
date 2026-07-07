@@ -22,7 +22,6 @@ pub struct App {
     live_engine: LiveEngine,
     auth_active: bool,
     connected_as: Option<String>,
-    ssh_host_draft: String,
 }
 
 impl App {
@@ -31,7 +30,6 @@ impl App {
         application_context.show_all_resources_row = true;
         let mut live_engine = LiveEngine::new(chrono::Local::now());
         live_engine.update_periodically(&mut application_context);
-        let ssh_host_draft = live_engine.ssh_host().to_string();
         App {
             secret: Secret::default(),
             dashboard_view: Dashboard::default(),
@@ -44,7 +42,6 @@ impl App {
             live_engine,
             auth_active: true,
             connected_as: None,
-            ssh_host_draft,
         }
     }
 }
@@ -75,9 +72,8 @@ impl eframe::App for App {
         let mut logout_clicked = false;
         let mut login_clicked = false;
 
-        let mut settings_applied = false;
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            settings_applied = self.menu.render_with_extras(
+            self.menu.render_with_extras(
                 ui,
                 &mut self.application_context,
                 |ui, _app| {
@@ -95,18 +91,9 @@ impl eframe::App for App {
                         }
                     }
                 },
-                |ui, _app| {
-                    ui.heading("Live data (SSH)");
-                    ui.horizontal(|ui| {
-                        ui.label("Host:");
-                        ui.text_edit_singleline(&mut self.ssh_host_draft);
-                    });
-                },
+                |_ui, _app| {},
             );
         });
-        if settings_applied {
-            self.live_engine.set_ssh_host(self.ssh_host_draft.clone());
-        }
 
         if logout_clicked {
             self.connected_as = None;

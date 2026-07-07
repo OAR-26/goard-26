@@ -18,18 +18,14 @@ use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json
 #[cfg(target_arch = "wasm32")]
 use crate::mocker::{mock_jobs, mock_stratas};
 
-/// SSH host used to fetch live OAR data — read from liveOAR's own
-/// `live_config.toml`. `goard_core` has no notion of SSH/live connections at
-/// all, so this setting lives entirely in this crate.
+/// SSH host used to fetch live OAR data — read from the `GOARD_SSH_HOST`
+/// environment variable. Falls back to `"grenoble.g5k"` when unset or empty.
 #[cfg(not(target_arch = "wasm32"))]
 fn load_ssh_host() -> String {
-    match std::fs::read_to_string("liveOAR/live_config.toml") {
-        Ok(content) => toml::from_str::<toml::Value>(&content)
-            .ok()
-            .and_then(|v| v.get("ssh_host").and_then(|s| s.as_str()).map(str::to_string))
-            .unwrap_or_else(|| "grenoble.g5k".to_string()),
-        Err(_) => "grenoble.g5k".to_string(),
-    }
+    std::env::var("GOARD_SSH_HOST")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "grenoble.g5k".to_string())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -61,20 +57,8 @@ impl LiveEngine {
         &self.ssh_host
     }
 
-    /// Updates the SSH host and persists it to `live_config.toml`.
     pub fn set_ssh_host(&mut self, host: String) {
         self.ssh_host = host;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let content = format!(
-                "# liveOAR-only settings. goard_core's config.toml has no notion of SSH/live\n\
-                 # connections — this file is read by liveOAR alone.\n\n\
-                 # SSH host used to fetch live OAR data (oarstat command is run on this host)\n\
-                 ssh_host = \"{}\"\n",
-                self.ssh_host
-            );
-            let _ = std::fs::write("liveOAR/live_config.toml", content);
-        }
     }
 
     pub fn check_job_update(&mut self, app: &mut ApplicationContext) {
