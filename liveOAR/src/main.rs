@@ -1,3 +1,4 @@
+mod api_types;
 mod app;
 mod auth_view;
 mod cluster_presets;
@@ -7,9 +8,29 @@ mod live_engine;
 mod mocker;
 mod oar_fetch;
 mod refresh_coordinator;
+#[cfg(not(target_arch = "wasm32"))]
+mod server;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--serve") {
+        let port: u16 = args.iter()
+            .position(|a| a == "--port")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(3030);
+        let ssh_host = std::env::var("GOARD_SSH_HOST")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "grenoble.g5k".to_string());
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(server::run(ssh_host, port));
+        return Ok(());
+    }
+
     let options = eframe::NativeOptions::default();
     eframe::run_native(
         &goard_core::window_title(),

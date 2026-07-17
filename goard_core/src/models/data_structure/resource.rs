@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-#[derive(Debug, PartialEq, Eq, Hash, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Copy, serde::Serialize, serde::Deserialize)]
 pub enum ResourceState {
     Dead,
     Alive,

@@ -309,7 +309,7 @@ impl LiveEngine {
         {
             let is_refreshing_clone = is_refreshing.clone();
             thread::spawn(move || {
-                let res = get_current_jobs_for_period(start, end, &ssh_host);
+                let res = get_current_jobs_for_period(start, end, &ssh_host, "./liveOAR/data/data.json");
                 if res {
                     let jobs = get_jobs_from_json("./liveOAR/data/data.json");
                     let resources = get_resources_from_json("./liveOAR/data/data.json");
@@ -324,11 +324,23 @@ impl LiveEngine {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let jobs = mock_jobs();
-            jobs_sender.send(jobs).unwrap();
-            let strata = mock_stratas();
-            resources_sender.send(strata).unwrap();
-            *is_refreshing.lock().unwrap() = false;
+            let is_refreshing = is_refreshing.clone();
+            let start_ts = start.timestamp();
+            let end_ts = end.timestamp();
+            wasm_bindgen_futures::spawn_local(async move {
+                let snap = refresh_snapshot(start_ts, end_ts).await;
+                match snap {
+                    Some(s) => {
+                        jobs_sender.send(s.jobs).ok();
+                        resources_sender.send(s.resources).ok();
+                    }
+                    None => {
+                        jobs_sender.send(mock_jobs()).ok();
+                        resources_sender.send(mock_stratas()).ok();
+                    }
+                }
+                *is_refreshing.lock().unwrap() = false;
+            });
         }
     }
 
@@ -367,7 +379,7 @@ impl LiveEngine {
                 let start = *start_date.lock().unwrap();
                 let end = *end_date.lock().unwrap();
 
-                let res = get_current_jobs_for_period(start, end, &ssh_host);
+                let res = get_current_jobs_for_period(start, end, &ssh_host, "./liveOAR/data/data.json");
                 if res {
                     let jobs = get_jobs_from_json("./liveOAR/data/data.json");
                     let resources = get_resources_from_json("./liveOAR/data/data.json");
@@ -385,10 +397,44 @@ impl LiveEngine {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let jobs = mock_jobs();
-            jobs_sender.send(jobs).unwrap();
-            let strata = mock_stratas();
-            resources_sender.send(strata).unwrap();
+            wasm_bindgen_futures::spawn_local(async move {
+                loop {
+                    let start = start_date.lock().unwrap().timestamp();
+                    let end = end_date.lock().unwrap().timestamp();
+                    let snap = fetch_snapshot(start, end).await;
+                    match snap {
+                        Some(s) => {
+                            jobs_sender.send(s.jobs).ok();
+                            resources_sender.send(s.resources).ok();
+                        }
+                        None => {
+                            jobs_sender.send(mock_jobs()).ok();
+                            resources_sender.send(mock_stratas()).ok();
+                        }
+                    }
+                    gloo_timers::future::TimeoutFuture::new(30_000).await;
+                }
+            });
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_snapshot(start: i64, end: i64) -> Option<crate::api_types::ApiSnapshot> {
+    let url = format!("/api/data?start={}&end={}", start, end);
+    let resp = gloo_net::http::Request::get(&url).send().await.ok()?;
+    if !resp.ok() {
+        return None;
+    }
+    resp.json::<crate::api_types::ApiSnapshot>().await.ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn refresh_snapshot(start: i64, end: i64) -> Option<crate::api_types::ApiSnapshot> {
+    let url = format!("/api/refresh?start={}&end={}", start, end);
+    let resp = gloo_net::http::Request::post(&url).send().await.ok()?;
+    if !resp.ok() {
+        return None;
+    }
+    resp.json::<crate::api_types::ApiSnapshot>().await.ok()
 }

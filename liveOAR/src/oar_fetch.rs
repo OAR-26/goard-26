@@ -34,7 +34,7 @@ pub fn test_connection(host: &str) -> Result<(), String> {
  * @return List of jobs
  */
 #[cfg(not(target_arch = "wasm32"))]
-pub fn get_current_jobs_for_period(start_date: DateTime<Local>, end_date: DateTime<Local>, ssh_host: &str) -> bool {
+pub fn get_current_jobs_for_period(start_date: DateTime<Local>, end_date: DateTime<Local>, ssh_host: &str, output_path: &str) -> bool {
     // Add a margin to the interval
     let interval = end_date - start_date;
     let margin = interval.num_seconds() * 30 / 100;
@@ -46,10 +46,11 @@ pub fn get_current_jobs_for_period(start_date: DateTime<Local>, end_date: DateTi
         return false;
     }
 
-    // Check if Data folder exists
-    let data_folder = std::path::Path::new("./data");
-    if !data_folder.exists() {
-        std::fs::create_dir(data_folder).expect("Unable to create data folder");
+    // Ensure parent directory exists
+    if let Some(parent) = std::path::Path::new(output_path).parent() {
+        if !parent.exists() {
+            let _ = std::fs::create_dir_all(parent);
+        }
     }
 
     // Execute SSH command to generate JSON file and redirect output
@@ -63,7 +64,7 @@ pub fn get_current_jobs_for_period(start_date: DateTime<Local>, end_date: DateTi
             ),
         ])
         .output()
-        .and_then(|output| std::fs::write("./liveOAR/data/data.json", output.stdout));
+        .and_then(|output| std::fs::write(output_path, output.stdout));
 
     if let Err(e) = ssh_status {
         println!("Failed to execute SSH command: {}", e);
