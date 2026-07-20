@@ -284,8 +284,13 @@ impl LiveEngine {
     pub fn instant_update(&mut self, app: &mut ApplicationContext) {
         let is_refreshing = self.refresh.is_refreshing.clone();
 
-        if *is_refreshing.lock().unwrap() {
-            return;
+        // Native: block concurrent SSH fetches (one at a time).
+        // WASM: always proceed — newer requests supersede older ones via request_gen.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if *is_refreshing.lock().unwrap() {
+                return;
+            }
         }
         *is_refreshing.lock().unwrap() = true;
 
@@ -324,11 +329,22 @@ impl LiveEngine {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let is_refreshing = is_refreshing.clone();
+            // Increment generation — any older in-flight fetch will see a
+            // mismatched gen and discard its results.
+            let gen = {
+                let mut g = self.refresh.request_gen.lock().unwrap();
+                *g += 1;
+                *g
+            };
+            let request_gen = self.refresh.request_gen.clone();
             let start_ts = start.timestamp();
             let end_ts = end.timestamp();
             wasm_bindgen_futures::spawn_local(async move {
-                let snap = refresh_snapshot(start_ts, end_ts).await;
+                let snap = fetch_snapshot(start_ts, end_ts).await;
+                // Discard if a newer request has already been dispatched.
+                if *request_gen.lock().unwrap() != gen {
+                    return;
+                }
                 match snap {
                     Some(s) => {
                         jobs_sender.send(s.jobs).ok();
@@ -398,7 +414,11 @@ impl LiveEngine {
         #[cfg(target_arch = "wasm32")]
         {
             wasm_bindgen_futures::spawn_local(async move {
+                // The first fetch is triggered by `App` on the first main-view
+                // frame (after auth), so the correct gantt window is known.
+                // This loop only handles subsequent periodic refreshes.
                 loop {
+                    gloo_timers::future::TimeoutFuture::new(30_000).await;
                     let start = start_date.lock().unwrap().timestamp();
                     let end = end_date.lock().unwrap().timestamp();
                     let snap = fetch_snapshot(start, end).await;
@@ -412,7 +432,6 @@ impl LiveEngine {
                             resources_sender.send(mock_stratas()).ok();
                         }
                     }
-                    gloo_timers::future::TimeoutFuture::new(30_000).await;
                 }
             });
         }
@@ -429,12 +448,3 @@ async fn fetch_snapshot(start: i64, end: i64) -> Option<crate::api_types::ApiSna
     resp.json::<crate::api_types::ApiSnapshot>().await.ok()
 }
 
-#[cfg(target_arch = "wasm32")]
-async fn refresh_snapshot(start: i64, end: i64) -> Option<crate::api_types::ApiSnapshot> {
-    let url = format!("/api/refresh?start={}&end={}", start, end);
-    let resp = gloo_net::http::Request::post(&url).send().await.ok()?;
-    if !resp.ok() {
-        return None;
-    }
-    resp.json::<crate::api_types::ApiSnapshot>().await.ok()
-}

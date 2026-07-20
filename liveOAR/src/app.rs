@@ -22,6 +22,9 @@ pub struct App {
     live_engine: LiveEngine,
     auth_active: bool,
     connected_as: Option<String>,
+    /// Triggers an immediate API fetch on the first main-view frame so the
+    /// gantt is populated as soon as auth is dismissed (correct window known).
+    first_main_frame: bool,
 }
 
 impl App {
@@ -42,6 +45,7 @@ impl App {
             live_engine,
             auth_active: true,
             connected_as: None,
+            first_main_frame: true,
         }
     }
 }
@@ -199,6 +203,12 @@ impl eframe::App for App {
                 self.gantt_view.render(ui, &mut self.application_context);
             }
         });
+
+        // On the first main-view frame the gantt has rendered and set the correct
+        // window — fetch immediately instead of waiting 30 s for the periodic loop.
+        if std::mem::take(&mut self.first_main_frame) {
+            self.live_engine.instant_update(&mut self.application_context);
+        }
 
         // Timeline navigation (pan/zoom/jump) asked for fresher data — skip if paused.
         if self.gantt_view.take_navigation_refresh_request() && self.live_engine.refresh_rate() != u64::MAX {

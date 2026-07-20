@@ -1,26 +1,11 @@
-use std::sync::{Arc, Mutex, RwLock};
-
-use axum::{
-    extract::{Query, State},
-    routing::{get, post},
-    Json, Router,
-};
-use chrono::{DateTime, Local, TimeZone};
+use axum::{extract::Query, routing::get, Json, Router};
+use chrono::{Local, TimeZone};
 use serde::Deserialize;
 
 use crate::api_types::ApiSnapshot;
 use crate::oar_fetch::{get_current_jobs_for_period, get_jobs_from_json, get_resources_from_json};
 
-/// Written outside liveOAR/src so trunk's file watcher never sees it.
 const DATA_PATH: &str = "/tmp/liveOAR_data.json";
-
-#[derive(Clone)]
-struct ServerState {
-    snapshot: Arc<RwLock<ApiSnapshot>>,
-    /// Current view window; updated by the WASM client on every fetch.
-    window: Arc<Mutex<(DateTime<Local>, DateTime<Local>)>>,
-    ssh_host: Arc<String>,
-}
 
 #[derive(Deserialize)]
 struct WindowQuery {
@@ -28,81 +13,47 @@ struct WindowQuery {
     end: Option<i64>,
 }
 
-fn apply_window(state: &ServerState, params: &WindowQuery) {
-    if let (Some(s), Some(e)) = (params.start, params.end) {
-        if let (Some(start), Some(end)) = (
-            Local.timestamp_opt(s, 0).single(),
-            Local.timestamp_opt(e, 0).single(),
-        ) {
-            *state.window.lock().unwrap() = (start, end);
-        }
-    }
-}
-
-fn do_ssh_fetch(state: &ServerState) {
-    let (start, end) = *state.window.lock().unwrap();
-    if get_current_jobs_for_period(start, end, &state.ssh_host, DATA_PATH) {
-        let jobs = get_jobs_from_json(DATA_PATH);
-        let resources = get_resources_from_json(DATA_PATH);
-        if let Ok(mut snap) = state.snapshot.write() {
-            snap.jobs = jobs;
-            snap.resources = resources;
-            println!("[server] snapshot updated ({} jobs)", snap.jobs.len());
-        }
-    } else {
-        eprintln!("[server] SSH fetch failed, keeping previous snapshot");
-    }
-}
-
 /// GET /api/data?start=TS&end=TS
-/// Updates the stored view window then returns the current cached snapshot.
-async fn get_data(
-    Query(params): Query<WindowQuery>,
-    State(state): State<ServerState>,
-) -> Json<ApiSnapshot> {
-    apply_window(&state, &params);
-    Json(state.snapshot.read().unwrap().clone())
-}
+/// Runs an SSH fetch for the requested interval and returns fresh data.
+/// Blocks until the fetch completes — the frontend shows a spinner meanwhile.
+async fn get_data(Query(params): Query<WindowQuery>) -> Json<ApiSnapshot> {
+    let now = Local::now();
+    let start = params.start
+        .and_then(|s| Local.timestamp_opt(s, 0).single())
+        .unwrap_or(now - chrono::Duration::hours(12));
+    let end = params.end
+        .and_then(|e| Local.timestamp_opt(e, 0).single())
+        .unwrap_or(now + chrono::Duration::hours(12));
 
-/// POST /api/refresh?start=TS&end=TS
-/// Triggers an immediate SSH fetch (blocks until done) and returns fresh data.
-/// Mirrors what the native `instant_update` does.
-async fn post_refresh_impl(
-    Query(params): Query<WindowQuery>,
-    State(state): State<ServerState>,
-) -> Json<ApiSnapshot> {
-    apply_window(&state, &params);
-    let state_clone = state.clone();
-    tokio::task::spawn_blocking(move || do_ssh_fetch(&state_clone))
-        .await
-        .ok();
-    Json(state.snapshot.read().unwrap().clone())
+    let ssh_host = std::env::var("GOARD_SSH_HOST")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "grenoble.g5k".to_string());
+
+    let snap = tokio::task::spawn_blocking(move || {
+        if get_current_jobs_for_period(start, end, &ssh_host, DATA_PATH) {
+            ApiSnapshot {
+                jobs: get_jobs_from_json(DATA_PATH),
+                resources: get_resources_from_json(DATA_PATH),
+            }
+        } else {
+            eprintln!("[server] SSH fetch failed");
+            ApiSnapshot::default()
+        }
+    })
+    .await
+    .unwrap_or_default();
+
+    Json(snap)
 }
 
 pub async fn run(ssh_host: String, port: u16) {
-    let now = Local::now();
-    let state = ServerState {
-        snapshot: Arc::new(RwLock::new(ApiSnapshot::default())),
-        window: Arc::new(Mutex::new((
-            now - chrono::Duration::hours(12),
-            now + chrono::Duration::hours(12),
-        ))),
-        ssh_host: Arc::new(ssh_host),
-    };
+    // Store ssh_host in env so the handler can read it without needing State.
+    // (It was already set from the env — this just normalises the value after
+    // the --serve flag may have defaulted it.)
+    std::env::set_var("GOARD_SSH_HOST", &ssh_host);
 
-    // Background auto-refresh every 30 s using whatever window the client last set.
-    {
-        let state = state.clone();
-        std::thread::spawn(move || loop {
-            do_ssh_fetch(&state);
-            std::thread::sleep(std::time::Duration::from_secs(30));
-        });
-    }
-
-    let app = Router::new()
-        .route("/api/data", get(get_data))
-        .route("/api/refresh", post(post_refresh_impl))
-        .with_state(state);
+    let app = Router::new().route("/api/data", get(get_data));
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr)

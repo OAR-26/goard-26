@@ -12,8 +12,8 @@
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
     
 <script type="module">
-import init, * as bindings from '/liveOAR-fe156ed40fa6fc87.js';
-const wasm = await init({ module_or_path: '/liveOAR-fe156ed40fa6fc87_bg.wasm' });
+import init, * as bindings from '/liveOAR-89bc3b696b47b42c.js';
+const wasm = await init({ module_or_path: '/liveOAR-89bc3b696b47b42c_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -121,7 +121,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
             }
         }
     </style>
-<link rel="modulepreload" href="/liveOAR-fe156ed40fa6fc87.js" crossorigin="anonymous" integrity="sha384-lR7U6Lz9nczjEM82djezsYDwfatj4bCrHIjBLtLBE1obZFh37av9hD9KfEkfc0//"><link rel="preload" href="/liveOAR-fe156ed40fa6fc87_bg.wasm" crossorigin="anonymous" integrity="sha384-L2NlubOZvReBCArHLUC3C0vs6UfFi5i7GI47q3WSWH2pwiFhy8ZXSn9uRVKcND3r" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="/liveOAR-89bc3b696b47b42c.js" crossorigin="anonymous" integrity="sha384-Gg+HI+eLD1DZOqm3/fxXAWE4YcNAfDbgWBt1wWSGzBT2qcUgGev6s4usHTiBm9gi"><link rel="preload" href="/liveOAR-89bc3b696b47b42c_bg.wasm" crossorigin="anonymous" integrity="sha384-PQVEpNgKz9MirqF1ZtOGloVVcgL23S24m1UbvldHl7tFUmlPCH0+973M3UIepTBf" as="fetch" type="application/wasm"></head>
 
 <body>
     <!-- The WASM code will resize the canvas dynamically -->

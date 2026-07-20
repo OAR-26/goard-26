@@ -25,9 +25,9 @@ Both share the same Gantt chart, Dashboard, and XY/energy panel from the `goard_
 - Per-file preference restore (zoom, pan, view, panel state)
 
 **liveOAR only:**
-- Real-time job monitoring via SSH
+- Real-time job monitoring via SSH (`GOARD_SSH_HOST` env var)
 - Auto-refresh with configurable interval
-- WASM build with PWA/offline support
+- Web (WASM) build: live data via HTTP backend, mock fallback when offline
 
 ## Documentation
 
@@ -62,14 +62,23 @@ cargo run -p evalys-rs --release -- examples/oar1.json examples/oar2.json+exampl
 
 ### Running liveOAR (live cluster viewer)
 
-Configure your SSH host in `liveOAR/live_config.toml`, then:
+Set the SSH host via environment variable, then run:
 
 ```bash
-cargo run -p liveOAR --release
+GOARD_SSH_HOST=grenoble.g5k cargo run -p liveOAR --release
 ```
 
-#### Web (WASM)
+#### Web (WASM) — with live data
 
+The browser cannot do SSH directly, so the web mode splits into two processes:
+
+**Terminal 1 — backend** (SSH polling + HTTP server):
+```bash
+GOARD_SSH_HOST=grenoble.g5k cargo run -p liveOAR --release -- --serve
+# optional: --port 3030 (default)
+```
+
+**Terminal 2 — frontend** (WASM build served in the browser):
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install --locked trunk
@@ -77,9 +86,21 @@ cd liveOAR
 trunk serve
 ```
 
-Access at `http://127.0.0.1:8080/index.html#dev`
+Access at `http://localhost:8080` (or replace `localhost` with the machine's IP for other devices on the same network).
 
-> Append `#dev` to skip PWA caching during development.
+> Append `#dev` to the URL to skip PWA caching during development.
+
+The frontend fetches jobs and resources from the backend every 30 seconds, passing its current view window so the SSH query always matches what is displayed. The ⟳ button triggers an immediate SSH fetch. If the backend is not running, the app falls back to mock data automatically.
+
+See [`liveOAR/LIVE_WEB.md`](liveOAR/LIVE_WEB.md) for a full explanation of the architecture and dataflow.
+
+#### Web — mock data only (no backend needed)
+
+```bash
+cd liveOAR && trunk serve
+```
+
+The app loads with randomly generated mock jobs and resources — useful for frontend development without SSH access.
 
 #### Web Deployment
 
@@ -88,7 +109,7 @@ cd liveOAR
 trunk build --release
 ```
 
-Deploy the generated `liveOAR/dist/` directory to any static hosting platform.
+Deploy `liveOAR/dist/` to any static host and run the backend server on a machine with SSH access to the cluster.
 
 ## Contributing
 
