@@ -36,7 +36,7 @@ impl Display for ResourceState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DeadInterval {
     pub start_s: i64,
     pub end_s: i64,

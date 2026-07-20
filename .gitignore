@@ -2,6 +2,9 @@
 /target/
 /dist/
 
+# trunk build output
+liveOAR/dist/
+
 # Data files
 /liveOAR/data/
 /liveOAR/data/data.json

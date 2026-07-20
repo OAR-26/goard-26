@@ -3,7 +3,7 @@ use chrono::{Local, TimeZone};
 use serde::Deserialize;
 
 use crate::api_types::ApiSnapshot;
-use crate::oar_fetch::{get_current_jobs_for_period, get_jobs_from_json, get_resources_from_json};
+use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json};
 
 const DATA_PATH: &str = "/tmp/liveOAR_data.json";
 
@@ -35,6 +35,7 @@ async fn get_data(Query(params): Query<WindowQuery>) -> Json<ApiSnapshot> {
             ApiSnapshot {
                 jobs: get_jobs_from_json(DATA_PATH),
                 resources: get_resources_from_json(DATA_PATH),
+                dead_intervals: get_dead_intervals_from_json(DATA_PATH),
             }
         } else {
             eprintln!("[server] SSH fetch failed");

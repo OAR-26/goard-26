@@ -349,10 +349,12 @@ impl LiveEngine {
                     Some(s) => {
                         jobs_sender.send(s.jobs).ok();
                         resources_sender.send(s.resources).ok();
+                        dead_intervals_sender.send(s.dead_intervals).ok();
                     }
                     None => {
                         jobs_sender.send(mock_jobs()).ok();
                         resources_sender.send(mock_stratas()).ok();
+                        dead_intervals_sender.send(std::collections::HashMap::new()).ok();
                     }
                 }
                 *is_refreshing.lock().unwrap() = false;
@@ -426,10 +428,12 @@ impl LiveEngine {
                         Some(s) => {
                             jobs_sender.send(s.jobs).ok();
                             resources_sender.send(s.resources).ok();
+                            dead_intervals_sender.send(s.dead_intervals).ok();
                         }
                         None => {
                             jobs_sender.send(mock_jobs()).ok();
                             resources_sender.send(mock_stratas()).ok();
+                            dead_intervals_sender.send(std::collections::HashMap::new()).ok();
                         }
                     }
                 }
