@@ -4,8 +4,6 @@ mod auth_view;
 mod cluster_presets;
 mod energy_estimate;
 mod live_engine;
-#[cfg(target_arch = "wasm32")]
-mod mocker;
 mod oar_fetch;
 mod refresh_coordinator;
 #[cfg(not(target_arch = "wasm32"))]

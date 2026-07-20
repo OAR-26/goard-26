@@ -15,9 +15,6 @@ use crate::refresh_coordinator::RefreshCoordinator;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json};
 
-#[cfg(target_arch = "wasm32")]
-use crate::mocker::{mock_jobs, mock_stratas};
-
 /// SSH host used to fetch live OAR data — read from the `GOARD_SSH_HOST`
 /// environment variable. Falls back to `"grenoble.g5k"` when unset or empty.
 #[cfg(not(target_arch = "wasm32"))]
@@ -345,17 +342,10 @@ impl LiveEngine {
                 if *request_gen.lock().unwrap() != gen {
                     return;
                 }
-                match snap {
-                    Some(s) => {
-                        jobs_sender.send(s.jobs).ok();
-                        resources_sender.send(s.resources).ok();
-                        dead_intervals_sender.send(s.dead_intervals).ok();
-                    }
-                    None => {
-                        jobs_sender.send(mock_jobs()).ok();
-                        resources_sender.send(mock_stratas()).ok();
-                        dead_intervals_sender.send(std::collections::HashMap::new()).ok();
-                    }
+                if let Some(s) = snap {
+                    jobs_sender.send(s.jobs).ok();
+                    resources_sender.send(s.resources).ok();
+                    dead_intervals_sender.send(s.dead_intervals).ok();
                 }
                 *is_refreshing.lock().unwrap() = false;
             });
@@ -424,17 +414,10 @@ impl LiveEngine {
                     let start = start_date.lock().unwrap().timestamp();
                     let end = end_date.lock().unwrap().timestamp();
                     let snap = fetch_snapshot(start, end).await;
-                    match snap {
-                        Some(s) => {
-                            jobs_sender.send(s.jobs).ok();
-                            resources_sender.send(s.resources).ok();
-                            dead_intervals_sender.send(s.dead_intervals).ok();
-                        }
-                        None => {
-                            jobs_sender.send(mock_jobs()).ok();
-                            resources_sender.send(mock_stratas()).ok();
-                            dead_intervals_sender.send(std::collections::HashMap::new()).ok();
-                        }
+                    if let Some(s) = snap {
+                        jobs_sender.send(s.jobs).ok();
+                        resources_sender.send(s.resources).ok();
+                        dead_intervals_sender.send(s.dead_intervals).ok();
                     }
                 }
             });

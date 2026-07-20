@@ -35,19 +35,19 @@ cargo run -p evalys-rs --release -- examples/oar.json
 cargo run -p evalys-rs --release -- examples/oar.json+examples/energy.json
 ```
 
-### liveOAR — native
+### liveOAR - native
 
 ```bash
 GOARD_SSH_HOST=grenoble.g5k cargo run -p liveOAR --release
 ```
 
-### liveOAR — web (WASM)
+### liveOAR - web (WASM)
 
 ```bash
-# Terminal 1 — backend (SSH + HTTP server)
+# Terminal 1 - backend (SSH + HTTP server)
 GOARD_SSH_HOST=grenoble.g5k cargo run -p liveOAR --release -- --serve
 
-# Terminal 2 — frontend (WASM in browser)
+# Terminal 2 - frontend (WASM in browser)
 rustup target add wasm32-unknown-unknown
 cargo install --locked trunk
 cd liveOAR && trunk serve

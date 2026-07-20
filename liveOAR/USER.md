@@ -26,12 +26,12 @@ GOARD_SSH_HOST=grenoble.g5k cargo run -p liveOAR --release
 
 ### Web (WASM) — live data
 
-**Terminal 1 — backend:**
+**Terminal 1 - backend:**
 ```bash
 GOARD_SSH_HOST=grenoble.g5k cargo run -p liveOAR --release -- --serve
 ```
 
-**Terminal 2 — frontend:**
+**Terminal 2 - frontend:**
 ```bash
 cd liveOAR && trunk serve
 ```
