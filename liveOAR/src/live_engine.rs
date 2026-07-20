@@ -281,14 +281,8 @@ impl LiveEngine {
     pub fn instant_update(&mut self, app: &mut ApplicationContext) {
         let is_refreshing = self.refresh.is_refreshing.clone();
 
-        // Native: block concurrent SSH fetches (one at a time).
-        // WASM: always proceed — newer requests supersede older ones via request_gen.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if *is_refreshing.lock().unwrap() {
-                return;
-            }
-        }
+        // Both targets: newer requests supersede older ones via request_gen.
+        // is_refreshing is set here and cleared only by the winning thread/task.
         *is_refreshing.lock().unwrap() = true;
 
         // Read straight from `app` rather than the mutex: `poll()` syncs the
@@ -309,9 +303,18 @@ impl LiveEngine {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let is_refreshing_clone = is_refreshing.clone();
+            let gen = {
+                let mut g = self.refresh.request_gen.lock().unwrap();
+                *g += 1;
+                *g
+            };
+            let request_gen = self.refresh.request_gen.clone();
             thread::spawn(move || {
                 let res = get_current_jobs_for_period(start, end, &ssh_host, "./liveOAR/data/data.json");
+                // Discard if a newer request has already been dispatched.
+                if *request_gen.lock().unwrap() != gen {
+                    return;
+                }
                 if res {
                     let jobs = get_jobs_from_json("./liveOAR/data/data.json");
                     let resources = get_resources_from_json("./liveOAR/data/data.json");
@@ -320,7 +323,7 @@ impl LiveEngine {
                     resources_sender.send(resources).unwrap_or_else(|e| println!("Error while sending resources: {}", e));
                     dead_intervals_sender.send(dead_intervals).unwrap_or_else(|e| println!("Error while sending dead intervals: {}", e));
                 }
-                *is_refreshing_clone.lock().unwrap() = false;
+                *is_refreshing.lock().unwrap() = false;
             });
         }
 
