@@ -121,8 +121,7 @@ impl JobState {
 
 use crate::models::data_structure::job_sorting::JobSortable;
 
-#[derive(Clone, Debug)]
-
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Job {
     pub id: u32,
     pub owner: String,

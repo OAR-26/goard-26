@@ -14,6 +14,10 @@ pub struct RefreshCoordinator {
     pub is_refreshing: Arc<Mutex<bool>>,
     pub refresh_rate: Arc<Mutex<u64>>,
     pub thread_started: bool,
+    /// Incremented on every new instant_update call. An in-flight WASM fetch
+    /// checks its captured generation against this before applying results —
+    /// if they differ, a newer request has superseded it and results are dropped.
+    pub request_gen: Arc<Mutex<u64>>,
 
     pub jobs_sender: Sender<Vec<Job>>,
     pub jobs_receiver: Receiver<Vec<Job>>,
@@ -34,6 +38,7 @@ impl RefreshCoordinator {
             is_refreshing: Arc::new(Mutex::new(false)),
             refresh_rate: Arc::new(Mutex::new(30)),
             thread_started: false,
+            request_gen: Arc::new(Mutex::new(0)),
             jobs_sender,
             jobs_receiver,
             resources_sender,

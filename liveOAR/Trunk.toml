@@ -1,0 +1,9 @@
+[serve]
+address = "127.0.0.1"
+
+[watch]
+ignore = ["data", "dist"]
+
+[[proxy]]
+rewrite = "/api/"
+backend = "http://localhost:3030/api/"

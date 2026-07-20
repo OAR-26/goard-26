@@ -15,21 +15,14 @@ use crate::refresh_coordinator::RefreshCoordinator;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json};
 
-#[cfg(target_arch = "wasm32")]
-use crate::mocker::{mock_jobs, mock_stratas};
-
-/// SSH host used to fetch live OAR data — read from liveOAR's own
-/// `live_config.toml`. `goard_core` has no notion of SSH/live connections at
-/// all, so this setting lives entirely in this crate.
+/// SSH host used to fetch live OAR data — read from the `GOARD_SSH_HOST`
+/// environment variable. Falls back to `"grenoble.g5k"` when unset or empty.
 #[cfg(not(target_arch = "wasm32"))]
 fn load_ssh_host() -> String {
-    match std::fs::read_to_string("liveOAR/live_config.toml") {
-        Ok(content) => toml::from_str::<toml::Value>(&content)
-            .ok()
-            .and_then(|v| v.get("ssh_host").and_then(|s| s.as_str()).map(str::to_string))
-            .unwrap_or_else(|| "grenoble.g5k".to_string()),
-        Err(_) => "grenoble.g5k".to_string(),
-    }
+    std::env::var("GOARD_SSH_HOST")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "grenoble.g5k".to_string())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -61,20 +54,8 @@ impl LiveEngine {
         &self.ssh_host
     }
 
-    /// Updates the SSH host and persists it to `live_config.toml`.
     pub fn set_ssh_host(&mut self, host: String) {
         self.ssh_host = host;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let content = format!(
-                "# liveOAR-only settings. goard_core's config.toml has no notion of SSH/live\n\
-                 # connections — this file is read by liveOAR alone.\n\n\
-                 # SSH host used to fetch live OAR data (oarstat command is run on this host)\n\
-                 ssh_host = \"{}\"\n",
-                self.ssh_host
-            );
-            let _ = std::fs::write("liveOAR/live_config.toml", content);
-        }
     }
 
     pub fn check_job_update(&mut self, app: &mut ApplicationContext) {
@@ -300,9 +281,8 @@ impl LiveEngine {
     pub fn instant_update(&mut self, app: &mut ApplicationContext) {
         let is_refreshing = self.refresh.is_refreshing.clone();
 
-        if *is_refreshing.lock().unwrap() {
-            return;
-        }
+        // Both targets: newer requests supersede older ones via request_gen.
+        // is_refreshing is set here and cleared only by the winning thread/task.
         *is_refreshing.lock().unwrap() = true;
 
         // Read straight from `app` rather than the mutex: `poll()` syncs the
@@ -323,9 +303,18 @@ impl LiveEngine {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let is_refreshing_clone = is_refreshing.clone();
+            let gen = {
+                let mut g = self.refresh.request_gen.lock().unwrap();
+                *g += 1;
+                *g
+            };
+            let request_gen = self.refresh.request_gen.clone();
             thread::spawn(move || {
-                let res = get_current_jobs_for_period(start, end, &ssh_host);
+                let res = get_current_jobs_for_period(start, end, &ssh_host, "./liveOAR/data/data.json");
+                // Discard if a newer request has already been dispatched.
+                if *request_gen.lock().unwrap() != gen {
+                    return;
+                }
                 if res {
                     let jobs = get_jobs_from_json("./liveOAR/data/data.json");
                     let resources = get_resources_from_json("./liveOAR/data/data.json");
@@ -334,17 +323,35 @@ impl LiveEngine {
                     resources_sender.send(resources).unwrap_or_else(|e| println!("Error while sending resources: {}", e));
                     dead_intervals_sender.send(dead_intervals).unwrap_or_else(|e| println!("Error while sending dead intervals: {}", e));
                 }
-                *is_refreshing_clone.lock().unwrap() = false;
+                *is_refreshing.lock().unwrap() = false;
             });
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            let jobs = mock_jobs();
-            jobs_sender.send(jobs).unwrap();
-            let strata = mock_stratas();
-            resources_sender.send(strata).unwrap();
-            *is_refreshing.lock().unwrap() = false;
+            // Increment generation — any older in-flight fetch will see a
+            // mismatched gen and discard its results.
+            let gen = {
+                let mut g = self.refresh.request_gen.lock().unwrap();
+                *g += 1;
+                *g
+            };
+            let request_gen = self.refresh.request_gen.clone();
+            let start_ts = start.timestamp();
+            let end_ts = end.timestamp();
+            wasm_bindgen_futures::spawn_local(async move {
+                let snap = fetch_snapshot(start_ts, end_ts).await;
+                // Discard if a newer request has already been dispatched.
+                if *request_gen.lock().unwrap() != gen {
+                    return;
+                }
+                if let Some(s) = snap {
+                    jobs_sender.send(s.jobs).ok();
+                    resources_sender.send(s.resources).ok();
+                    dead_intervals_sender.send(s.dead_intervals).ok();
+                }
+                *is_refreshing.lock().unwrap() = false;
+            });
         }
     }
 
@@ -383,7 +390,7 @@ impl LiveEngine {
                 let start = *start_date.lock().unwrap();
                 let end = *end_date.lock().unwrap();
 
-                let res = get_current_jobs_for_period(start, end, &ssh_host);
+                let res = get_current_jobs_for_period(start, end, &ssh_host, "./liveOAR/data/data.json");
                 if res {
                     let jobs = get_jobs_from_json("./liveOAR/data/data.json");
                     let resources = get_resources_from_json("./liveOAR/data/data.json");
@@ -401,10 +408,33 @@ impl LiveEngine {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let jobs = mock_jobs();
-            jobs_sender.send(jobs).unwrap();
-            let strata = mock_stratas();
-            resources_sender.send(strata).unwrap();
+            wasm_bindgen_futures::spawn_local(async move {
+                // The first fetch is triggered by `App` on the first main-view
+                // frame (after auth), so the correct gantt window is known.
+                // This loop only handles subsequent periodic refreshes.
+                loop {
+                    gloo_timers::future::TimeoutFuture::new(30_000).await;
+                    let start = start_date.lock().unwrap().timestamp();
+                    let end = end_date.lock().unwrap().timestamp();
+                    let snap = fetch_snapshot(start, end).await;
+                    if let Some(s) = snap {
+                        jobs_sender.send(s.jobs).ok();
+                        resources_sender.send(s.resources).ok();
+                        dead_intervals_sender.send(s.dead_intervals).ok();
+                    }
+                }
+            });
         }
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_snapshot(start: i64, end: i64) -> Option<crate::api_types::ApiSnapshot> {
+    let url = format!("/api/data?start={}&end={}", start, end);
+    let resp = gloo_net::http::Request::get(&url).send().await.ok()?;
+    if !resp.ok() {
+        return None;
+    }
+    resp.json::<crate::api_types::ApiSnapshot>().await.ok()
+}
+
