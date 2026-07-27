@@ -13,7 +13,9 @@ use goard_core::models::utils::utils::{clusters_for_job, hosts_for_job};
 use crate::refresh_coordinator::RefreshCoordinator;
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json};
+use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json, OarVersion};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
 
 /// SSH host used to fetch live OAR data — read from the `GOARD_SSH_HOST`
 /// environment variable. Falls back to `"grenoble.g5k"` when unset or empty.
@@ -39,6 +41,8 @@ pub struct LiveEngine {
     /// Swap buffer — background thread writes here; promoted to app.data.all_jobs
     /// once the matching resource update has rebuilt the cluster hierarchy.
     swap_all_jobs: Vec<Job>,
+    #[cfg(not(target_arch = "wasm32"))]
+    oar_version: Arc<dyn OarVersion>,
 }
 
 impl LiveEngine {
@@ -47,6 +51,8 @@ impl LiveEngine {
             refresh: RefreshCoordinator::new(now),
             ssh_host: load_ssh_host(),
             swap_all_jobs: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            oar_version: crate::oar_fetch::make_oar_version(),
         }
     }
 
@@ -309,15 +315,16 @@ impl LiveEngine {
                 *g
             };
             let request_gen = self.refresh.request_gen.clone();
+            let version = self.oar_version.clone();
             thread::spawn(move || {
-                let res = get_current_jobs_for_period(start, end, &ssh_host, "./liveOAR/data/data.json");
+                let res = get_current_jobs_for_period(start, end, &ssh_host, "./liveOAR/data/data.json", &*version);
                 // Discard if a newer request has already been dispatched.
                 if *request_gen.lock().unwrap() != gen {
                     return;
                 }
                 if res {
-                    let jobs = get_jobs_from_json("./liveOAR/data/data.json");
-                    let resources = get_resources_from_json("./liveOAR/data/data.json");
+                    let jobs = get_jobs_from_json("./liveOAR/data/data.json", &*version);
+                    let resources = get_resources_from_json("./liveOAR/data/data.json", &*version);
                     let dead_intervals = get_dead_intervals_from_json("./liveOAR/data/data.json");
                     jobs_sender.send(jobs).unwrap_or_else(|e| println!("Error while sending jobs: {}", e));
                     resources_sender.send(resources).unwrap_or_else(|e| println!("Error while sending resources: {}", e));
@@ -372,6 +379,7 @@ impl LiveEngine {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let version = self.oar_version.clone();
             thread::spawn(move || loop {
                 let rate = *refresh_rate.lock().unwrap();
 
@@ -390,10 +398,10 @@ impl LiveEngine {
                 let start = *start_date.lock().unwrap();
                 let end = *end_date.lock().unwrap();
 
-                let res = get_current_jobs_for_period(start, end, &ssh_host, "./liveOAR/data/data.json");
+                let res = get_current_jobs_for_period(start, end, &ssh_host, "./liveOAR/data/data.json", &*version);
                 if res {
-                    let jobs = get_jobs_from_json("./liveOAR/data/data.json");
-                    let resources = get_resources_from_json("./liveOAR/data/data.json");
+                    let jobs = get_jobs_from_json("./liveOAR/data/data.json", &*version);
+                    let resources = get_resources_from_json("./liveOAR/data/data.json", &*version);
                     let dead_intervals = get_dead_intervals_from_json("./liveOAR/data/data.json");
 
                     jobs_sender.send(jobs).unwrap_or_else(|e| println!("Error while sending jobs: {}", e));

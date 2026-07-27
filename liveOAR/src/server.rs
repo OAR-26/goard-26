@@ -3,7 +3,7 @@ use chrono::{Local, TimeZone};
 use serde::Deserialize;
 
 use crate::api_types::ApiSnapshot;
-use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json};
+use crate::oar_fetch::{get_current_jobs_for_period, get_dead_intervals_from_json, get_jobs_from_json, get_resources_from_json, make_oar_version};
 
 const DATA_PATH: &str = "/tmp/liveOAR_data.json";
 
@@ -30,11 +30,12 @@ async fn get_data(Query(params): Query<WindowQuery>) -> Json<ApiSnapshot> {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "grenoble.g5k".to_string());
 
+    let version = make_oar_version();
     let snap = tokio::task::spawn_blocking(move || {
-        if get_current_jobs_for_period(start, end, &ssh_host, DATA_PATH) {
+        if get_current_jobs_for_period(start, end, &ssh_host, DATA_PATH, &*version) {
             ApiSnapshot {
-                jobs: get_jobs_from_json(DATA_PATH),
-                resources: get_resources_from_json(DATA_PATH),
+                jobs: get_jobs_from_json(DATA_PATH, &*version),
+                resources: get_resources_from_json(DATA_PATH, &*version),
                 dead_intervals: get_dead_intervals_from_json(DATA_PATH),
             }
         } else {
