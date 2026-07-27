@@ -95,6 +95,11 @@ impl eframe::App for App {
             crate::sim_config::save_energy_series_colors(&self.energy_colors_draft);
         }
 
+        if let Some(opts) = self.menu.take_save_request() {
+            let _ = serde_json::to_string(&opts)
+                .map(|json| std::fs::write("options.json", json));
+        }
+
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {
             match self.application_context.view_type {
                 goard_core::views::view::ViewType::Gantt => {

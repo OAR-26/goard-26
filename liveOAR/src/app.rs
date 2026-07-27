@@ -31,14 +31,24 @@ impl App {
     pub fn new() -> Self {
         let mut application_context = ApplicationContext::default();
         application_context.show_all_resources_row = true;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(cfg) = crate::web_settings::load_gantt_config() {
+            application_context.prefs.gantt_config = cfg;
+            application_context.prefs.config_reload_requested = true;
+        }
         let mut live_engine = LiveEngine::new(chrono::Local::now());
         live_engine.update_periodically(&mut application_context);
+        #[cfg(target_arch = "wasm32")]
+        let menu = Menu::with_options(crate::web_settings::load());
+        #[cfg(not(target_arch = "wasm32"))]
+        let menu = Menu::default();
+
         App {
             secret: Secret::default(),
             dashboard_view: Dashboard::default(),
             gantt_view: GanttChart::default(),
             auth_view: AuthView::default(),
-            menu: Menu::default(),
+            menu,
             tools: Tools::default(),
             application_context,
             cluster_presets: ClusterPresetState::default(),
@@ -76,8 +86,9 @@ impl eframe::App for App {
         let mut logout_clicked = false;
         let mut login_clicked = false;
 
+        let mut settings_applied = false;
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            self.menu.render_with_extras(
+            settings_applied = self.menu.render_with_extras(
                 ui,
                 &mut self.application_context,
                 |ui, _app| {
@@ -208,6 +219,19 @@ impl eframe::App for App {
         // window — fetch immediately instead of waiting 30 s for the periodic loop.
         if std::mem::take(&mut self.first_main_frame) {
             self.live_engine.instant_update(&mut self.application_context);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        if settings_applied {
+            crate::web_settings::save_gantt_config(&self.application_context.prefs.gantt_config);
+        }
+
+        if let Some(opts) = self.menu.take_save_request() {
+            #[cfg(target_arch = "wasm32")]
+            crate::web_settings::save(&opts);
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = serde_json::to_string(&opts)
+                .map(|json| std::fs::write("options.json", json));
         }
 
         // Timeline navigation (pan/zoom/jump) asked for fresher data — skip if paused.

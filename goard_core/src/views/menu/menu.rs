@@ -17,15 +17,29 @@ pub struct Menu {
 
 impl Default for Menu {
     fn default() -> Self {
-        let application_options = ApplicationOptions::default();
-
         let options_pane = if std::path::Path::new("options.json").exists() {
             Options::load_from_file("options.json")
         } else {
-            Options::new(application_options.clone())
+            Options::new(ApplicationOptions::default())
         };
 
         Menu { options_pane, settings_panel: SettingsPanel::default() }
+    }
+}
+
+impl Menu {
+    /// Construct with pre-loaded options instead of reading from disk.
+    pub fn with_options(options: ApplicationOptions) -> Self {
+        Menu {
+            options_pane: Options::new(options),
+            settings_panel: SettingsPanel::default(),
+        }
+    }
+
+    /// Returns the options the user just saved, if Save was clicked this frame.
+    /// The caller is responsible for persisting them.
+    pub fn take_save_request(&mut self) -> Option<ApplicationOptions> {
+        self.options_pane.take_save_request()
     }
 }
 

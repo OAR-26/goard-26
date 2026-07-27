@@ -51,7 +51,7 @@ The frontend fetches data from the backend every 30 seconds, passing its current
 ### Options
 - **Language:** English / Français
 - **Font size:** 10–30
-- **Save** — writes to `options.json`
+- **Save** — persists settings (`options.json` on native, browser localStorage on web)
 
 ### Help (`?`)
 Context-sensitive help for the active view.

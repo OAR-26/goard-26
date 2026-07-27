@@ -8,6 +8,8 @@ mod oar_fetch;
 mod refresh_coordinator;
 #[cfg(not(target_arch = "wasm32"))]
 mod server;
+#[cfg(target_arch = "wasm32")]
+mod web_settings;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
