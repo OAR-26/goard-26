@@ -19,7 +19,6 @@ liveOAR/
     ├── auth_view.rs        — login form UI
     ├── cluster_presets.rs  — cluster preset CRUD + selector widget
     ├── energy_estimate.rs  — estimate_from_jobs (same logic as evalys-rs)
-    ├── mocker.rs           — fake data for testing without SSH
     ├── api_types.rs        — ApiSnapshot (jobs + resources + dead_intervals), used by server + WASM
     └── server.rs           — axum HTTP server (native only)
 ```
@@ -70,15 +69,15 @@ User navigates (pan/zoom):
 |-------|------|
 | `start_date / end_date: Arc<Mutex<DateTime>>` | Current view window; synced by `poll()` each frame |
 | `refresh_rate: Arc<Mutex<u64>>` | Seconds between polls (`u64::MAX` = never) |
-| `is_refreshing: Arc<Mutex<bool>>` | Dedup lock (native only; WASM uses `request_gen`) |
-| `request_gen: Arc<Mutex<u64>>` | WASM only: incremented on each `instant_update`; stale fetches self-discard |
+| `is_refreshing: Arc<Mutex<bool>>` | Spinner state; set on `instant_update`, cleared by the winning fetch |
+| `request_gen: Arc<Mutex<u64>>` | Incremented on each `instant_update` (both targets); stale fetches self-discard |
 | `jobs_sender / jobs_receiver` | MPSC channel for job snapshots |
 | `resources_sender / resources_receiver` | MPSC channel for resource/strata snapshots |
 | `dead_intervals_sender / dead_intervals_receiver` | MPSC channel for dead resource intervals |
 
-### Race condition guard (WASM)
+### Race condition guard (both targets)
 
-When the user navigates quickly, multiple `instant_update` calls can be in-flight simultaneously. Each call increments `request_gen` and captures the current value. When the fetch completes, if the stored gen no longer matches the captured gen, the result is discarded — a newer request has already been dispatched.
+When the user navigates quickly, multiple `instant_update` calls can be in-flight simultaneously. Each call increments `request_gen` and captures the current value. When the fetch completes, if the stored gen no longer matches the captured gen, the result is discarded — a newer request has already been dispatched. Only the winning fetch clears `is_refreshing`.
 
 ---
 
@@ -124,7 +123,7 @@ No background polling, no cache. The frontend drives timing.
 
 ```toml
 [serve]
-address = "0.0.0.0"        # reachable from other devices on the same network
+address = "0.0.0.0"        # omit to bind localhost only
 
 [watch]
 ignore = ["data", "dist"]  # prevent hot-reload loop on SSH data writes
@@ -134,11 +133,11 @@ rewrite = "/api/"
 backend = "http://localhost:3030/api/"
 ```
 
-The proxy makes `/api/*` requests go to the axum backend transparently (no CORS).
+`address = "0.0.0.0"` makes the dev server reachable from other devices on the same network. Remove or set to `127.0.0.1` to restrict to localhost.
 
-### Mock fallback
+The proxy forwards `/api/*` to the axum backend transparently (no CORS needed).
 
-If the backend is not reachable (`fetch_snapshot` returns `None`), the WASM app falls back to `mock_jobs()` / `mock_stratas()`. Useful for frontend development without SSH access.
+If the backend is unreachable, `fetch_snapshot` returns `None` and no data is sent — the gantt stays empty.
 
 ---
 

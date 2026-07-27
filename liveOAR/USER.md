@@ -38,7 +38,7 @@ cd liveOAR && trunk serve
 
 Access at `http://localhost:8080`.
 
-The frontend fetches data from the backend every 30 seconds, passing its current view window. The ⟳ button triggers an immediate fetch. If the backend is unreachable, the app falls back to mock data.
+The frontend fetches data from the backend every 30 seconds, passing its current view window. The ⟳ button triggers an immediate fetch. If the backend is unreachable, the gantt shows no data.
 
 ---
 
