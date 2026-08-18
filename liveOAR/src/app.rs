@@ -1,13 +1,13 @@
 use crate::auth_view::{AuthOutcome, AuthView};
 use crate::cluster_presets::ClusterPresetState;
 use crate::live_engine::LiveEngine;
-use goard_core::models::utils::secret::Secret;
-use goard_core::views::main_page::dashboard::Dashboard;
-use goard_core::views::main_page::gantt::GanttChart;
-use goard_core::views::menu::menu::Menu;
-use goard_core::views::menu::tools::Tools;
-use goard_core::views::view::View;
-use goard_core::models::data_structure::application_context::ApplicationContext;
+use ganttza::models::utils::secret::Secret;
+use ganttza::views::main_page::dashboard::Dashboard;
+use ganttza::views::main_page::gantt::GanttChart;
+use ganttza::views::menu::menu::Menu;
+use ganttza::views::menu::tools::Tools;
+use ganttza::views::view::View;
+use ganttza::models::data_structure::application_context::ApplicationContext;
 use eframe::egui::{self, CentralPanel, TopBottomPanel};
 
 pub struct App {
@@ -122,7 +122,7 @@ impl eframe::App for App {
 
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {
             match self.application_context.view_type {
-                goard_core::views::view::ViewType::Gantt => {
+                ganttza::views::view::ViewType::Gantt => {
                     self.tools.render_with_gantt_and_extras(
                         ui,
                         &mut self.application_context,
@@ -201,16 +201,16 @@ impl eframe::App for App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if self.live_engine.is_refreshing() {
                         ui.add(egui::Spinner::new().size(12.0));
-                        ui.label(egui::RichText::new(goard_core::refreshing_text()).small());
+                        ui.label(egui::RichText::new(ganttza::refreshing_text()).small());
                     }
                 });
             });
 
         CentralPanel::default().show(ctx, |ui| match self.application_context.view_type {
-            goard_core::views::view::ViewType::Dashboard => {
+            ganttza::views::view::ViewType::Dashboard => {
                 self.dashboard_view.render(ui, &mut self.application_context);
             }
-            goard_core::views::view::ViewType::Gantt => {
+            ganttza::views::view::ViewType::Gantt => {
                 self.gantt_view.render(ui, &mut self.application_context);
             }
         });

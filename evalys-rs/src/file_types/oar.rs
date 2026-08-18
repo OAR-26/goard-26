@@ -1,10 +1,10 @@
 use super::{FileTypeConfig, ParsedFileData, ValidationError, VisualizationTarget};
-use goard_core::models::data_structure::{
+use ganttza::models::data_structure::{
     job::{Job, JobState},
     resource::ResourceState,
     strata::Strata,
 };
-use goard_core::models::utils::utils::{
+use ganttza::models::utils::utils::{
     cluster_names, host_names, all_resource_ids,
     clusters_for_job, hosts_for_job,
 };

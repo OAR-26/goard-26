@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 
-use goard_core::models::data_structure::{marker::{GanttMarker, MarkerShape}, strata::Strata};
+use ganttza::models::data_structure::{marker::{GanttMarker, MarkerShape}, strata::Strata};
 
 use super::{FileTypeConfig, ParsedFileData, ValidationError, VisualizationTarget};
 

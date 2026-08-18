@@ -1,12 +1,12 @@
 use chrono::{Local, TimeZone};
 use eframe::egui;
-use goard_core::models::data_structure::job_sorting::JobSortable;
-use goard_core::models::data_structure::application_context::ApplicationContext;
-use goard_core::models::data_structure::job::Job;
-use goard_core::models::data_structure::marker::GanttMarker;
-use goard_core::models::data_structure::strata::Strata;
+use ganttza::models::data_structure::job_sorting::JobSortable;
+use ganttza::models::data_structure::application_context::ApplicationContext;
+use ganttza::models::data_structure::job::Job;
+use ganttza::models::data_structure::marker::GanttMarker;
+use ganttza::models::data_structure::strata::Strata;
 use crate::file_types::{FileTypeRegistry, VisualizationTarget};
-use goard_core::views::main_page::gantt::{GanttChart, GanttViewSnapshot};
+use ganttza::views::main_page::gantt::{GanttChart, GanttViewSnapshot};
 
 use crate::tab_state_cache::{compute_file_hash, TabStateCache, TabViewState};
 
@@ -790,7 +790,7 @@ impl SimState {
     }
 }
 
-fn job_time_range(jobs: &[goard_core::models::data_structure::job::Job]) -> (i64, i64) {
+fn job_time_range(jobs: &[ganttza::models::data_structure::job::Job]) -> (i64, i64) {
     jobs.iter().filter(|j| j.id != 0).fold((i64::MAX, i64::MIN), |(mn, mx), j| {
         (mn.min(j.start_time).min(j.get_end_date()),
          mx.max(j.start_time).max(j.get_end_date()))
@@ -800,8 +800,8 @@ fn job_time_range(jobs: &[goard_core::models::data_structure::job::Job]) -> (i64
 #[cfg(test)]
 mod tests {
     use super::*;
-    use goard_core::models::data_structure::job::{Job, JobState};
-    use goard_core::models::data_structure::resource::ResourceState;
+    use ganttza::models::data_structure::job::{Job, JobState};
+    use ganttza::models::data_structure::resource::ResourceState;
 
     fn make_job(id: u32, start: i64, walltime: i64) -> Job {
         Job {

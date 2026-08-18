@@ -1,3 +1,3 @@
 [workspace]
-members = ["goard_core", "liveOAR", "evalys-rs"]
+members = ["ganttza", "liveOAR", "evalys-rs"]
 resolver = "2"

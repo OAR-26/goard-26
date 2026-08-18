@@ -33,7 +33,7 @@ fn main() -> Result<(), eframe::Error> {
 
     let options = eframe::NativeOptions::default();
     eframe::run_native(
-        &goard_core::window_title(),
+        &ganttza::window_title(),
         options,
         Box::new(|_cc| Ok(Box::new(app::App::new()))),
     )

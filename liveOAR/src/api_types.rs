@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use goard_core::models::data_structure::{job::Job, resource::DeadInterval, strata::Strata};
+use ganttza::models::data_structure::{job::Job, resource::DeadInterval, strata::Strata};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Default)]

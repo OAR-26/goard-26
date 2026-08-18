@@ -1,11 +1,11 @@
 [package]
-name = "goard_core"
+name = "ganttza"
 version = "1.1.0"
 edition = "2021"
 authors = ["Romain MIRAS <romain.miras@gmail.com>", "Alexandre ARLE <arle.alexandre@protonmail.com>", "Amaury GOGUILLOT <goguillot.amaury@gmail.com>", "Rémi DEL MEDICO <redelmedico@gmail.com>", "Aymane AMESSEGHER <amessegheraymane@gmail.com>"]
 
 [lib]
-name = "goard_core"
+name = "ganttza"
 path = "src/lib.rs"
 
 [dependencies]

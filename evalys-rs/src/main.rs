@@ -21,7 +21,7 @@ fn main() -> Result<(), eframe::Error> {
         .collect();
     let options = eframe::NativeOptions::default();
     eframe::run_native(
-        &goard_core::window_title(),
+        &ganttza::window_title(),
         options,
         Box::new(move |_cc| Ok(Box::new(app::App::new(import_entries)))),
     )

@@ -1,5 +1,5 @@
 use eframe::egui;
-use goard_core::models::data_structure::application_context::ApplicationContext;
+use ganttza::models::data_structure::application_context::ApplicationContext;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 

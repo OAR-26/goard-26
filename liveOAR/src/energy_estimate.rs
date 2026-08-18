@@ -1,4 +1,4 @@
-use goard_core::models::data_structure::job::Job;
+use ganttza::models::data_structure::job::Job;
 
 /// Estimates global power (W) over [start_s, end_s] from job allocations.
 pub fn estimate_from_jobs(
@@ -39,8 +39,8 @@ pub fn estimate_from_jobs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use goard_core::models::data_structure::job::{Job, JobState};
-    use goard_core::models::data_structure::resource::ResourceState;
+    use ganttza::models::data_structure::job::{Job, JobState};
+    use ganttza::models::data_structure::resource::ResourceState;
 
     fn make_job(id: u32, start: i64, walltime: i64, resources: Vec<u32>) -> Job {
         Job {

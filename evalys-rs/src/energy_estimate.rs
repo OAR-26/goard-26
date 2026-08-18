@@ -1,4 +1,4 @@
-use goard_core::models::data_structure::job::Job;
+use ganttza::models::data_structure::job::Job;
 
 /// Builds XY series points from a raw measured series, adding zero-padding
 /// at the edges so panning outside the data shows zero.
@@ -56,8 +56,8 @@ pub fn estimate_from_jobs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use goard_core::models::data_structure::job::{Job, JobState};
-    use goard_core::models::data_structure::resource::ResourceState;
+    use ganttza::models::data_structure::job::{Job, JobState};
+    use ganttza::models::data_structure::resource::ResourceState;
 
     fn make_job(id: u32, start: i64, walltime: i64, resources: Vec<u32>) -> Job {
         Job {

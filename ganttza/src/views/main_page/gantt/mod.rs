@@ -93,7 +93,7 @@ fn load_views_config() -> ViewsConfig {
     #[cfg(target_arch = "wasm32")]
     let content = include_str!("../../../../views.json").to_string();
     #[cfg(not(target_arch = "wasm32"))]
-    let Ok(content) = std::fs::read_to_string("goard_core/views.json") else { return fallback; };
+    let Ok(content) = std::fs::read_to_string("ganttza/views.json") else { return fallback; };
     let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else { return fallback; };
     if val.is_array() {
         // Old format: bare array of views — no presets
@@ -136,7 +136,7 @@ fn save_views_config(views: &[GanttView], presets: &[types::LeafInfoPreset]) {
         leaf_info_presets: &'a [types::LeafInfoPreset],
     }
     if let Ok(json) = serde_json::to_string_pretty(&Out { views, leaf_info_presets: presets }) {
-        let _ = std::fs::write("goard_core/views.json", json);
+        let _ = std::fs::write("ganttza/views.json", json);
     }
 }
 

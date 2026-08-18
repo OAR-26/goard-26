@@ -143,7 +143,7 @@ impl GanttConfig {
         #[cfg(target_arch = "wasm32")]
         let content = include_str!("../../../config.toml").to_string();
         #[cfg(not(target_arch = "wasm32"))]
-        let content = match std::fs::read_to_string("goard_core/config.toml") {
+        let content = match std::fs::read_to_string("ganttza/config.toml") {
             Ok(c) => c,
             Err(_) => return Self::default(),
         };
@@ -405,6 +405,6 @@ Standby   = \"{standby_light}\"
             dead_light           = hex(self.state_colors_light.dead),
             standby_light        = hex(self.state_colors_light.standby),
         );
-        let _ = std::fs::write("goard_core/config.toml", content);
+        let _ = std::fs::write("ganttza/config.toml", content);
     }
 }

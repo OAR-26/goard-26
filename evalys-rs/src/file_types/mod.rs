@@ -1,4 +1,4 @@
-use goard_core::models::data_structure::{job::Job, marker::GanttMarker, strata::Strata};
+use ganttza::models::data_structure::{job::Job, marker::GanttMarker, strata::Strata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

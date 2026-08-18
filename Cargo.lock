@@ -1383,7 +1383,7 @@ dependencies = [
  "console_error_panic_hook",
  "eframe",
  "env_logger",
- "goard_core",
+ "ganttza",
  "js-sys",
  "log",
  "native-dialog",
@@ -1556,6 +1556,28 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "slab",
+]
+
+[[package]]
+name = "ganttza"
+version = "1.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "eframe",
+ "egui",
+ "egui_extras",
+ "egui_plot",
+ "env_logger",
+ "getrandom 0.2.15",
+ "rand 0.8.5",
+ "range-set-blaze",
+ "rust-i18n",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "toml 0.8.20",
 ]
 
 [[package]]
@@ -1784,28 +1806,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c4ee00b289aba7a9e5306d57c2d05499b2e5dc427f84ac708bd2c090212cf3e"
 dependencies = [
  "gl_generator",
-]
-
-[[package]]
-name = "goard_core"
-version = "1.1.0"
-dependencies = [
- "chrono",
- "chrono-tz",
- "eframe",
- "egui",
- "egui_extras",
- "egui_plot",
- "env_logger",
- "getrandom 0.2.15",
- "rand 0.8.5",
- "range-set-blaze",
- "rust-i18n",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "toml 0.8.20",
 ]
 
 [[package]]
@@ -2344,10 +2344,10 @@ dependencies = [
  "console_error_panic_hook",
  "eframe",
  "env_logger",
+ "ganttza",
  "getrandom 0.2.15",
  "gloo-net",
  "gloo-timers",
- "goard_core",
  "js-sys",
  "log",
  "serde",

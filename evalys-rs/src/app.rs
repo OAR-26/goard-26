@@ -1,10 +1,10 @@
 use crate::sim_state::{PendingImport, SimState};
-use goard_core::views::main_page::dashboard::Dashboard;
-use goard_core::views::main_page::gantt::GanttChart;
-use goard_core::views::menu::menu::Menu;
-use goard_core::views::menu::tools::Tools;
-use goard_core::views::view::View;
-use goard_core::models::data_structure::application_context::ApplicationContext;
+use ganttza::views::main_page::dashboard::Dashboard;
+use ganttza::views::main_page::gantt::GanttChart;
+use ganttza::views::menu::menu::Menu;
+use ganttza::views::menu::tools::Tools;
+use ganttza::views::view::View;
+use ganttza::models::data_structure::application_context::ApplicationContext;
 use eframe::egui::{self, CentralPanel, TopBottomPanel};
 
 pub struct App {
@@ -102,7 +102,7 @@ impl eframe::App for App {
 
         TopBottomPanel::top("tool_bar").show(ctx, |ui| {
             match self.application_context.view_type {
-                goard_core::views::view::ViewType::Gantt => {
+                ganttza::views::view::ViewType::Gantt => {
                     self.tools
                         .render_with_gantt(ui, &mut self.application_context, &mut self.gantt_view);
                 }
@@ -234,10 +234,10 @@ impl eframe::App for App {
             });
 
         CentralPanel::default().show(ctx, |ui| match self.application_context.view_type {
-            goard_core::views::view::ViewType::Dashboard => {
+            ganttza::views::view::ViewType::Dashboard => {
                 self.dashboard_view.render(ui, &mut self.application_context);
             }
-            goard_core::views::view::ViewType::Gantt => {
+            ganttza::views::view::ViewType::Gantt => {
                 self.gantt_view.render(ui, &mut self.application_context);
             }
         });

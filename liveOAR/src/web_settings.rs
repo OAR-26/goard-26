@@ -1,5 +1,5 @@
-use goard_core::models::data_structure::application_options::ApplicationOptions;
-use goard_core::models::data_structure::gantt_config::GanttConfig;
+use ganttza::models::data_structure::application_options::ApplicationOptions;
+use ganttza::models::data_structure::gantt_config::GanttConfig;
 
 const KEY: &str = "goard_options";
 const KEY_GANTT: &str = "goard_gantt_config";

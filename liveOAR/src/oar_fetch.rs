@@ -1,6 +1,6 @@
-use goard_core::models::data_structure::job::{Job, JobState};
-use goard_core::models::data_structure::resource::{DeadInterval, ResourceState};
-use goard_core::models::data_structure::strata::Strata;
+use ganttza::models::data_structure::job::{Job, JobState};
+use ganttza::models::data_structure::resource::{DeadInterval, ResourceState};
+use ganttza::models::data_structure::strata::Strata;
 
 use serde_json::Value;
 use std::collections::HashMap;

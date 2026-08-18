@@ -1,6 +1,6 @@
 use chrono::Local;
 
-use goard_core::models::data_structure::{
+use ganttza::models::data_structure::{
     job::{Job, JobState},
     resource::ResourceState,
     strata::Strata,

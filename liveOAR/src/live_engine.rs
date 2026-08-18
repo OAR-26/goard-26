@@ -6,9 +6,9 @@ use chrono::{DateTime, Local};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use goard_core::models::data_structure::application_context::ApplicationContext;
-use goard_core::models::data_structure::job::Job;
-use goard_core::models::utils::utils::{clusters_for_job, hosts_for_job};
+use ganttza::models::data_structure::application_context::ApplicationContext;
+use ganttza::models::data_structure::job::Job;
+use ganttza::models::utils::utils::{clusters_for_job, hosts_for_job};
 
 use crate::refresh_coordinator::RefreshCoordinator;
 
