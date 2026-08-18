@@ -2,14 +2,15 @@ use crate::models::data_structure::application_options::{
     ApplicationOptions, LanguageOption, ThemeOption,
 };
 use eframe::egui::{self};
-use std::time::{Duration, Instant};
 
 use eframe::egui::Grid;
 
 pub struct Options {
     open: bool,
     application_options: ApplicationOptions,
-    save_status: Option<(String, Instant)>,
+    /// (message, egui time when set)
+    save_status: Option<(String, f64)>,
+    save_requested: bool,
 }
 
 impl Options {
@@ -22,21 +23,15 @@ impl Options {
             application_options,
             save_status: None,
             open: false,
+            save_requested: false,
         }
     }
 
-    // Save the current options to a file for persistence
-    pub fn save_to_file(&mut self, file_path: &str) {
-        match serde_json::to_string(&self.application_options)
-            .and_then(|json| std::fs::write(file_path, json).map_err(serde_json::Error::io))
-        {
-            Ok(_) => {
-                self.save_status =
-                    Some((t!("app.options.save.success").to_string(), Instant::now()));
-            }
-            Err(_) => {
-                self.save_status = Some((t!("app.options.save.error").to_string(), Instant::now()));
-            }
+    pub fn take_save_request(&mut self) -> Option<ApplicationOptions> {
+        if std::mem::take(&mut self.save_requested) {
+            Some(self.application_options.clone())
+        } else {
+            None
         }
     }
 
@@ -52,7 +47,8 @@ impl Options {
         Options {
             application_options,
             open: false,
-            save_status: None, // No status message on initial load
+            save_status: None,
+            save_requested: false,
         }
     }
 
@@ -132,16 +128,17 @@ impl Options {
                 ui.add_space(10.0);
 
                 if ui.button(t!("app.options.save.title")).clicked() {
-                    self.save_to_file("options.json");
+                    self.save_requested = true;
+                    let now = ui.ctx().input(|i| i.time);
+                    self.save_status = Some((t!("app.options.save.success").to_string(), now));
                 }
 
-                // Show the save status message for a few seconds
-                if let Some((message, timestamp)) = &self.save_status {
-                    if timestamp.elapsed() < Duration::new(3, 0) {
-                        ui.label(message);
-                    } else {
-                        self.save_status = None; // Clear the message after timeout
-                    }
+                let now = ui.ctx().input(|i| i.time);
+                if self.save_status.as_ref().map_or(false, |(_, t)| now - t >= 3.0) {
+                    self.save_status = None;
+                }
+                if let Some((message, _)) = &self.save_status {
+                    ui.label(message);
                 }
             });
         self.open = open;

@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 /// RGB color parsed from a hex string like "#88ffff".
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RgbColor(pub u8, pub u8, pub u8);
 
 impl RgbColor {
@@ -16,7 +18,7 @@ impl RgbColor {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct StateColors {
     pub absent: RgbColor,
     pub suspected: RgbColor,
@@ -35,7 +37,7 @@ impl Default for StateColors {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GanttConfig  {
     pub standby_truncate_to_now: bool,
     pub besteffort_truncate_to_now: bool,
